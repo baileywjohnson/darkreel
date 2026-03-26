@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Darkreel</title>
+    <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+    <div id="app">
+        <header id="header" class="hidden">
+            <div class="header-left">
+                <h1 class="logo">Darkreel</h1>
+            </div>
+            <div class="header-center">
+                <div class="controls">
+                    <select id="sort-select">
+                        <option value="date-desc">Newest first</option>
+                        <option value="date-asc">Oldest first</option>
+                        <option value="size-desc">Largest first</option>
+                        <option value="size-asc">Smallest first</option>
+                        <option value="name-asc">Name A-Z</option>
+                        <option value="name-desc">Name Z-A</option>
+                    </select>
+                    <select id="type-filter">
+                        <option value="">All</option>
+                        <option value="image">Images</option>
+                        <option value="video">Videos</option>
+                    </select>
+                </div>
+            </div>
+            <div class="header-right">
+                <button id="upload-btn" class="btn btn-primary">Upload</button>
+                <button id="logout-btn" class="btn btn-ghost">Logout</button>
+            </div>
+        </header>
+
+        <main>
+            <!-- Auth view -->
+            <div id="auth-view" class="view">
+                <div class="auth-card">
+                    <h2 class="auth-title">Darkreel</h2>
+                    <p class="auth-subtitle">E2E Encrypted Media</p>
+                    <form id="auth-form">
+                        <input type="text" id="auth-username" placeholder="Username" required minlength="3" autocomplete="username">
+                        <input type="password" id="auth-password" placeholder="Password" required minlength="8" autocomplete="current-password">
+                        <div class="auth-buttons">
+                            <button type="submit" id="login-btn" class="btn btn-primary">Login</button>
+                            <button type="button" id="register-btn" class="btn btn-secondary">Register</button>
+                        </div>
+                        <p id="auth-error" class="error hidden"></p>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Gallery view -->
+            <div id="gallery-view" class="view hidden">
+                <div id="gallery-grid" class="gallery-grid"></div>
+                <div id="gallery-empty" class="gallery-empty hidden">
+                    <p>No media yet. Upload files to get started.</p>
+                </div>
+                <div id="gallery-loading" class="gallery-loading hidden">
+                    <div class="spinner"></div>
+                </div>
+                <div id="pagination" class="pagination hidden">
+                    <button id="prev-page" class="btn btn-ghost">&larr; Prev</button>
+                    <span id="page-info"></span>
+                    <button id="next-page" class="btn btn-ghost">Next &rarr;</button>
+                </div>
+            </div>
+
+            <!-- Viewer overlay -->
+            <div id="viewer" class="viewer hidden">
+                <div class="viewer-header">
+                    <span id="viewer-title"></span>
+                    <div class="viewer-actions">
+                        <button id="viewer-download" class="btn btn-ghost">Download</button>
+                        <button id="viewer-delete" class="btn btn-danger">Delete</button>
+                        <button id="viewer-close" class="btn btn-ghost">Close</button>
+                    </div>
+                </div>
+                <div class="viewer-content">
+                    <video id="viewer-video" class="hidden" controls></video>
+                    <img id="viewer-image" class="hidden" alt="">
+                </div>
+            </div>
+        </main>
+
+        <!-- Upload modal -->
+        <div id="upload-modal" class="modal hidden">
+            <div class="modal-content">
+                <h3>Upload Media</h3>
+                <div id="upload-dropzone" class="dropzone">
+                    <p>Drop files here or click to select</p>
+                    <input type="file" id="upload-input" multiple accept="image/*,video/*">
+                </div>
+                <div id="upload-progress" class="hidden">
+                    <div id="upload-list"></div>
+                </div>
+                <div class="modal-actions">
+                    <button id="upload-cancel" class="btn btn-ghost">Close</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="/js/crypto.js" type="module"></script>
+    <script src="/js/app.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+package auth
+
+import (
+	"context"
+	"net/http"
+	"strings"
+)
+
+type contextKey string
+
+const claimsKey contextKey = "claims"
+
+func Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenStr := ""
+
+		// Check Authorization header first
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			tokenStr = strings.TrimPrefix(auth, "Bearer ")
+		}
+
+		// Fall back to cookie
+		if tokenStr == "" {
+			if cookie, err := r.Cookie("token"); err == nil {
+				tokenStr = cookie.Value
+			}
+		}
+
+		if tokenStr == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		claims, err := ValidateToken(tokenStr)
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), claimsKey, claims)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func GetClaims(r *http.Request) *Claims {
+	claims, _ := r.Context().Value(claimsKey).(*Claims)
+	return claims
+}
+
+func GetUserID(r *http.Request) string {
+	if c := GetClaims(r); c != nil {
+		return c.UserID
+	}
+	return ""
+}
+
+func GetMasterKey(r *http.Request) ([]byte, bool) {
+	claims := GetClaims(r)
+	if claims == nil {
+		return nil, false
+	}
+	return Sessions.Get(claims.SessionID)
+}
