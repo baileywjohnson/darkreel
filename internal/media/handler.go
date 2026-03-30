@@ -70,8 +70,18 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(toAPIItem(item))
 }
 
+const (
+	maxThumbnailSize = 2 << 20   // 2 MB
+	maxChunkSize     = 2 << 20   // 2 MB (1MB chunk + GCM overhead)
+	maxChunkCount    = 50000     // ~50 GB at 1MB chunks
+	maxRequestSize   = 100 << 30 // 100 GB hard limit
+)
+
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
+
+	// Limit total request body size
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
 
 	// Parse multipart: first part is JSON metadata, subsequent parts are chunks
 	mr, err := r.MultipartReader()
@@ -99,6 +109,11 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if meta.ChunkCount <= 0 || meta.ChunkCount > maxChunkCount {
+		http.Error(w, fmt.Sprintf("chunk_count must be between 1 and %d", maxChunkCount), http.StatusBadRequest)
+		return
+	}
+
 	mediaID := uuid.New().String()
 	if err := h.Storage.EnsureMediaDir(userID, mediaID); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -111,7 +126,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "second part must be thumbnail", http.StatusBadRequest)
 		return
 	}
-	thumbData, err := io.ReadAll(part)
+	thumbData, err := io.ReadAll(io.LimitReader(part, maxThumbnailSize))
 	if err != nil {
 		http.Error(w, "failed to read thumbnail", http.StatusBadRequest)
 		return
@@ -137,7 +152,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		chunkData, err := io.ReadAll(part)
+		chunkData, err := io.ReadAll(io.LimitReader(part, maxChunkSize))
 		if err != nil {
 			h.Storage.RemoveMedia(userID, mediaID)
 			http.Error(w, "failed to read chunk data", http.StatusBadRequest)

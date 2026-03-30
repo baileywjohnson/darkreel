@@ -33,13 +33,14 @@ type loginResponse struct {
 }
 
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16) // 64 KB
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if len(req.Username) < 3 || len(req.Password) < 8 {
-		http.Error(w, "username must be 3+ chars, password 8+ chars", http.StatusBadRequest)
+	if len(req.Username) < 3 || len(req.Username) > 64 || len(req.Password) < 8 || len(req.Password) > 128 {
+		http.Error(w, "username must be 3-64 chars, password 8-128 chars", http.StatusBadRequest)
 		return
 	}
 
@@ -74,6 +75,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16) // 64 KB
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)

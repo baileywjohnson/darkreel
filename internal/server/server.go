@@ -33,6 +33,7 @@ func (s *Server) routes() chi.Router {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
+	r.Use(securityHeaders)
 
 	authHandler := &auth.Handler{DB: s.DB}
 	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage}
@@ -78,4 +79,14 @@ func (s *Server) routes() chi.Router {
 	})
 
 	return r
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self'")
+		next.ServeHTTP(w, r)
+	})
 }

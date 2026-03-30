@@ -54,6 +54,10 @@ Flags:
 ./darkreel
 ```
 
+## Security: TLS Required
+
+Darkreel does not handle TLS itself. **You must deploy it behind a TLS-terminating reverse proxy** (nginx, Caddy, etc.) to encrypt traffic. Without TLS, passwords and encrypted content are transmitted in plaintext over the network. See the [deployment section](#deployment) for an nginx example with Let's Encrypt.
+
 ## API
 
 All media endpoints require a JWT token (obtained via login).
