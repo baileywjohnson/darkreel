@@ -6,55 +6,29 @@ import (
 )
 
 type MediaItem struct {
-	ID          string
-	UserID      string
-	Name        []byte // encrypted filename
-	MediaType   string // "image" or "video"
-	MimeType    string
-	Size        int64
-	ChunkCount  int
-	ChunkSize   int
-	FileKeyEnc  []byte // file key encrypted with master key
-	ThumbKeyEnc []byte // thumbnail key encrypted with master key
-	HashNonce   []byte
-	Width       *int
-	Height      *int
-	Duration    *float64
-	CreatedAt   time.Time
-	UploadedAt  time.Time
+	ID            string
+	UserID        string
+	ChunkCount    int
+	FileKeyEnc    []byte // file key encrypted with master key
+	ThumbKeyEnc   []byte // thumbnail key encrypted with master key
+	HashNonce     []byte
+	MetadataEnc   []byte // encrypted metadata blob (name, type, mime, size, dimensions, duration)
+	MetadataNonce []byte
+	CreatedAt     time.Time
 }
 
 func InsertMedia(db *sql.DB, m *MediaItem) error {
 	_, err := db.Exec(
-		`INSERT INTO media (id, user_id, name, media_type, mime_type, size, chunk_count, chunk_size, file_key_enc, thumb_key_enc, hash_nonce, width, height, duration)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.UserID, m.Name, m.MediaType, m.MimeType, m.Size, m.ChunkCount, m.ChunkSize,
-		m.FileKeyEnc, m.ThumbKeyEnc, m.HashNonce, m.Width, m.Height, m.Duration,
+		`INSERT INTO media (id, user_id, chunk_count, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.UserID, m.ChunkCount, m.FileKeyEnc, m.ThumbKeyEnc, m.HashNonce, m.MetadataEnc, m.MetadataNonce,
 	)
 	return err
 }
 
-func ListMedia(db *sql.DB, userID, sortBy, order, mediaType string, limit, offset int) ([]*MediaItem, int, error) {
-	allowedSort := map[string]string{
-		"date": "created_at",
-		"size": "size",
-		"name": "name",
-		"type": "media_type",
-	}
-	col, ok := allowedSort[sortBy]
-	if !ok {
-		col = "created_at"
-	}
-	if order != "asc" {
-		order = "desc"
-	}
-
+func ListMedia(db *sql.DB, userID string, limit, offset int) ([]*MediaItem, int, error) {
 	where := "WHERE user_id = ?"
 	args := []any{userID}
-	if mediaType == "image" || mediaType == "video" {
-		where += " AND media_type = ?"
-		args = append(args, mediaType)
-	}
 
 	var total int
 	err := db.QueryRow("SELECT COUNT(*) FROM media "+where, args...).Scan(&total)
@@ -62,8 +36,8 @@ func ListMedia(db *sql.DB, userID, sortBy, order, mediaType string, limit, offse
 		return nil, 0, err
 	}
 
-	query := "SELECT id, user_id, name, media_type, mime_type, size, chunk_count, chunk_size, file_key_enc, thumb_key_enc, hash_nonce, width, height, duration, created_at, uploaded_at FROM media " +
-		where + " ORDER BY " + col + " " + order + " LIMIT ? OFFSET ?"
+	query := "SELECT id, user_id, chunk_count, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce, created_at FROM media " +
+		where + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 
 	rows, err := db.Query(query, args...)
@@ -75,9 +49,8 @@ func ListMedia(db *sql.DB, userID, sortBy, order, mediaType string, limit, offse
 	var items []*MediaItem
 	for rows.Next() {
 		m := &MediaItem{}
-		if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.MediaType, &m.MimeType, &m.Size,
-			&m.ChunkCount, &m.ChunkSize, &m.FileKeyEnc, &m.ThumbKeyEnc, &m.HashNonce,
-			&m.Width, &m.Height, &m.Duration, &m.CreatedAt, &m.UploadedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.UserID, &m.ChunkCount, &m.FileKeyEnc, &m.ThumbKeyEnc,
+			&m.HashNonce, &m.MetadataEnc, &m.MetadataNonce, &m.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, m)
@@ -88,11 +61,10 @@ func ListMedia(db *sql.DB, userID, sortBy, order, mediaType string, limit, offse
 func GetMedia(db *sql.DB, id, userID string) (*MediaItem, error) {
 	m := &MediaItem{}
 	err := db.QueryRow(
-		`SELECT id, user_id, name, media_type, mime_type, size, chunk_count, chunk_size, file_key_enc, thumb_key_enc, hash_nonce, width, height, duration, created_at, uploaded_at
+		`SELECT id, user_id, chunk_count, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce, created_at
 		 FROM media WHERE id = ? AND user_id = ?`, id, userID,
-	).Scan(&m.ID, &m.UserID, &m.Name, &m.MediaType, &m.MimeType, &m.Size,
-		&m.ChunkCount, &m.ChunkSize, &m.FileKeyEnc, &m.ThumbKeyEnc, &m.HashNonce,
-		&m.Width, &m.Height, &m.Duration, &m.CreatedAt, &m.UploadedAt)
+	).Scan(&m.ID, &m.UserID, &m.ChunkCount, &m.FileKeyEnc, &m.ThumbKeyEnc,
+		&m.HashNonce, &m.MetadataEnc, &m.MetadataNonce, &m.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

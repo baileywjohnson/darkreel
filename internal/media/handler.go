@@ -22,9 +22,6 @@ type Handler struct {
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
-	sortBy := r.URL.Query().Get("sort")
-	order := r.URL.Query().Get("order")
-	mediaType := r.URL.Query().Get("type")
 
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
@@ -36,7 +33,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	offset := (page - 1) * limit
 
-	items, total, err := db.ListMedia(h.DB, userID, sortBy, order, mediaType, limit, offset)
+	items, total, err := db.ListMedia(h.DB, userID, limit, offset)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -104,11 +101,6 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	part.Close()
 
-	if meta.MediaType != "image" && meta.MediaType != "video" {
-		http.Error(w, "media_type must be 'image' or 'video'", http.StatusBadRequest)
-		return
-	}
-
 	if meta.ChunkCount <= 0 || meta.ChunkCount > maxChunkCount {
 		http.Error(w, fmt.Sprintf("chunk_count must be between 1 and %d", maxChunkCount), http.StatusBadRequest)
 		return
@@ -174,26 +166,21 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nameBytes, _ := FromB64(meta.Name)
 	fileKeyBytes, _ := FromB64(meta.FileKeyEnc)
 	thumbKeyBytes, _ := FromB64(meta.ThumbKeyEnc)
 	hashNonceBytes, _ := FromB64(meta.HashNonce)
+	metadataEncBytes, _ := FromB64(meta.MetadataEnc)
+	metadataNonceBytes, _ := FromB64(meta.MetadataNonce)
 
 	mediaItem := &db.MediaItem{
-		ID:          mediaID,
-		UserID:      userID,
-		Name:        nameBytes,
-		MediaType:   meta.MediaType,
-		MimeType:    meta.MimeType,
-		Size:        meta.Size,
-		ChunkCount:  meta.ChunkCount,
-		ChunkSize:   1 << 20,
-		FileKeyEnc:  fileKeyBytes,
-		ThumbKeyEnc: thumbKeyBytes,
-		HashNonce:   hashNonceBytes,
-		Width:       meta.Width,
-		Height:      meta.Height,
-		Duration:    meta.Duration,
+		ID:            mediaID,
+		UserID:        userID,
+		ChunkCount:    meta.ChunkCount,
+		FileKeyEnc:    fileKeyBytes,
+		ThumbKeyEnc:   thumbKeyBytes,
+		HashNonce:     hashNonceBytes,
+		MetadataEnc:   metadataEncBytes,
+		MetadataNonce: metadataNonceBytes,
 	}
 
 	if err := db.InsertMedia(h.DB, mediaItem); err != nil {
@@ -311,20 +298,13 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 
 func toAPIItem(m *db.MediaItem) APIMediaItem {
 	return APIMediaItem{
-		ID:          m.ID,
-		Name:        B64(m.Name),
-		MediaType:   m.MediaType,
-		MimeType:    m.MimeType,
-		Size:        m.Size,
-		ChunkCount:  m.ChunkCount,
-		ChunkSize:   m.ChunkSize,
-		FileKeyEnc:  B64(m.FileKeyEnc),
-		ThumbKeyEnc: B64(m.ThumbKeyEnc),
-		HashNonce:   B64(m.HashNonce),
-		Width:       m.Width,
-		Height:      m.Height,
-		Duration:    m.Duration,
-		CreatedAt:   m.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UploadedAt:  m.UploadedAt.Format("2006-01-02T15:04:05Z"),
+		ID:            m.ID,
+		ChunkCount:    m.ChunkCount,
+		FileKeyEnc:    B64(m.FileKeyEnc),
+		ThumbKeyEnc:   B64(m.ThumbKeyEnc),
+		HashNonce:     B64(m.HashNonce),
+		MetadataEnc:   B64(m.MetadataEnc),
+		MetadataNonce: B64(m.MetadataNonce),
+		CreatedAt:     m.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 }

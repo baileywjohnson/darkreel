@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/baileywjohnson/darkreel/internal/crypto"
 )
 
 // Layout manages the directory structure for encrypted media storage.
@@ -35,7 +37,17 @@ func (l *Layout) EnsureMediaDir(userID, mediaID string) error {
 	return os.MkdirAll(l.MediaDir(userID, mediaID), 0700)
 }
 
-// RemoveMedia deletes all data for a media item.
+// RemoveMedia securely shreds all files for a media item, then removes the directory.
 func (l *Layout) RemoveMedia(userID, mediaID string) error {
-	return os.RemoveAll(l.MediaDir(userID, mediaID))
+	dir := l.MediaDir(userID, mediaID)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return os.RemoveAll(dir) // fallback if dir can't be read
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			crypto.ShredFile(filepath.Join(dir, e.Name()))
+		}
+	}
+	return os.RemoveAll(dir)
 }

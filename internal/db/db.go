@@ -45,20 +45,13 @@ func migrate(db *sql.DB) error {
 		CREATE TABLE IF NOT EXISTS media (
 			id             TEXT PRIMARY KEY,
 			user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			name           BLOB NOT NULL,
-			media_type     TEXT NOT NULL,
-			mime_type      TEXT NOT NULL,
-			size           INTEGER NOT NULL,
 			chunk_count    INTEGER NOT NULL,
-			chunk_size     INTEGER NOT NULL DEFAULT 1048576,
 			file_key_enc   BLOB NOT NULL,
 			thumb_key_enc  BLOB NOT NULL,
 			hash_nonce     BLOB NOT NULL,
-			width          INTEGER,
-			height         INTEGER,
-			duration       REAL,
-			created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
-			uploaded_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+			metadata_enc   BLOB NOT NULL,
+			metadata_nonce BLOB NOT NULL,
+			created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_media_user ON media(user_id, created_at DESC);

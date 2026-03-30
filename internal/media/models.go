@@ -3,37 +3,28 @@ package media
 import "encoding/base64"
 
 // APIMediaItem is the JSON representation of a media item returned to clients.
+// Metadata (name, type, mime, size, dimensions, duration) is encrypted — the server
+// stores it as an opaque blob and returns it for the client to decrypt.
 type APIMediaItem struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`         // base64-encoded encrypted filename
-	MediaType   string   `json:"media_type"`
-	MimeType    string   `json:"mime_type"`
-	Size        int64    `json:"size"`
-	ChunkCount  int      `json:"chunk_count"`
-	ChunkSize   int      `json:"chunk_size"`
-	FileKeyEnc  string   `json:"file_key_enc"`  // base64
-	ThumbKeyEnc string   `json:"thumb_key_enc"` // base64
-	HashNonce   string   `json:"hash_nonce"`    // base64
-	Width       *int     `json:"width,omitempty"`
-	Height      *int     `json:"height,omitempty"`
-	Duration    *float64 `json:"duration,omitempty"`
-	CreatedAt   string   `json:"created_at"`
-	UploadedAt  string   `json:"uploaded_at"`
+	ID            string `json:"id"`
+	ChunkCount    int    `json:"chunk_count"`
+	FileKeyEnc    string `json:"file_key_enc"`    // base64
+	ThumbKeyEnc   string `json:"thumb_key_enc"`   // base64
+	HashNonce     string `json:"hash_nonce"`       // base64
+	MetadataEnc   string `json:"metadata_enc"`     // base64 — encrypted metadata blob
+	MetadataNonce string `json:"metadata_nonce"`   // base64
+	CreatedAt     string `json:"created_at"`
 }
 
 // UploadMeta is the metadata sent by the client when initiating an upload.
+// The sensitive fields are inside metadata_enc (encrypted by the client).
 type UploadMeta struct {
-	Name        string   `json:"name"`         // base64 encrypted filename
-	MediaType   string   `json:"media_type"`
-	MimeType    string   `json:"mime_type"`
-	Size        int64    `json:"size"`
-	ChunkCount  int      `json:"chunk_count"`
-	FileKeyEnc  string   `json:"file_key_enc"`  // base64
-	ThumbKeyEnc string   `json:"thumb_key_enc"` // base64
-	HashNonce   string   `json:"hash_nonce"`    // base64
-	Width       *int     `json:"width,omitempty"`
-	Height      *int     `json:"height,omitempty"`
-	Duration    *float64 `json:"duration,omitempty"`
+	ChunkCount    int    `json:"chunk_count"`
+	FileKeyEnc    string `json:"file_key_enc"`    // base64
+	ThumbKeyEnc   string `json:"thumb_key_enc"`   // base64
+	HashNonce     string `json:"hash_nonce"`       // base64
+	MetadataEnc   string `json:"metadata_enc"`     // base64 — encrypted metadata blob
+	MetadataNonce string `json:"metadata_nonce"`   // base64
 }
 
 func B64(data []byte) string {
