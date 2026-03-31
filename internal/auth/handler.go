@@ -5,11 +5,32 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/baileywjohnson/darkreel/internal/crypto"
 	"github.com/baileywjohnson/darkreel/internal/db"
 	"github.com/google/uuid"
 )
+
+func isStrongPassword(pw string) bool {
+	if len(pw) < 16 || len(pw) > 128 {
+		return false
+	}
+	hasLetter, hasDigit, hasSymbol := false, false, false
+	for _, c := range pw {
+		switch {
+		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'):
+			hasLetter = true
+		case c >= '0' && c <= '9':
+			hasDigit = true
+		default:
+			if !strings.ContainsRune(" \t\n\r", c) {
+				hasSymbol = true
+			}
+		}
+	}
+	return hasLetter && hasDigit && hasSymbol
+}
 
 type Handler struct {
 	DB *sql.DB
@@ -39,8 +60,12 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if len(req.Username) < 3 || len(req.Username) > 64 || len(req.Password) < 8 || len(req.Password) > 128 {
-		http.Error(w, "username must be 3-64 chars, password 8-128 chars", http.StatusBadRequest)
+	if len(req.Username) < 3 || len(req.Username) > 64 {
+		http.Error(w, "username must be 3-64 characters", http.StatusBadRequest)
+		return
+	}
+	if !isStrongPassword(req.Password) {
+		http.Error(w, "password must be 16-128 characters with at least one letter, one number, and one symbol", http.StatusBadRequest)
 		return
 	}
 
