@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/baileywjohnson/darkreel/internal/auth"
 	"github.com/baileywjohnson/darkreel/internal/media"
@@ -34,13 +35,17 @@ func (s *Server) routes() chi.Router {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
 	r.Use(securityHeaders)
+	r.Use(RateLimit(100, time.Minute)) // Global: 100 req/min per IP
 
 	authHandler := &auth.Handler{DB: s.DB}
 	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage}
 
-	// Public routes
-	r.Post("/api/auth/register", authHandler.Register)
-	r.Post("/api/auth/login", authHandler.Login)
+	// Auth rate limiter: 5 attempts per minute per IP
+	authLimiter := RateLimit(5, time.Minute)
+
+	// Public routes (with strict rate limiting)
+	r.With(authLimiter).Post("/api/auth/register", authHandler.Register)
+	r.With(authLimiter).Post("/api/auth/login", authHandler.Login)
 
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
