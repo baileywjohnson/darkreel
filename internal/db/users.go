@@ -22,6 +22,12 @@ func CreateUser(db *sql.DB, u *User) error {
 	return err
 }
 
+func GetUserCount(db *sql.DB) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count)
+	return count, err
+}
+
 func GetUserByUsername(db *sql.DB, username string) (*User, error) {
 	u := &User{}
 	err := db.QueryRow(

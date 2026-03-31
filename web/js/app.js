@@ -10,6 +10,7 @@ import {
 let token = null;
 let userId = null;
 let kdfSalt = null;
+let serverConfig = { persistSession: false, allowRegistration: true };
 let mediaItems = [];
 let currentPage = 1;
 let totalItems = 0;
@@ -108,6 +109,14 @@ async function handleLogin() {
         sessionStorage.setItem('token', token);
         sessionStorage.setItem('userId', userId);
 
+        // Optionally persist master key for refresh survival
+        if (serverConfig.persistSession) {
+            const mkRaw = getMasterKeyRaw();
+            if (mkRaw) {
+                sessionStorage.setItem('masterKey', bufferToBase64(mkRaw));
+            }
+        }
+
         showGallery();
     } catch (e) {
         showError(e.message);
@@ -134,7 +143,7 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
     clearMasterKey();
     token = null;
     userId = null;
-    sessionStorage.clear();
+    sessionStorage.clear(); // clears token, userId, and masterKey
     showAuth();
 });
 
@@ -683,13 +692,35 @@ function escapeHtml(s) {
 // ─── Init ───
 initWorkers();
 
-// Check for existing session
-const savedToken = sessionStorage.getItem('token');
-if (savedToken) {
-    token = savedToken;
-    userId = sessionStorage.getItem('userId');
-    // Need to re-login to get master key
+// Fetch server config, then restore session
+(async () => {
+    try {
+        const res = await fetch('/api/config');
+        if (res.ok) serverConfig = await res.json();
+    } catch {}
+
+    // Hide register button if registration is disabled
+    if (!serverConfig.allowRegistration) {
+        registerBtn.classList.add('hidden');
+    }
+
+    // Try to restore session
+    const savedToken = sessionStorage.getItem('token');
+    if (savedToken) {
+        token = savedToken;
+        userId = sessionStorage.getItem('userId');
+
+        // Try to restore master key if persist-session is enabled
+        const savedMK = sessionStorage.getItem('masterKey');
+        if (savedMK && serverConfig.persistSession) {
+            try {
+                await setMasterKeyDirect(base64ToBuffer(savedMK));
+                showGallery();
+                return;
+            } catch {
+                sessionStorage.removeItem('masterKey');
+            }
+        }
+    }
     showAuth();
-} else {
-    showAuth();
-}
+})();

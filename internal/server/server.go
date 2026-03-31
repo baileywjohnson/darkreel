@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"io/fs"
 	"log"
 	"net/http"
@@ -16,10 +17,12 @@ import (
 )
 
 type Server struct {
-	DB      *sql.DB
-	Storage *storage.Layout
-	WebFS   embed.FS
-	Addr    string
+	DB                *sql.DB
+	Storage           *storage.Layout
+	WebFS             embed.FS
+	Addr              string
+	PersistSession    bool
+	AllowRegistration bool
 }
 
 func (s *Server) Run() error {
@@ -43,8 +46,25 @@ func (s *Server) routes() chi.Router {
 	// Auth rate limiter: 5 attempts per minute per IP
 	authLimiter := RateLimit(5, time.Minute)
 
+	// Public config endpoint
+	persistSession := s.PersistSession
+	allowRegistration := s.AllowRegistration
+	r.Get("/api/config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"persistSession":    persistSession,
+			"allowRegistration": allowRegistration,
+		})
+	})
+
 	// Public routes (with strict rate limiting)
-	r.With(authLimiter).Post("/api/auth/register", authHandler.Register)
+	if s.AllowRegistration {
+		r.With(authLimiter).Post("/api/auth/register", authHandler.Register)
+	} else {
+		r.Post("/api/auth/register", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "registration is disabled", http.StatusForbidden)
+		})
+	}
 	r.With(authLimiter).Post("/api/auth/login", authHandler.Login)
 
 	// Authenticated routes

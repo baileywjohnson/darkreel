@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -34,6 +35,35 @@ func isStrongPassword(pw string) bool {
 
 type Handler struct {
 	DB *sql.DB
+}
+
+// BootstrapAdmin creates the initial admin user if no users exist.
+func BootstrapAdmin(database *sql.DB, username, password string) error {
+	if !isStrongPassword(password) {
+		return fmt.Errorf("DARKREEL_ADMIN_PASSWORD must be 16+ characters with at least one letter, one number, and one symbol")
+	}
+	if len(username) < 3 || len(username) > 64 {
+		return fmt.Errorf("DARKREEL_ADMIN_USERNAME must be 3-64 characters")
+	}
+
+	authSalt, err := crypto.GenerateSalt()
+	if err != nil {
+		return err
+	}
+	kdfSalt, err := crypto.GenerateSalt()
+	if err != nil {
+		return err
+	}
+
+	user := &db.User{
+		ID:           uuid.New().String(),
+		Username:     username,
+		PasswordHash: crypto.HashPassword(password, authSalt),
+		AuthSalt:     authSalt,
+		KDFSalt:      kdfSalt,
+	}
+
+	return db.CreateUser(database, user)
 }
 
 type registerRequest struct {
