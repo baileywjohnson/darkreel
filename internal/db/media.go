@@ -1,9 +1,6 @@
 package db
 
-import (
-	"database/sql"
-	"time"
-)
+import "database/sql"
 
 type MediaItem struct {
 	ID            string
@@ -14,7 +11,7 @@ type MediaItem struct {
 	HashNonce     []byte
 	MetadataEnc   []byte // encrypted metadata blob (name, type, mime, size, dimensions, duration)
 	MetadataNonce []byte
-	CreatedAt     time.Time
+	CreatedAt     string // coarse timestamp (year-week) to limit metadata leakage
 }
 
 func InsertMedia(db *sql.DB, m *MediaItem) error {

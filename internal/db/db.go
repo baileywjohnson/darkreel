@@ -39,6 +39,7 @@ func migrate(db *sql.DB) error {
 			password_hash TEXT NOT NULL,
 			auth_salt     BLOB NOT NULL,
 			kdf_salt      BLOB NOT NULL,
+			recovery_mk   BLOB,
 			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -51,7 +52,7 @@ func migrate(db *sql.DB) error {
 			hash_nonce     BLOB NOT NULL,
 			metadata_enc   BLOB NOT NULL,
 			metadata_nonce BLOB NOT NULL,
-			created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at     TEXT DEFAULT (strftime('%Y-%W', 'now'))
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_media_user ON media(user_id, created_at DESC);

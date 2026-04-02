@@ -44,10 +44,12 @@ func main() {
 		if adminPass == "" {
 			log.Fatal("DARKREEL_ADMIN_PASSWORD must be set for first-run admin bootstrap")
 		}
-		if err := auth.BootstrapAdmin(database, adminUser, adminPass); err != nil {
+		recoveryCode, err := auth.BootstrapAdmin(database, adminUser, adminPass)
+		if err != nil {
 			log.Fatalf("Failed to create admin user: %v", err)
 		}
 		log.Printf("Admin user %q created", adminUser)
+		log.Printf("RECOVERY CODE (save this — it cannot be shown again): %s", recoveryCode)
 	}
 
 	// Clean up orphaned data directories not referenced in DB

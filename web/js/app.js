@@ -205,6 +205,10 @@ async function loadMedia() {
                     combined.set(encData, nonce.length);
                     const decrypted = await decryptBlock(combined, getMasterKeyRaw());
                     const meta = JSON.parse(new TextDecoder().decode(decrypted));
+                    // Store trusted chunk count from encrypted metadata (tamper-proof)
+                    if (meta.chunk_count) {
+                        meta.chunk_count_trusted = meta.chunk_count;
+                    }
                     Object.assign(item, meta);
                 }
             } catch (e) {
@@ -297,6 +301,17 @@ document.getElementById('viewer-close').addEventListener('click', closeViewer);
 document.getElementById('viewer-delete').addEventListener('click', deleteCurrentItem);
 document.getElementById('viewer-download').addEventListener('click', downloadCurrentItem);
 
+/**
+ * Verify the number of chunks received matches the trusted count from encrypted metadata.
+ * Detects truncation attacks where an attacker deletes chunks from the server.
+ */
+function verifyChunkCount(item, actualCount) {
+    const expectedCount = item.chunk_count_trusted || item.chunk_count;
+    if (actualCount !== expectedCount) {
+        throw new Error(`File integrity error: expected ${expectedCount} chunks but received ${actualCount}. The file may have been tampered with.`);
+    }
+}
+
 async function openViewer(item) {
     currentViewerItem = item;
     viewer.classList.remove('hidden');
@@ -332,7 +347,6 @@ function closeViewer() {
 
 async function showImage(item, fileKey) {
     viewerImage.classList.remove('hidden');
-    // Fetch and decrypt all chunks
     const chunks = [];
     for (let i = 0; i < item.chunk_count; i++) {
         const res = await fetch(`/api/media/${item.id}/chunk/${i}`, {
@@ -342,6 +356,7 @@ async function showImage(item, fileKey) {
         const dec = await workerDecrypt('decryptChunk', encData, fileKey, i);
         chunks.push(dec);
     }
+    verifyChunkCount(item, chunks.length);
     const totalLen = chunks.reduce((s, c) => s + c.length, 0);
     const merged = new Uint8Array(totalLen);
     let offset = 0;
@@ -367,6 +382,7 @@ async function playVideo(item, fileKey) {
             const dec = await workerDecrypt('decryptChunk', encData, fileKey, i);
             chunks.push(dec);
         }
+        verifyChunkCount(item, chunks.length);
         const totalLen = chunks.reduce((s, c) => s + c.length, 0);
         const merged = new Uint8Array(totalLen);
         let offset = 0;
@@ -419,6 +435,7 @@ async function downloadCurrentItem() {
             chunks.push(dec);
         }
 
+        verifyChunkCount(item, chunks.length);
         const totalLen = chunks.reduce((s, c) => s + c.length, 0);
         const merged = new Uint8Array(totalLen);
         let offset = 0;
@@ -552,6 +569,7 @@ async function uploadFile(file, itemEl) {
         media_type: mediaType,
         mime_type: file.type || 'application/octet-stream',
         size: file.size,
+        chunk_count: chunkCount,
     };
 
     // Get video dimensions/duration

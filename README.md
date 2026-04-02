@@ -50,9 +50,21 @@ go build -o darkreel .
 ./darkreel
 ```
 
-The server starts at `http://localhost:8080`. Register an account via the web UI and start uploading.
+The server starts at `http://localhost:8080`. On first run, an admin account is created from environment variables.
+
+### First run
+
+```bash
+DARKREEL_ADMIN_USERNAME=admin \
+DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' \
+./darkreel
+```
+
+The server will print a **recovery code** — save it somewhere safe. If you forget your password, the recovery code is the only way to regain access to your encrypted data.
 
 ### Configuration
+
+#### CLI flags
 
 ```
 ./darkreel [flags]
@@ -62,11 +74,23 @@ Flags:
   -data string   Data directory for encrypted files and database (default "./data")
 ```
 
+#### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DARKREEL_ADMIN_USERNAME` | `admin` | Admin username (first-run bootstrap only) |
+| `DARKREEL_ADMIN_PASSWORD` | **(required on first run)** | Admin password (first-run bootstrap only) |
+| `PERSIST_SESSION` | `false` | Cache master key in sessionStorage (survives page refresh, less secure) |
+| `ALLOW_REGISTRATION` | `false` | Allow new user registration via the web UI |
+
 Examples:
 
 ```bash
-# Run on port 3000 with data stored in /var/lib/darkreel
-./darkreel -addr :3000 -data /var/lib/darkreel
+# First run — create admin account
+DARKREEL_ADMIN_PASSWORD='MyStr0ng!Pass123' ./darkreel
+
+# Enable open registration and session persistence
+PERSIST_SESSION=true ALLOW_REGISTRATION=true ./darkreel -addr :3000 -data /var/lib/darkreel
 
 # Listen on all interfaces
 ./darkreel -addr 0.0.0.0:8080
@@ -75,7 +99,7 @@ Examples:
 ### Account constraints
 
 - Username: 3-64 characters
-- Password: 8-128 characters
+- Password: 16-128 characters, must contain at least one letter, one number, and one symbol
 
 ## Security
 
@@ -94,12 +118,28 @@ Darkreel does not handle TLS itself. **You must deploy it behind a TLS-terminati
 | Thumbnails | No -- encrypted with separate per-file key |
 | Number of files per user | Yes (DB row count) |
 | Approximate total storage per user | Yes (disk usage, though chunks are padded) |
-| Upload timestamps | Yes (for ordering) |
+| Upload timestamps | Coarsened (year + week only) |
 | Usernames | Yes (for authentication) |
 
 ### Security headers
 
-The server sets `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a restrictive `Content-Security-Policy`.
+The server sets `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a restrictive `Content-Security-Policy`. JavaScript and CSS files include Subresource Integrity (SRI) hashes.
+
+### Recovery codes
+
+On account creation (registration or admin bootstrap), a 256-bit recovery code is generated. The master key is encrypted with this code and stored in the database. The recovery code is shown **once** -- save it offline.
+
+If you forget your password:
+
+```bash
+curl -X POST http://localhost:8080/api/auth/recover \
+  -H 'Content-Type: application/json' \
+  -d '{"username": "your-user", "recovery_code": "your-base64url-code", "new_password": "NewStr0ng!Password"}'
+```
+
+This resets your password, re-encrypts the master key, and returns a **new** recovery code (the old one is invalidated). Your encrypted data remains accessible.
+
+If you lose both your password and recovery code, your data is permanently inaccessible. This is by design -- no one (including the server admin) can recover your encryption keys.
 
 ## API
 
@@ -109,9 +149,11 @@ All media endpoints require a JWT token (obtained via login). JWTs contain only 
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/auth/register` | Register a new user |
+| POST | `/api/auth/register` | Register a new user (returns recovery code) |
 | POST | `/api/auth/login` | Login, returns JWT + encrypted master key |
 | POST | `/api/auth/logout` | Logout, clears session |
+| POST | `/api/auth/recover` | Reset password using recovery code (returns new recovery code) |
+| GET | `/api/config` | Server configuration (registration enabled, session persistence) |
 
 ### Media
 

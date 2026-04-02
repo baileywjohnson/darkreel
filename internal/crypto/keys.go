@@ -69,3 +69,23 @@ func DeriveSessionKey(password string) []byte {
 	salt := []byte("darkreel-session-key")
 	return pbkdf2.Key([]byte(password), salt, 100000, 32, sha256.New)
 }
+
+// GenerateRecoveryCode generates a random 256-bit recovery code.
+// Returns the raw bytes (32 bytes) — encode as hex or base64 for display.
+func GenerateRecoveryCode() ([]byte, error) {
+	code := make([]byte, 32)
+	if _, err := rand.Read(code); err != nil {
+		return nil, fmt.Errorf("generate recovery code: %w", err)
+	}
+	return code, nil
+}
+
+// EncryptMasterKeyForRecovery encrypts the master key with a recovery code.
+func EncryptMasterKeyForRecovery(masterKey, recoveryCode []byte) ([]byte, error) {
+	return EncryptBlock(masterKey, recoveryCode)
+}
+
+// DecryptMasterKeyWithRecovery decrypts the master key using a recovery code.
+func DecryptMasterKeyWithRecovery(encryptedMK, recoveryCode []byte) ([]byte, error) {
+	return DecryptBlock(encryptedMK, recoveryCode)
+}

@@ -66,6 +66,7 @@ func (s *Server) routes() chi.Router {
 		})
 	}
 	r.With(authLimiter).Post("/api/auth/login", authHandler.Login)
+	r.With(authLimiter).Post("/api/auth/recover", authHandler.Recover)
 
 	// Authenticated routes
 	r.Group(func(r chi.Router) {

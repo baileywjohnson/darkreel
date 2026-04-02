@@ -38,21 +38,32 @@ type Handler struct {
 }
 
 // BootstrapAdmin creates the initial admin user if no users exist.
-func BootstrapAdmin(database *sql.DB, username, password string) error {
+// Returns the recovery code (base64url-encoded) so it can be logged.
+func BootstrapAdmin(database *sql.DB, username, password string) (string, error) {
 	if !isStrongPassword(password) {
-		return fmt.Errorf("DARKREEL_ADMIN_PASSWORD must be 16+ characters with at least one letter, one number, and one symbol")
+		return "", fmt.Errorf("DARKREEL_ADMIN_PASSWORD must be 16+ characters with at least one letter, one number, and one symbol")
 	}
 	if len(username) < 3 || len(username) > 64 {
-		return fmt.Errorf("DARKREEL_ADMIN_USERNAME must be 3-64 characters")
+		return "", fmt.Errorf("DARKREEL_ADMIN_USERNAME must be 3-64 characters")
 	}
 
 	authSalt, err := crypto.GenerateSalt()
 	if err != nil {
-		return err
+		return "", err
 	}
 	kdfSalt, err := crypto.GenerateSalt()
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	masterKey := crypto.DeriveKey(password, kdfSalt)
+	recoveryCode, err := crypto.GenerateRecoveryCode()
+	if err != nil {
+		return "", err
+	}
+	recoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, recoveryCode)
+	if err != nil {
+		return "", err
 	}
 
 	user := &db.User{
@@ -61,9 +72,13 @@ func BootstrapAdmin(database *sql.DB, username, password string) error {
 		PasswordHash: crypto.HashPassword(password, authSalt),
 		AuthSalt:     authSalt,
 		KDFSalt:      kdfSalt,
+		RecoveryMK:   recoveryMK,
 	}
 
-	return db.CreateUser(database, user)
+	if err := db.CreateUser(database, user); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(recoveryCode), nil
 }
 
 type registerRequest struct {
@@ -112,12 +127,26 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 
 	passwordHash := crypto.HashPassword(req.Password, authSalt)
 
+	// Generate recovery code and encrypt master key with it
+	masterKey := crypto.DeriveKey(req.Password, kdfSalt)
+	recoveryCode, err := crypto.GenerateRecoveryCode()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	recoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, recoveryCode)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	user := &db.User{
 		ID:           uuid.New().String(),
 		Username:     req.Username,
 		PasswordHash: passwordHash,
 		AuthSalt:     authSalt,
 		KDFSalt:      kdfSalt,
+		RecoveryMK:   recoveryMK,
 	}
 
 	if err := db.CreateUser(h.DB, user); err != nil {
@@ -125,8 +154,12 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Return recovery code — this is the ONLY time it's shown
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"id": user.ID})
+	json.NewEncoder(w).Encode(map[string]any{
+		"id":            user.ID,
+		"recovery_code": base64.URLEncoding.EncodeToString(recoveryCode),
+	})
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
@@ -193,4 +226,89 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		Sessions.Delete(claims.SessionID)
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+type recoveryRequest struct {
+	Username     string `json:"username"`
+	RecoveryCode string `json:"recovery_code"` // base64url-encoded
+	NewPassword  string `json:"new_password"`
+}
+
+// Recover resets a user's password using their recovery code.
+func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	var req recoveryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if !isStrongPassword(req.NewPassword) {
+		http.Error(w, "password must be 16-128 characters with at least one letter, one number, and one symbol", http.StatusBadRequest)
+		return
+	}
+
+	user, err := db.GetUserByUsername(h.DB, req.Username)
+	if err != nil || user.RecoveryMK == nil {
+		http.Error(w, "recovery failed", http.StatusBadRequest)
+		return
+	}
+
+	// Decode recovery code
+	recoveryCode, err := base64.URLEncoding.DecodeString(req.RecoveryCode)
+	if err != nil || len(recoveryCode) != 32 {
+		http.Error(w, "invalid recovery code", http.StatusBadRequest)
+		return
+	}
+
+	// Decrypt master key with recovery code
+	masterKey, err := crypto.DecryptMasterKeyWithRecovery(user.RecoveryMK, recoveryCode)
+	if err != nil {
+		http.Error(w, "invalid recovery code", http.StatusBadRequest)
+		return
+	}
+
+	// Generate new auth/KDF salts and hash
+	newAuthSalt, err := crypto.GenerateSalt()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	newKdfSalt, err := crypto.GenerateSalt()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	newPasswordHash := crypto.HashPassword(req.NewPassword, newAuthSalt)
+
+	// Update password in DB
+	if err := db.UpdateUserPassword(h.DB, user.ID, newPasswordHash, newAuthSalt, newKdfSalt); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Re-encrypt recovery MK with new recovery code (generate new one)
+	newRecoveryCode, err := crypto.GenerateRecoveryCode()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	newRecoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, newRecoveryCode)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	db.UpdateUserRecoveryMK(h.DB, user.ID, newRecoveryMK)
+
+	// Zero sensitive data
+	for i := range masterKey {
+		masterKey[i] = 0
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"success":       true,
+		"recovery_code": base64.URLEncoding.EncodeToString(newRecoveryCode),
+	})
 }

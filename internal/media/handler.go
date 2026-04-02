@@ -305,6 +305,6 @@ func toAPIItem(m *db.MediaItem) APIMediaItem {
 		HashNonce:     B64(m.HashNonce),
 		MetadataEnc:   B64(m.MetadataEnc),
 		MetadataNonce: B64(m.MetadataNonce),
-		CreatedAt:     m.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:     m.CreatedAt,
 	}
 }
