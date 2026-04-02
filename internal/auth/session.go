@@ -50,3 +50,17 @@ func (s *SessionStore) Delete(sessionID string) {
 		delete(s.sessions, sessionID)
 	}
 }
+
+// DeleteAllForUser removes all sessions belonging to a specific user.
+func (s *SessionStore) DeleteAllForUser(userID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for sid, entry := range s.sessions {
+		if entry.UserID == userID {
+			for i := range entry.MasterKey {
+				entry.MasterKey[i] = 0
+			}
+			delete(s.sessions, sid)
+		}
+	}
+}

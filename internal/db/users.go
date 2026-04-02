@@ -11,14 +11,15 @@ type User struct {
 	PasswordHash string
 	AuthSalt     []byte
 	KDFSalt      []byte
+	EncryptedMK  []byte // master key encrypted with KDF-derived key
 	RecoveryMK   []byte // master key encrypted with recovery code
 	CreatedAt    time.Time
 }
 
 func CreateUser(db *sql.DB, u *User) error {
 	_, err := db.Exec(
-		`INSERT INTO users (id, username, password_hash, auth_salt, kdf_salt, recovery_mk) VALUES (?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.PasswordHash, u.AuthSalt, u.KDFSalt, u.RecoveryMK,
+		`INSERT INTO users (id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.PasswordHash, u.AuthSalt, u.KDFSalt, u.EncryptedMK, u.RecoveryMK,
 	)
 	return err
 }
@@ -28,10 +29,10 @@ func UpdateUserRecoveryMK(db *sql.DB, userID string, recoveryMK []byte) error {
 	return err
 }
 
-func UpdateUserPassword(db *sql.DB, userID, passwordHash string, authSalt, kdfSalt []byte) error {
+func UpdateUserAuth(db *sql.DB, userID, passwordHash string, authSalt, kdfSalt, encryptedMK []byte) error {
 	_, err := db.Exec(
-		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ? WHERE id = ?`,
-		passwordHash, authSalt, kdfSalt, userID,
+		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ?, encrypted_mk = ? WHERE id = ?`,
+		passwordHash, authSalt, kdfSalt, encryptedMK, userID,
 	)
 	return err
 }
@@ -62,9 +63,9 @@ func ListUserIDs(db *sql.DB) ([]string, error) {
 func GetUserByUsername(db *sql.DB, username string) (*User, error) {
 	u := &User{}
 	err := db.QueryRow(
-		`SELECT id, username, password_hash, auth_salt, kdf_salt, recovery_mk, created_at FROM users WHERE username = ?`,
+		`SELECT id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, created_at FROM users WHERE username = ?`,
 		username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.RecoveryMK, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.EncryptedMK, &u.RecoveryMK, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -74,9 +75,9 @@ func GetUserByUsername(db *sql.DB, username string) (*User, error) {
 func GetUserByID(db *sql.DB, id string) (*User, error) {
 	u := &User{}
 	err := db.QueryRow(
-		`SELECT id, username, password_hash, auth_salt, kdf_salt, recovery_mk, created_at FROM users WHERE id = ?`,
+		`SELECT id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, created_at FROM users WHERE id = ?`,
 		id,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.RecoveryMK, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.EncryptedMK, &u.RecoveryMK, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

@@ -152,13 +152,23 @@ function showAuth() {
     galleryView.classList.add('hidden');
     header.classList.add('hidden');
     authError.classList.add('hidden');
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
+
+let pollTimer = null;
 
 function showGallery() {
     authView.classList.add('hidden');
     galleryView.classList.remove('hidden');
     header.classList.remove('hidden');
     loadMedia();
+    // Poll for new media every 10 seconds
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(() => {
+        if (!viewer.classList.contains('hidden')) return;
+        if (!uploadModal.classList.contains('hidden')) return;
+        pollMedia();
+    }, 10000);
 }
 
 // ─── Gallery ───
@@ -237,6 +247,55 @@ async function loadMedia() {
     }
 
     galleryLoading.classList.add('hidden');
+}
+
+// Silent background poll — only adds new items, no spinner, no grid reset
+async function pollMedia() {
+    try {
+        const res = await api(`/api/media?page=${currentPage}&limit=${PAGE_SIZE}`);
+        const rawItems = res.items || [];
+        const newTotal = res.total;
+
+        if (newTotal === totalItems) return; // nothing changed
+
+        // Find IDs we already have
+        const existingIds = new Set(mediaItems.map((m) => m.id));
+        const newItems = [];
+
+        for (const item of rawItems) {
+            if (existingIds.has(item.id)) continue;
+            try {
+                if (item.metadata_enc && item.metadata_nonce && hasMasterKey()) {
+                    const encData = base64ToBuffer(item.metadata_enc);
+                    const nonce = base64ToBuffer(item.metadata_nonce);
+                    const combined = new Uint8Array(nonce.length + encData.length);
+                    combined.set(nonce, 0);
+                    combined.set(encData, nonce.length);
+                    const decrypted = await decryptBlock(combined, getMasterKeyRaw());
+                    const meta = JSON.parse(new TextDecoder().decode(decrypted));
+                    if (meta.chunk_count) meta.chunk_count_trusted = meta.chunk_count;
+                    Object.assign(item, meta);
+                }
+            } catch {}
+            newItems.push(item);
+        }
+
+        if (newItems.length > 0) {
+            galleryEmpty.classList.add('hidden');
+            for (const item of newItems) {
+                mediaItems.push(item);
+                const el = await createGalleryItem(item);
+                galleryGrid.appendChild(el);
+            }
+        }
+
+        totalItems = newTotal;
+
+        // Also detect deletions
+        if (rawItems.length < mediaItems.length) {
+            loadMedia(); // full reload if items were removed
+        }
+    } catch {}
 }
 
 async function createGalleryItem(item) {

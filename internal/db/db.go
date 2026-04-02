@@ -39,6 +39,7 @@ func migrate(db *sql.DB) error {
 			password_hash TEXT NOT NULL,
 			auth_salt     BLOB NOT NULL,
 			kdf_salt      BLOB NOT NULL,
+			encrypted_mk  BLOB NOT NULL,
 			recovery_mk   BLOB,
 			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
