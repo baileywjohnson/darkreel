@@ -28,6 +28,23 @@ func GetUserCount(db *sql.DB) (int, error) {
 	return count, err
 }
 
+func ListUserIDs(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT id FROM users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func GetUserByUsername(db *sql.DB, username string) (*User, error) {
 	u := &User{}
 	err := db.QueryRow(

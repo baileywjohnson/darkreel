@@ -189,9 +189,29 @@ async function loadMedia() {
     const type = typeFilter.value;
 
     try {
-        const res = await api(`/api/media?sort=${sort}&order=${order}&type=${type}&page=${currentPage}&limit=${PAGE_SIZE}`);
-        mediaItems = res.items || [];
+        const res = await api(`/api/media?page=${currentPage}&limit=${PAGE_SIZE}`);
+        const rawItems = res.items || [];
         totalItems = res.total;
+
+        // Decrypt metadata for each item
+        mediaItems = [];
+        for (const item of rawItems) {
+            try {
+                if (item.metadata_enc && item.metadata_nonce && hasMasterKey()) {
+                    const encData = base64ToBuffer(item.metadata_enc);
+                    const nonce = base64ToBuffer(item.metadata_nonce);
+                    const combined = new Uint8Array(nonce.length + encData.length);
+                    combined.set(nonce, 0);
+                    combined.set(encData, nonce.length);
+                    const decrypted = await decryptBlock(combined, getMasterKeyRaw());
+                    const meta = JSON.parse(new TextDecoder().decode(decrypted));
+                    Object.assign(item, meta);
+                }
+            } catch (e) {
+                console.warn('Failed to decrypt metadata for', item.id, e);
+            }
+            mediaItems.push(item);
+        }
 
         if (mediaItems.length === 0) {
             galleryEmpty.classList.remove('hidden');
@@ -235,18 +255,8 @@ async function createGalleryItem(item) {
     const nameEl = document.createElement('span');
     nameEl.className = 'item-name';
 
-    // Decrypt name asynchronously
-    if (hasMasterKey()) {
-        try {
-            const encName = base64ToBuffer(item.name);
-            const name = await decryptName(encName);
-            nameEl.textContent = name;
-        } catch {
-            nameEl.textContent = 'Encrypted';
-        }
-    } else {
-        nameEl.textContent = 'Encrypted';
-    }
+    // Name is already decrypted from metadata blob
+    nameEl.textContent = item.name || 'Encrypted';
 
     div.appendChild(img);
     div.appendChild(badge);
@@ -293,13 +303,7 @@ async function openViewer(item) {
     viewerVideo.classList.add('hidden');
     viewerImage.classList.add('hidden');
 
-    // Decrypt name for title
-    try {
-        const encName = base64ToBuffer(item.name);
-        viewerTitle.textContent = await decryptName(encName);
-    } catch {
-        viewerTitle.textContent = 'Encrypted file';
-    }
+    viewerTitle.textContent = item.name || 'Encrypted file';
 
     // Decrypt file key
     const fileKeyEnc = base64ToBuffer(item.file_key_enc);
@@ -349,94 +353,33 @@ async function showImage(item, fileKey) {
 
 async function playVideo(item, fileKey) {
     viewerVideo.classList.remove('hidden');
+    viewerTitle.textContent = `Decrypting... 0/${item.chunk_count} chunks`;
 
-    // Check for MSE support
-    if (!('MediaSource' in window) || !MediaSource.isTypeSupported(item.mime_type)) {
-        // Fallback: download entire file and set as blob URL
-        await playVideoFallback(item, fileKey);
-        return;
-    }
-
-    const mediaSource = new MediaSource();
-    viewerVideo._mediaSource = mediaSource;
-    viewerVideo.src = URL.createObjectURL(mediaSource);
-
-    mediaSource.addEventListener('sourceopen', async () => {
-        let sourceBuffer;
-        try {
-            sourceBuffer = mediaSource.addSourceBuffer(item.mime_type);
-        } catch {
-            await playVideoFallback(item, fileKey);
-            return;
-        }
-
-        let currentChunk = 0;
-        const prefetchCount = 3;
-
-        async function fetchAndAppend(index) {
-            if (index >= item.chunk_count) {
-                if (mediaSource.readyState === 'open') {
-                    try { mediaSource.endOfStream(); } catch {}
-                }
-                return;
-            }
-            const res = await fetch(`/api/media/${item.id}/chunk/${index}`, {
+    try {
+        const chunks = [];
+        for (let i = 0; i < item.chunk_count; i++) {
+            viewerTitle.textContent = `Decrypting... ${i + 1}/${item.chunk_count} chunks`;
+            const res = await fetch(`/api/media/${item.id}/chunk/${i}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
+            if (!res.ok) throw new Error(`Chunk ${i} fetch failed: ${res.status}`);
             const encData = new Uint8Array(await res.arrayBuffer());
-            const decrypted = await workerDecrypt('decryptChunk', encData, fileKey, index);
-
-            await waitForBuffer(sourceBuffer);
-            sourceBuffer.appendBuffer(decrypted);
-            await new Promise(r => sourceBuffer.addEventListener('updateend', r, { once: true }));
+            const dec = await workerDecrypt('decryptChunk', encData, fileKey, i);
+            chunks.push(dec);
         }
+        const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+        const merged = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const c of chunks) { merged.set(c, offset); offset += c.length; }
 
-        // Load initial chunks
-        for (let i = 0; i < Math.min(prefetchCount, item.chunk_count); i++) {
-            try {
-                await fetchAndAppend(currentChunk++);
-            } catch (e) {
-                console.error('MSE error, falling back:', e);
-                await playVideoFallback(item, fileKey);
-                return;
-            }
-        }
+        viewerTitle.textContent = item.name || 'Video';
 
-        // Continue loading remaining chunks
-        async function loadMore() {
-            while (currentChunk < item.chunk_count) {
-                try {
-                    await fetchAndAppend(currentChunk++);
-                } catch (e) {
-                    console.error('Chunk load error:', e);
-                    break;
-                }
-            }
-        }
-
-        loadMore();
+        const blob = new Blob([merged], { type: item.mime_type || 'video/mp4' });
+        viewerVideo.src = URL.createObjectURL(blob);
         viewerVideo.play().catch(() => {});
-    });
-}
-
-async function playVideoFallback(item, fileKey) {
-    const chunks = [];
-    for (let i = 0; i < item.chunk_count; i++) {
-        const res = await fetch(`/api/media/${item.id}/chunk/${i}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const encData = new Uint8Array(await res.arrayBuffer());
-        const dec = await workerDecrypt('decryptChunk', encData, fileKey, i);
-        chunks.push(dec);
+    } catch (e) {
+        viewerTitle.textContent = 'Playback failed: ' + e.message;
     }
-    const totalLen = chunks.reduce((s, c) => s + c.length, 0);
-    const merged = new Uint8Array(totalLen);
-    let offset = 0;
-    for (const c of chunks) { merged.set(c, offset); offset += c.length; }
-
-    const blob = new Blob([merged], { type: item.mime_type });
-    viewerVideo.src = URL.createObjectURL(blob);
-    viewerVideo.play().catch(() => {});
 }
 
 function waitForBuffer(sb) {
@@ -481,12 +424,7 @@ async function downloadCurrentItem() {
         let offset = 0;
         for (const c of chunks) { merged.set(c, offset); offset += c.length; }
 
-        // Decrypt filename
-        let filename = 'download';
-        try {
-            const encName = base64ToBuffer(item.name);
-            filename = await decryptName(encName);
-        } catch {}
+        const filename = item.name || 'download';
 
         const blob = new Blob([merged], { type: item.mime_type });
         const url = URL.createObjectURL(blob);
@@ -607,37 +545,48 @@ async function uploadFile(file, itemEl) {
     // Encrypt keys with master key
     const encFileKey = await encryptFileKey(fileKey);
     const encThumbKey = await encryptFileKey(thumbKey);
-    const encName = await encryptName(file.name);
 
-    // Build multipart upload
-    setUploadStatus(itemEl, 'Uploading...');
-
-    const metadata = {
-        name: bufferToBase64(encName),
+    // Build and encrypt metadata blob
+    const metaPlain = {
+        name: file.name,
         media_type: mediaType,
         mime_type: file.type || 'application/octet-stream',
         size: file.size,
-        chunk_count: chunkCount,
-        file_key_enc: bufferToBase64(encFileKey),
-        thumb_key_enc: bufferToBase64(encThumbKey),
-        hash_nonce: bufferToBase64(hashNonce),
     };
 
     // Get video dimensions/duration
     if (mediaType === 'video') {
         try {
             const info = await getVideoInfo(file);
-            metadata.width = info.width;
-            metadata.height = info.height;
-            metadata.duration = info.duration;
+            metaPlain.width = info.width;
+            metaPlain.height = info.height;
+            metaPlain.duration = info.duration;
         } catch {}
     } else {
         try {
             const info = await getImageInfo(file);
-            metadata.width = info.width;
-            metadata.height = info.height;
+            metaPlain.width = info.width;
+            metaPlain.height = info.height;
         } catch {}
     }
+
+    const metaBytes = new TextEncoder().encode(JSON.stringify(metaPlain));
+    const encMetadata = await encryptBlock(metaBytes, getMasterKeyRaw());
+    // encryptBlock returns nonce (12 bytes) || ciphertext
+    const metadataNonce = encMetadata.slice(0, 12);
+    const metadataCiphertext = encMetadata.slice(12);
+
+    // Build multipart upload
+    setUploadStatus(itemEl, 'Uploading...');
+
+    const metadata = {
+        chunk_count: chunkCount,
+        file_key_enc: bufferToBase64(encFileKey),
+        thumb_key_enc: bufferToBase64(encThumbKey),
+        hash_nonce: bufferToBase64(hashNonce),
+        metadata_enc: bufferToBase64(metadataCiphertext),
+        metadata_nonce: bufferToBase64(metadataNonce),
+    };
 
     const formData = new FormData();
     formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
@@ -710,6 +659,21 @@ initWorkers();
         token = savedToken;
         userId = sessionStorage.getItem('userId');
 
+        // Validate the token is still accepted by the server
+        try {
+            const checkRes = await fetch('/api/media?limit=0', {
+                headers: { 'Authorization': `Bearer ${savedToken}` },
+            });
+            if (!checkRes.ok) throw new Error('invalid token');
+        } catch {
+            // Token rejected (server restarted, expired, etc.)
+            token = null;
+            userId = null;
+            sessionStorage.clear();
+            showAuth();
+            return;
+        }
+
         // Try to restore master key if persist-session is enabled
         const savedMK = sessionStorage.getItem('masterKey');
         if (savedMK && serverConfig.persistSession) {
@@ -721,6 +685,11 @@ initWorkers();
                 sessionStorage.removeItem('masterKey');
             }
         }
+
+        // Token is valid but no master key — need to re-login for decryption
+        token = null;
+        userId = null;
+        sessionStorage.clear();
     }
     showAuth();
 })();

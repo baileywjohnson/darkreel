@@ -71,6 +71,23 @@ func GetMedia(db *sql.DB, id, userID string) (*MediaItem, error) {
 	return m, nil
 }
 
+func ListMediaIDsByUser(db *sql.DB, userID string) ([]string, error) {
+	rows, err := db.Query(`SELECT id FROM media WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func DeleteMedia(db *sql.DB, id, userID string) error {
 	_, err := db.Exec(`DELETE FROM media WHERE id = ? AND user_id = ?`, id, userID)
 	return err

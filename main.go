@@ -50,6 +50,21 @@ func main() {
 		log.Printf("Admin user %q created", adminUser)
 	}
 
+	// Clean up orphaned data directories not referenced in DB
+	validPaths := make(map[string]bool)
+	userIDs, _ := db.ListUserIDs(database)
+	for _, uid := range userIDs {
+		mediaIDs, _ := db.ListMediaIDsByUser(database, uid)
+		for _, mid := range mediaIDs {
+			validPaths[uid+"/"+mid] = true
+		}
+	}
+	if removed, err := store.CleanupOrphans(validPaths); err != nil {
+		log.Printf("Warning: orphan cleanup failed: %v", err)
+	} else if removed > 0 {
+		log.Printf("Cleaned up %d orphaned media directories", removed)
+	}
+
 	srv := &server.Server{
 		DB:                database,
 		Storage:           store,
