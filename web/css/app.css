@@ -85,7 +85,7 @@ header {
 }
 .auth-title { font-size: 28px; font-weight: 700; color: var(--accent); text-align: center; }
 .auth-subtitle { text-align: center; color: var(--text-dim); margin: 4px 0 32px; font-size: 14px; }
-#auth-form input {
+#auth-form input, #recovery-form input, #register-form input {
     display: block;
     width: 100%;
     padding: 12px 16px;
@@ -96,10 +96,24 @@ header {
     color: var(--text);
     font-size: 15px;
 }
-#auth-form input:focus { outline: none; border-color: var(--accent); }
+#auth-form input:focus, #recovery-form input:focus, #register-form input:focus { outline: none; border-color: var(--accent); }
 .auth-buttons { display: flex; gap: 8px; margin-top: 8px; }
 .auth-buttons .btn { flex: 1; padding: 12px; }
 .error { color: var(--danger); font-size: 13px; margin-top: 12px; }
+.success { color: var(--success, #22c55e); font-size: 13px; margin-top: 12px; }
+.btn-link {
+    background: none;
+    border: none;
+    color: var(--text-secondary, #888);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 8px 0 0 0;
+    text-decoration: underline;
+    width: 100%;
+    text-align: center;
+}
+.btn-link:hover { color: var(--text-primary, #fff); }
+#recovery-form.hidden, #register-form.hidden { display: none; }
 
 /* Gallery */
 #gallery-view { padding: 24px; }

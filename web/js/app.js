@@ -80,9 +80,9 @@ function showError(msg) {
     authError.classList.remove('hidden');
 }
 
-async function handleLogin() {
-    const username = document.getElementById('auth-username').value;
-    const password = document.getElementById('auth-password').value;
+async function handleLogin(overrideUsername, overridePassword) {
+    const username = overrideUsername || document.getElementById('auth-username').value;
+    const password = overridePassword || document.getElementById('auth-password').value;
     try {
         const res = await api('/api/auth/login', { json: { username, password } });
         token = res.token;
@@ -119,24 +119,142 @@ async function handleLogin() {
 
         showGallery();
     } catch (e) {
-        showError(e.message);
-    }
-}
-
-async function handleRegister() {
-    const username = document.getElementById('auth-username').value;
-    const password = document.getElementById('auth-password').value;
-    try {
-        await api('/api/auth/register', { json: { username, password } });
-        // Auto-login after register
-        await handleLogin();
-    } catch (e) {
+        // If auth view was hidden (e.g., auto-login from registration), show it back
+        if (authView.classList.contains('hidden')) {
+            showAuth();
+        }
         showError(e.message);
     }
 }
 
 authForm.addEventListener('submit', (e) => { e.preventDefault(); handleLogin(); });
-registerBtn.addEventListener('click', handleRegister);
+
+// --- Register flow ---
+const registerFormEl = document.getElementById('register-form');
+const regError = document.getElementById('reg-error');
+const regSuccess = document.getElementById('reg-success');
+
+registerBtn.addEventListener('click', () => {
+    authFormEl.classList.add('hidden');
+    registerFormEl.classList.remove('hidden');
+    regError.classList.add('hidden');
+    regSuccess.classList.add('hidden');
+    // Reset form fields visibility in case they were hidden after a successful registration
+    registerFormEl.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = '');
+    // Remove any dynamically added continue button
+    const oldContinue = regSuccess.querySelector('button');
+    if (oldContinue) oldContinue.remove();
+});
+
+document.getElementById('back-to-login-from-reg').addEventListener('click', () => {
+    registerFormEl.classList.add('hidden');
+    authFormEl.classList.remove('hidden');
+});
+
+registerFormEl.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    regError.classList.add('hidden');
+    regSuccess.classList.add('hidden');
+
+    const username = document.getElementById('reg-username').value;
+    const password = document.getElementById('reg-password').value;
+    const confirm = document.getElementById('reg-password-confirm').value;
+
+    if (password !== confirm) {
+        regError.textContent = 'Passwords do not match';
+        regError.classList.remove('hidden');
+        return;
+    }
+
+    try {
+        const res = await api('/api/auth/register', { json: { username, password } });
+
+        // Hide form fields, show only recovery code + continue button
+        registerFormEl.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = 'none');
+        regSuccess.innerHTML = 'Account created! Your recovery code:<br><br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + (res.recovery_code || '') + '</code><br>Save this code somewhere safe — it cannot be shown again.';
+        regSuccess.classList.remove('hidden');
+
+        // Add continue button
+        const continueBtn = document.createElement('button');
+        continueBtn.className = 'btn btn-primary';
+        continueBtn.style.width = '100%';
+        continueBtn.style.marginTop = '8px';
+        continueBtn.style.padding = '12px';
+        continueBtn.textContent = 'Continue to Darkreel';
+        continueBtn.addEventListener('click', async () => {
+            // Hide everything before auto-login to prevent flashes
+            authView.classList.add('hidden');
+            await handleLogin(username, password);
+        });
+        regSuccess.appendChild(continueBtn);
+    } catch (err) {
+        regError.textContent = err.message || 'Registration failed';
+        regError.classList.remove('hidden');
+    }
+});
+
+// --- Recovery flow ---
+const authFormEl = document.getElementById('auth-form');
+const recoveryForm = document.getElementById('recovery-form');
+const forgotBtn = document.getElementById('forgot-btn');
+const backToLoginBtn = document.getElementById('back-to-login-btn');
+const recoveryError = document.getElementById('recovery-error');
+const recoverySuccess = document.getElementById('recovery-success');
+
+forgotBtn.addEventListener('click', () => {
+    authFormEl.classList.add('hidden');
+    recoveryForm.classList.remove('hidden');
+    recoveryError.classList.add('hidden');
+    recoverySuccess.classList.add('hidden');
+});
+
+backToLoginBtn.addEventListener('click', () => {
+    recoveryForm.classList.add('hidden');
+    authFormEl.classList.remove('hidden');
+});
+
+recoveryForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    recoveryError.classList.add('hidden');
+    recoverySuccess.classList.add('hidden');
+
+    const username = document.getElementById('recovery-username').value;
+    const recoveryCode = document.getElementById('recovery-code').value.trim();
+    const newPassword = document.getElementById('recovery-new-password').value;
+    const confirmPassword = document.getElementById('recovery-confirm-password').value;
+
+    if (newPassword !== confirmPassword) {
+        recoveryError.textContent = 'Passwords do not match';
+        recoveryError.classList.remove('hidden');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/auth/recover', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, recovery_code: recoveryCode, new_password: newPassword }),
+        });
+
+        if (!res.ok) {
+            const text = await res.text();
+            recoveryError.textContent = text || 'Recovery failed';
+            recoveryError.classList.remove('hidden');
+            return;
+        }
+
+        const data = await res.json();
+        recoverySuccess.innerHTML = 'Password reset! Your new recovery code:<br><code style="user-select:all;font-size:11px;word-break:break-all">' + data.recovery_code + '</code><br>Save this code — it cannot be shown again.';
+        recoverySuccess.classList.remove('hidden');
+
+        // Clear the form
+        document.getElementById('recovery-code').value = '';
+        document.getElementById('recovery-new-password').value = '';
+    } catch {
+        recoveryError.textContent = 'Connection failed';
+        recoveryError.classList.remove('hidden');
+    }
+});
 
 document.getElementById('logout-btn').addEventListener('click', async () => {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
@@ -152,6 +270,10 @@ function showAuth() {
     galleryView.classList.add('hidden');
     header.classList.add('hidden');
     authError.classList.add('hidden');
+    // Reset to login form (not recovery/register)
+    authFormEl.classList.remove('hidden');
+    recoveryForm.classList.add('hidden');
+    registerFormEl.classList.add('hidden');
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 

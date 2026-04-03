@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Darkreel</title>
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-e1L7B2zjNfBLm5JzkmlL7LZCpG3syw8/CcaPcu5dHSqoFdZEEm9mKFKkeXsFPeNm" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-v9Cop5uu3v57IfFo3QZHhOQchb/E3PTnzksDsuYiAhNmXADY+5MNcYTgneE0YfxQ" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -49,6 +49,30 @@
                             <button type="button" id="register-btn" class="btn btn-secondary">Register</button>
                         </div>
                         <p id="auth-error" class="error hidden"></p>
+                        <button type="button" id="forgot-btn" class="btn-link">Forgot Password?</button>
+                    </form>
+                    <form id="register-form" class="hidden">
+                        <input type="text" id="reg-username" placeholder="Username" required minlength="3" autocomplete="username">
+                        <input type="password" id="reg-password" placeholder="Password (16+ chars, letter + number + symbol)" required minlength="16" autocomplete="new-password">
+                        <input type="password" id="reg-password-confirm" placeholder="Confirm Password" required minlength="16" autocomplete="new-password">
+                        <div class="auth-buttons">
+                            <button type="submit" class="btn btn-primary">Create Account</button>
+                        </div>
+                        <p id="reg-error" class="error hidden"></p>
+                        <p id="reg-success" class="success hidden"></p>
+                        <button type="button" id="back-to-login-from-reg" class="btn-link">Back to Login</button>
+                    </form>
+                    <form id="recovery-form" class="hidden">
+                        <input type="text" id="recovery-username" placeholder="Username" required minlength="3" autocomplete="username">
+                        <input type="text" id="recovery-code" placeholder="Recovery Code" required autocomplete="off">
+                        <input type="password" id="recovery-new-password" placeholder="New Password (16+ chars)" required minlength="16" autocomplete="new-password">
+                        <input type="password" id="recovery-confirm-password" placeholder="Confirm New Password" required minlength="16" autocomplete="new-password">
+                        <div class="auth-buttons">
+                            <button type="submit" class="btn btn-primary">Reset Password</button>
+                        </div>
+                        <p id="recovery-error" class="error hidden"></p>
+                        <p id="recovery-success" class="success hidden"></p>
+                        <button type="button" id="back-to-login-btn" class="btn-link">Back to Login</button>
                     </form>
                 </div>
             </div>
@@ -106,6 +130,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-M6SR5UbMlrfTSXdPquiPdGJSpupC9f6e2N7i5CAIMJZaRZp8VrLTCUb1q+hkLm/5" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-tavz8YpKDplOCSsYb+gx0276N/ppXXjkCcUDMxJFFVrrIdm4TRqB/npiN62vw7zC" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-lK2wVSWYgptj0UwkOUnIHQQy/PRwZ3cYQDj9nXRJQZrXPt2QZ1IUP0AcEMq5ngFz" crossorigin="anonymous"></script>
 </body>
 </html>
