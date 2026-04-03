@@ -40,7 +40,7 @@ func (s *Server) routes() chi.Router {
 	r.Use(securityHeaders)
 	r.Use(RateLimit(100, time.Minute)) // Global: 100 req/min per IP
 
-	authHandler := &auth.Handler{DB: s.DB}
+	authHandler := &auth.Handler{DB: s.DB, Storage: s.Storage}
 	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage}
 
 	// Auth rate limiter: 5 attempts per minute per IP
@@ -81,6 +81,16 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/media/{id}/chunk/{index}", mediaHandler.GetChunk)
 		r.Get("/api/media/{id}/thumbnail", mediaHandler.GetThumbnail)
 		r.Get("/api/media/{id}/download", mediaHandler.Download)
+	})
+
+	// Admin routes (authenticated + admin only)
+	r.Group(func(r chi.Router) {
+		r.Use(auth.Middleware)
+		r.Use(auth.AdminMiddleware)
+
+		r.Get("/api/admin/users", authHandler.ListUsers)
+		r.Post("/api/admin/users", authHandler.CreateUser)
+		r.Delete("/api/admin/users/{id}", authHandler.DeleteUser)
 	})
 
 	// Serve frontend — SPA fallback

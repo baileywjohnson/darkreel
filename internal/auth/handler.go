@@ -34,7 +34,8 @@ func isStrongPassword(pw string) bool {
 }
 
 type Handler struct {
-	DB *sql.DB
+	DB      *sql.DB
+	Storage interface{ RemoveMedia(userID, mediaID string) error }
 }
 
 // BootstrapAdmin creates the initial admin user if no users exist.
@@ -91,6 +92,7 @@ func BootstrapAdmin(database *sql.DB, username, password string) (string, error)
 		KDFSalt:      kdfSalt,
 		EncryptedMK:  encryptedMK,
 		RecoveryMK:   recoveryMK,
+		IsAdmin:      true,
 	}
 
 	if err := db.CreateUser(database, user); err != nil {
@@ -113,7 +115,8 @@ type loginResponse struct {
 	Token              string `json:"token"`
 	KDFSalt            string `json:"kdf_salt"`
 	UserID             string `json:"user_id"`
-	EncryptedMasterKey string `json:"encrypted_master_key"` // master key encrypted with PBKDF2(password)
+	EncryptedMasterKey string `json:"encrypted_master_key"`
+	IsAdmin            bool   `json:"is_admin"`
 }
 
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +250,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		sessionKeyBytes[i] = 0
 	}
 
-	token, err := GenerateToken(user.ID, sessionID)
+	token, err := GenerateToken(user.ID, sessionID, user.IsAdmin)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -259,6 +262,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		KDFSalt:            base64.StdEncoding.EncodeToString(user.KDFSalt),
 		UserID:             user.ID,
 		EncryptedMasterKey: base64.StdEncoding.EncodeToString(encMasterKey),
+		IsAdmin:            user.IsAdmin,
 	})
 }
 

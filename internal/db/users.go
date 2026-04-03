@@ -13,14 +13,43 @@ type User struct {
 	KDFSalt      []byte
 	EncryptedMK  []byte // master key encrypted with KDF-derived key
 	RecoveryMK   []byte // master key encrypted with recovery code
+	IsAdmin      bool
 	CreatedAt    time.Time
 }
 
 func CreateUser(db *sql.DB, u *User) error {
+	isAdmin := 0
+	if u.IsAdmin {
+		isAdmin = 1
+	}
 	_, err := db.Exec(
-		`INSERT INTO users (id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.PasswordHash, u.AuthSalt, u.KDFSalt, u.EncryptedMK, u.RecoveryMK,
+		`INSERT INTO users (id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.PasswordHash, u.AuthSalt, u.KDFSalt, u.EncryptedMK, u.RecoveryMK, isAdmin,
 	)
+	return err
+}
+
+func ListUsers(db *sql.DB) ([]User, error) {
+	rows, err := db.Query(`SELECT id, username, is_admin, created_at FROM users ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []User
+	for rows.Next() {
+		var u User
+		var isAdmin int
+		if err := rows.Scan(&u.ID, &u.Username, &isAdmin, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		u.IsAdmin = isAdmin != 0
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+func DeleteUser(db *sql.DB, userID string) error {
+	_, err := db.Exec(`DELETE FROM users WHERE id = ?`, userID)
 	return err
 }
 
@@ -62,24 +91,28 @@ func ListUserIDs(db *sql.DB) ([]string, error) {
 
 func GetUserByUsername(db *sql.DB, username string) (*User, error) {
 	u := &User{}
+	var isAdmin int
 	err := db.QueryRow(
-		`SELECT id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, created_at FROM users WHERE username = ?`,
+		`SELECT id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, is_admin, created_at FROM users WHERE username = ?`,
 		username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.EncryptedMK, &u.RecoveryMK, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.EncryptedMK, &u.RecoveryMK, &isAdmin, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
+	u.IsAdmin = isAdmin != 0
 	return u, nil
 }
 
 func GetUserByID(db *sql.DB, id string) (*User, error) {
 	u := &User{}
+	var isAdmin int
 	err := db.QueryRow(
-		`SELECT id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, created_at FROM users WHERE id = ?`,
+		`SELECT id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, is_admin, created_at FROM users WHERE id = ?`,
 		id,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.EncryptedMK, &u.RecoveryMK, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.EncryptedMK, &u.RecoveryMK, &isAdmin, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
+	u.IsAdmin = isAdmin != 0
 	return u, nil
 }

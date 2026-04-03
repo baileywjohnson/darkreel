@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Darkreel</title>
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-v9Cop5uu3v57IfFo3QZHhOQchb/E3PTnzksDsuYiAhNmXADY+5MNcYTgneE0YfxQ" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-H/jsE9uwO2ywyhYLFgQkhait0nV7AaEfLUy8bur5T1K9X4Vk2MzMemPOJLVfTWF+" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -31,6 +31,7 @@
             </div>
             <div class="header-right">
                 <button id="upload-btn" class="btn btn-primary">Upload</button>
+                <button id="admin-btn" class="btn btn-ghost hidden">Admin</button>
                 <button id="logout-btn" class="btn btn-ghost">Logout</button>
             </div>
         </header>
@@ -43,7 +44,7 @@
                     <p class="auth-subtitle">E2E Encrypted Media</p>
                     <form id="auth-form">
                         <input type="text" id="auth-username" placeholder="Username" required minlength="3" autocomplete="username">
-                        <input type="password" id="auth-password" placeholder="Password" required minlength="16" autocomplete="current-password" title="16+ characters with at least one letter, number, and symbol">
+                        <input type="password" id="auth-password" placeholder="Password" required autocomplete="current-password">
                         <div class="auth-buttons">
                             <button type="submit" id="login-btn" class="btn btn-primary">Login</button>
                             <button type="button" id="register-btn" class="btn btn-secondary">Register</button>
@@ -93,6 +94,32 @@
                 </div>
             </div>
 
+            <!-- Admin panel -->
+            <div id="admin-view" class="view hidden">
+                <div class="admin-panel">
+                    <div class="admin-header">
+                        <h2>User Management</h2>
+                        <button id="admin-back-btn" class="btn btn-ghost">Back to Gallery</button>
+                    </div>
+                    <div class="admin-create">
+                        <h3>Create User</h3>
+                        <form id="admin-create-form">
+                            <input type="text" id="admin-new-username" placeholder="Username" required minlength="3" autocomplete="off">
+                            <input type="password" id="admin-new-password" placeholder="Password (16+ chars)" required minlength="16" autocomplete="off">
+                            <input type="password" id="admin-new-password-confirm" placeholder="Confirm Password" required minlength="16" autocomplete="off">
+                            <label class="admin-checkbox"><input type="checkbox" id="admin-new-is-admin"> Admin</label>
+                            <button type="submit" class="btn btn-primary">Create User</button>
+                        </form>
+                        <p id="admin-create-error" class="error hidden"></p>
+                        <p id="admin-create-success" class="success hidden"></p>
+                    </div>
+                    <div class="admin-users">
+                        <h3>Users</h3>
+                        <div id="admin-user-list"></div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Viewer overlay -->
             <div id="viewer" class="viewer hidden">
                 <div class="viewer-header">
@@ -130,6 +157,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-M6SR5UbMlrfTSXdPquiPdGJSpupC9f6e2N7i5CAIMJZaRZp8VrLTCUb1q+hkLm/5" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-xvSKJtBgbCy3+aXEOL/lxdmJ7OAWKOjP8Ulycqug9LpEojKLQ//5BMoq9Vfb/mk1" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-B07S4OAxaIb6zdec2ZENuol0WA0Yt5V86t5LJl5+nJlp3rScjKNDNW1aZnOMrqq5" crossorigin="anonymous"></script>
 </body>
 </html>

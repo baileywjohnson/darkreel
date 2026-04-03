@@ -115,6 +115,33 @@ header {
 .btn-link:hover { color: var(--text-primary, #fff); }
 #recovery-form.hidden, #register-form.hidden { display: none; }
 
+/* Admin */
+.admin-panel { max-width: 600px; margin: 0 auto; padding: 24px; }
+.admin-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+.admin-header h2 { font-size: 20px; font-weight: 600; }
+.admin-create, .admin-users { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px; margin-bottom: 16px; }
+.admin-create h3, .admin-users h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+.admin-create form { display: flex; flex-direction: column; gap: 0; }
+.admin-create input {
+    display: block; width: 100%; padding: 12px 16px; margin-bottom: 12px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); font-size: 15px;
+}
+.admin-create input:focus { outline: none; border-color: var(--accent); }
+.admin-checkbox { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-dim); margin-bottom: 12px; cursor: pointer; }
+.admin-checkbox input[type="checkbox"] { accent-color: var(--accent); }
+.admin-user-card {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; margin-bottom: 8px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.admin-user-info { font-size: 14px; }
+.admin-user-info .admin-badge {
+    font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+    background: rgba(99,102,241,0.15); color: var(--accent); margin-left: 8px;
+}
+.admin-user-card .btn-danger { font-size: 13px; padding: 6px 12px; }
+
 /* Gallery */
 #gallery-view { padding: 24px; }
 .gallery-grid {

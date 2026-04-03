@@ -20,6 +20,7 @@ const tokenExpiry = 24 * time.Hour
 type Claims struct {
 	UserID    string `json:"uid"`
 	SessionID string `json:"sid"`
+	IsAdmin   bool   `json:"adm,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -38,12 +39,13 @@ func SetSecret(secret []byte) {
 	jwtSecret = secret
 }
 
-func GenerateToken(userID, sessionID string) (string, error) {
+func GenerateToken(userID, sessionID string, isAdmin bool) (string, error) {
 	initSecret()
 	now := time.Now()
 	claims := Claims{
 		UserID:    userID,
 		SessionID: sessionID,
+		IsAdmin:   isAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(tokenExpiry)),
 			IssuedAt:  jwt.NewNumericDate(now),

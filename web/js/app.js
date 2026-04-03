@@ -69,11 +69,13 @@ async function api(path, opts = {}) {
 // ─── Auth ───
 const authView = document.getElementById('auth-view');
 const galleryView = document.getElementById('gallery-view');
+const adminView = document.getElementById('admin-view');
 const header = document.getElementById('header');
 const authForm = document.getElementById('auth-form');
 const authError = document.getElementById('auth-error');
 const loginBtn = document.getElementById('login-btn');
 const registerBtn = document.getElementById('register-btn');
+const adminBtn = document.getElementById('admin-btn');
 
 function showError(msg) {
     authError.textContent = msg;
@@ -106,8 +108,10 @@ async function handleLogin(overrideUsername, overridePassword) {
         }
 
         // Store session
+        serverConfig.isAdmin = res.is_admin || false;
         sessionStorage.setItem('token', token);
         sessionStorage.setItem('userId', userId);
+        sessionStorage.setItem('isAdmin', serverConfig.isAdmin ? '1' : '0');
 
         // Optionally persist master key for refresh survival
         if (serverConfig.persistSession) {
@@ -271,6 +275,84 @@ recoveryForm.addEventListener('submit', async (e) => {
     }
 });
 
+// --- Admin panel ---
+const adminCreateForm = document.getElementById('admin-create-form');
+const adminCreateError = document.getElementById('admin-create-error');
+const adminCreateSuccess = document.getElementById('admin-create-success');
+const adminUserList = document.getElementById('admin-user-list');
+
+adminBtn.addEventListener('click', () => {
+    galleryView.classList.add('hidden');
+    adminView.classList.remove('hidden');
+    sessionStorage.setItem('activeView', 'admin');
+    loadAdminUsers();
+});
+
+document.getElementById('admin-back-btn').addEventListener('click', () => {
+    adminView.classList.add('hidden');
+    galleryView.classList.remove('hidden');
+    sessionStorage.setItem('activeView', 'gallery');
+});
+
+adminCreateForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    adminCreateError.classList.add('hidden');
+    adminCreateSuccess.classList.add('hidden');
+
+    const username = document.getElementById('admin-new-username').value;
+    const password = document.getElementById('admin-new-password').value;
+    const confirm = document.getElementById('admin-new-password-confirm').value;
+    const isAdmin = document.getElementById('admin-new-is-admin').checked;
+
+    if (password !== confirm) {
+        adminCreateError.textContent = 'Passwords do not match';
+        adminCreateError.classList.remove('hidden');
+        return;
+    }
+
+    try {
+        const res = await api('/api/admin/users', { json: { username, password, is_admin: isAdmin } });
+        adminCreateSuccess.innerHTML = 'User "' + escapeHtml(res.username) + '" created.<br>Recovery code:<br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:8px;margin-top:4px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + res.recovery_code + '</code>';
+        adminCreateSuccess.classList.remove('hidden');
+        adminCreateForm.reset();
+        loadAdminUsers();
+    } catch (err) {
+        adminCreateError.textContent = err.message || 'Failed to create user';
+        adminCreateError.classList.remove('hidden');
+    }
+});
+
+async function loadAdminUsers() {
+    try {
+        const users = await api('/api/admin/users');
+        if (!users || users.length === 0) {
+            adminUserList.innerHTML = '<p style="color:var(--text-dim);font-size:14px">No users</p>';
+            return;
+        }
+        adminUserList.innerHTML = users.map(u => `
+            <div class="admin-user-card">
+                <div class="admin-user-info">
+                    ${escapeHtml(u.username)}
+                    ${u.is_admin ? '<span class="admin-badge">Admin</span>' : ''}
+                </div>
+                ${u.is_admin ? '' : '<button class="btn btn-danger" data-delete-uid="' + u.id + '">Delete</button>'}
+            </div>
+        `).join('');
+
+        adminUserList.querySelectorAll('[data-delete-uid]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                if (!confirm('Delete this user and all their media? This cannot be undone.')) return;
+                try {
+                    await api('/api/admin/users/' + btn.dataset.deleteUid, { method: 'DELETE' });
+                    loadAdminUsers();
+                } catch (err) {
+                    alert(err.message || 'Failed to delete user');
+                }
+            });
+        });
+    } catch {}
+}
+
 document.getElementById('logout-btn').addEventListener('click', async () => {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
     clearMasterKey();
@@ -283,6 +365,7 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
 function showAuth() {
     authView.classList.remove('hidden');
     galleryView.classList.add('hidden');
+    adminView.classList.add('hidden');
     header.classList.add('hidden');
     authError.classList.add('hidden');
     // Reset to login form (not recovery/register)
@@ -314,9 +397,21 @@ let pollTimer = null;
 
 function showGallery() {
     authView.classList.add('hidden');
-    galleryView.classList.remove('hidden');
     header.classList.remove('hidden');
-    loadMedia();
+    // Show admin button if user is admin
+    adminBtn.classList.toggle('hidden', !serverConfig.isAdmin);
+
+    // Restore active view
+    const activeView = sessionStorage.getItem('activeView');
+    if (activeView === 'admin' && serverConfig.isAdmin) {
+        galleryView.classList.add('hidden');
+        adminView.classList.remove('hidden');
+        loadAdminUsers();
+    } else {
+        adminView.classList.add('hidden');
+        galleryView.classList.remove('hidden');
+        loadMedia();
+    }
     // Poll for new media every 10 seconds
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(() => {
@@ -905,6 +1000,9 @@ initWorkers();
             showAuth();
             return;
         }
+
+        // Restore admin flag
+        serverConfig.isAdmin = sessionStorage.getItem('isAdmin') === '1';
 
         // Try to restore master key if persist-session is enabled
         const savedMK = sessionStorage.getItem('masterKey');
