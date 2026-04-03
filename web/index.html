@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Darkreel</title>
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-eokH2GTRazvJbDQ9zd9+eLDAfkUm+pm7FK1oDwTQ9RLMpXS1Zpg0/KxtbQQ6PPtu" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-0u7nR25FnyNyqcXyRq3GVL+KFPeHIq6QyFoWStMSYAYa4FNd+03nQNUnmkqE1RaB" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -158,7 +158,7 @@
                     </div>
                     <div class="admin-create">
                         <h3>Delete Account</h3>
-                        <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px">This will permanently delete your account and all your encrypted media. This cannot be undone.</p>
+                        <p class="delete-warning">This will permanently delete your account and all your encrypted media. This cannot be undone.</p>
                         <form id="settings-delete-form">
                             <input type="password" id="settings-delete-pw" placeholder="Enter your password to confirm" required autocomplete="current-password">
                             <button type="submit" class="btn btn-danger">Delete My Account</button>
@@ -173,7 +173,7 @@
                 <div class="modal-card">
                     <h3>Move to folder</h3>
                     <div id="move-folder-list" class="move-folder-list"></div>
-                    <button id="move-cancel" class="btn btn-ghost" style="width:100%;margin-top:12px">Cancel</button>
+                    <button id="move-cancel" class="btn btn-ghost move-cancel-btn">Cancel</button>
                 </div>
             </div>
 
@@ -214,7 +214,7 @@
 
     </div>
 
-    <script src="/js/crypto.js" type="module" integrity="sha384-M6SR5UbMlrfTSXdPquiPdGJSpupC9f6e2N7i5CAIMJZaRZp8VrLTCUb1q+hkLm/5" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-6nZtEW0hb5FCzl0jyYQhBozSRKBftTpjiB+MyXLG8Jqj47zepHcPFvOvJMzXhqEb" crossorigin="anonymous"></script>
+    <script src="/js/crypto.js" type="module" integrity="sha384-kz+RdWJ9sKpNLUTzFDdAswYUmAVZOOLlcqsSe2DJuAdRWVeQ3fdRWznWK/50al62" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-x21iEiIGUqlxmkk5CGOcSRsYmsSMf69Ptsp7k01QdCfnUDuJu5L9bMoiRhNK6Ebu" crossorigin="anonymous"></script>
 </body>
 </html>

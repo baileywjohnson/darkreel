@@ -233,9 +233,9 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	Sessions.Set(sessionID, user.ID, masterKey)
 
 	// Encrypt master key with a password-derived session key for the client.
-	// Client derives the same session key via PBKDF2(password, "darkreel-session-key")
+	// Client derives the same session key via PBKDF2(password, kdfSalt)
 	// and decrypts the master key. This avoids needing Argon2id in the browser.
-	sessionKeyBytes := crypto.DeriveSessionKey(req.Password)
+	sessionKeyBytes := crypto.DeriveSessionKey(req.Password, user.KDFSalt)
 	encMasterKey, err := crypto.EncryptBlock(masterKey, sessionKeyBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -349,7 +349,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Re-encrypt master key with new session key for the client
-	newSessionKey := crypto.DeriveSessionKey(req.NewPassword)
+	newSessionKey := crypto.DeriveSessionKey(req.NewPassword, newKdfSalt)
 	newEncMKForClient, err := crypto.EncryptBlock(masterKey, newSessionKey)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -373,6 +373,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"success":              true,
 		"token":                newToken,
+		"kdf_salt":             base64.StdEncoding.EncodeToString(newKdfSalt),
 		"encrypted_master_key": base64.StdEncoding.EncodeToString(newEncMKForClient),
 	})
 }
@@ -447,14 +448,14 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 	// Decode recovery code
 	recoveryCode, err := base64.URLEncoding.DecodeString(req.RecoveryCode)
 	if err != nil || len(recoveryCode) != 32 {
-		http.Error(w, "invalid recovery code", http.StatusBadRequest)
+		http.Error(w, "recovery failed", http.StatusBadRequest)
 		return
 	}
 
 	// Decrypt master key with recovery code
 	masterKey, err := crypto.DecryptMasterKeyWithRecovery(user.RecoveryMK, recoveryCode)
 	if err != nil {
-		http.Error(w, "invalid recovery code", http.StatusBadRequest)
+		http.Error(w, "recovery failed", http.StatusBadRequest)
 		return
 	}
 

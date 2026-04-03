@@ -91,14 +91,14 @@ async function handleLogin(overrideUsername, overridePassword) {
         userId = res.user_id;
         kdfSalt = res.kdf_salt;
 
-        // Receive encrypted master key and decrypt it
+        // Receive encrypted master key and decrypt it using per-user KDF salt
         if (res.encrypted_master_key) {
             const encMK = base64ToBuffer(res.encrypted_master_key);
             const sessionKeyMaterial = await crypto.subtle.importKey(
                 'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits', 'deriveKey']
             );
             const sessionKey = await crypto.subtle.deriveKey(
-                { name: 'PBKDF2', salt: new TextEncoder().encode('darkreel-session-key'), iterations: 100000, hash: 'SHA-256' },
+                { name: 'PBKDF2', salt: base64ToBuffer(res.kdf_salt), iterations: 600000, hash: 'SHA-256' },
                 sessionKeyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
             );
             const iv = encMK.slice(0, 12);
@@ -205,6 +205,37 @@ const backToLoginBtn = document.getElementById('back-to-login-btn');
 const recoveryError = document.getElementById('recovery-error');
 const recoverySuccess = document.getElementById('recovery-success');
 
+// Display a recovery code with a continue button. Survives page refresh
+// because the code is persisted in sessionStorage until dismissed.
+function showRecoveryCode(code, username, password) {
+    recoveryForm.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = 'none');
+    recoverySuccess.innerHTML = 'Password reset! Your new recovery code:<br><br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + escapeHtml(code) + '</code><br>Save this code somewhere safe — it cannot be shown again.';
+    recoverySuccess.classList.remove('hidden');
+
+    const continueBtn = document.createElement('button');
+    continueBtn.className = 'btn btn-primary';
+    continueBtn.style.width = '100%';
+    continueBtn.style.marginTop = '8px';
+    continueBtn.style.padding = '12px';
+    continueBtn.textContent = 'Continue to Darkreel';
+    continueBtn.addEventListener('click', async () => {
+        sessionStorage.removeItem('pendingRecoveryCode');
+        sessionStorage.removeItem('pendingRecoveryUser');
+        if (password) {
+            authView.classList.add('hidden');
+            await handleLogin(username, password);
+        } else {
+            showAuth();
+        }
+    });
+    recoverySuccess.appendChild(continueBtn);
+
+    authView.classList.remove('hidden');
+    authFormEl.classList.add('hidden');
+    registerFormEl.classList.add('hidden');
+    recoveryForm.classList.remove('hidden');
+}
+
 forgotBtn.addEventListener('click', () => {
     authFormEl.classList.add('hidden');
     recoveryForm.classList.remove('hidden');
@@ -253,22 +284,11 @@ recoveryForm.addEventListener('submit', async (e) => {
 
         const data = await res.json();
 
-        // Hide form fields, show only recovery code + continue button
-        recoveryForm.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = 'none');
-        recoverySuccess.innerHTML = 'Password reset! Your new recovery code:<br><br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + data.recovery_code + '</code><br>Save this code somewhere safe — it cannot be shown again.';
-        recoverySuccess.classList.remove('hidden');
+        // Persist recovery code so it survives page refresh
+        sessionStorage.setItem('pendingRecoveryCode', data.recovery_code);
+        sessionStorage.setItem('pendingRecoveryUser', username);
 
-        const continueBtn = document.createElement('button');
-        continueBtn.className = 'btn btn-primary';
-        continueBtn.style.width = '100%';
-        continueBtn.style.marginTop = '8px';
-        continueBtn.style.padding = '12px';
-        continueBtn.textContent = 'Continue to Darkreel';
-        continueBtn.addEventListener('click', async () => {
-            authView.classList.add('hidden');
-            await handleLogin(username, newPassword);
-        });
-        recoverySuccess.appendChild(continueBtn);
+        showRecoveryCode(data.recovery_code, username, newPassword);
     } catch {
         recoveryError.textContent = 'Connection failed';
         recoveryError.classList.remove('hidden');
@@ -413,12 +433,13 @@ document.getElementById('settings-change-pw-form').addEventListener('submit', as
             sessionStorage.setItem('token', token);
         }
         if (res.encrypted_master_key) {
+            if (res.kdf_salt) kdfSalt = res.kdf_salt;
             const encMK = base64ToBuffer(res.encrypted_master_key);
             const sessionKeyMaterial = await crypto.subtle.importKey(
                 'raw', new TextEncoder().encode(newPw), 'PBKDF2', false, ['deriveBits', 'deriveKey']
             );
             const sessionKey = await crypto.subtle.deriveKey(
-                { name: 'PBKDF2', salt: new TextEncoder().encode('darkreel-session-key'), iterations: 100000, hash: 'SHA-256' },
+                { name: 'PBKDF2', salt: base64ToBuffer(kdfSalt), iterations: 600000, hash: 'SHA-256' },
                 sessionKeyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
             );
             const iv = encMK.slice(0, 12);
@@ -487,6 +508,9 @@ function showAuth() {
     // Reset visibility of fields (in case hidden after success)
     recoveryForm.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = '');
     registerFormEl.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = '');
+    // Clear any pending recovery code
+    sessionStorage.removeItem('pendingRecoveryCode');
+    sessionStorage.removeItem('pendingRecoveryUser');
     // Remove dynamically added continue buttons
     const recContinue = recoverySuccess.querySelector('button');
     if (recContinue) recContinue.remove();
@@ -1603,5 +1627,13 @@ initWorkers();
         userId = null;
         sessionStorage.clear();
     }
+    // Check for a pending recovery code that should survive refresh
+    const pendingCode = sessionStorage.getItem('pendingRecoveryCode');
+    const pendingUser = sessionStorage.getItem('pendingRecoveryUser');
+    if (pendingCode) {
+        showRecoveryCode(pendingCode, pendingUser, null);
+        return;
+    }
+
     showAuth();
 })();

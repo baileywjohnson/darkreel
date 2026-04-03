@@ -147,13 +147,20 @@ func TestHashModification(t *testing.T) {
 }
 
 func TestSessionKeyDerivation(t *testing.T) {
-	key := DeriveSessionKey("testpassword")
+	salt := []byte("test-salt-1234567890123456789012")
+	key := DeriveSessionKey("testpassword", salt)
 	if len(key) != 32 {
 		t.Fatalf("session key should be 32 bytes, got %d", len(key))
 	}
-	// Same password should produce same key
-	key2 := DeriveSessionKey("testpassword")
+	// Same password + salt should produce same key
+	key2 := DeriveSessionKey("testpassword", salt)
 	if !bytes.Equal(key, key2) {
 		t.Fatal("deterministic derivation failed")
+	}
+	// Different salt should produce different key
+	salt2 := []byte("different-salt-12345678901234567")
+	key3 := DeriveSessionKey("testpassword", salt2)
+	if bytes.Equal(key, key3) {
+		t.Fatal("different salts should produce different keys")
 	}
 }

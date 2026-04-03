@@ -64,10 +64,10 @@ func DecryptKey(encryptedKey, masterKey []byte) ([]byte, error) {
 }
 
 // DeriveSessionKey derives a 256-bit key using PBKDF2 with SHA-256.
+// Uses the user's KDF salt for per-user key isolation.
 // This matches the client-side Web Crypto PBKDF2 derivation.
-func DeriveSessionKey(password string) []byte {
-	salt := []byte("darkreel-session-key")
-	return pbkdf2.Key([]byte(password), salt, 100000, 32, sha256.New)
+func DeriveSessionKey(password string, kdfSalt []byte) []byte {
+	return pbkdf2.Key([]byte(password), kdfSalt, 600000, 32, sha256.New)
 }
 
 // GenerateRecoveryCode generates a random 256-bit recovery code.

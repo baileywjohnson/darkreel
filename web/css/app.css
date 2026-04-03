@@ -438,6 +438,9 @@ header {
     transition: width 0.2s;
 }
 
+.delete-warning { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
+.move-cancel-btn { width: 100%; margin-top: 12px; }
+
 /* Responsive */
 @media (max-width: 768px) {
     header { flex-wrap: wrap; gap: 8px; }

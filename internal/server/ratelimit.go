@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -56,11 +57,20 @@ func (rl *rateLimiter) allow(ip string) bool {
 }
 
 // RateLimit returns middleware that limits requests per IP.
+// Uses r.RemoteAddr which is set by chi's RealIP middleware when behind a proxy,
+// falling back to the direct connection address. The port suffix is stripped
+// so each IP gets a single bucket regardless of ephemeral port.
 func RateLimit(max int, window time.Duration) func(http.Handler) http.Handler {
 	rl := newRateLimiter(max, window)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !rl.allow(r.RemoteAddr) {
+			ip := r.RemoteAddr
+			// Strip port from "host:port" — RemoteAddr always includes port
+			// when set by net/http, and RealIP may also leave it on.
+			if host, _, err := net.SplitHostPort(ip); err == nil {
+				ip = host
+			}
+			if !rl.allow(ip) {
 				http.Error(w, "too many requests", http.StatusTooManyRequests)
 				return
 			}
