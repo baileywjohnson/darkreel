@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Darkreel</title>
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-Xq2CC8H5Dw2SMoKVf0kacbJiWW5DOY1ZKaaI0LQiP/9HkyvhyDf57Hefnz5rXl7t" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-mSoPCHCg7l3xAuT6iQgeo3bnNoO2YpX/XEAxdcnLBn9rMetc1ClUB7v2K3NTjv0T" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -81,6 +81,13 @@
 
             <!-- Gallery view -->
             <div id="gallery-view" class="view hidden">
+                <div id="folder-bar" class="folder-bar">
+                    <div id="breadcrumb" class="breadcrumb"></div>
+                    <div class="folder-actions">
+                        <button id="new-folder-btn" class="btn btn-ghost btn-sm">New Folder</button>
+                    </div>
+                </div>
+                <div id="folder-list" class="folder-list"></div>
                 <div id="gallery-grid" class="gallery-grid"></div>
                 <div id="gallery-empty" class="gallery-empty hidden">
                     <p>No media yet. Upload files to get started.</p>
@@ -158,11 +165,21 @@
                 </div>
             </div>
 
+            <!-- Move to folder modal -->
+            <div id="move-modal" class="modal-overlay hidden">
+                <div class="modal-card">
+                    <h3>Move to folder</h3>
+                    <div id="move-folder-list" class="move-folder-list"></div>
+                    <button id="move-cancel" class="btn btn-ghost" style="width:100%;margin-top:12px">Cancel</button>
+                </div>
+            </div>
+
             <!-- Viewer overlay -->
             <div id="viewer" class="viewer hidden">
                 <div class="viewer-header">
                     <span id="viewer-title"></span>
                     <div class="viewer-actions">
+                        <button id="viewer-move" class="btn btn-ghost">Move</button>
                         <button id="viewer-download" class="btn btn-ghost">Download</button>
                         <button id="viewer-delete" class="btn btn-danger">Delete</button>
                         <button id="viewer-close" class="btn btn-ghost">Close</button>
@@ -195,6 +212,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-M6SR5UbMlrfTSXdPquiPdGJSpupC9f6e2N7i5CAIMJZaRZp8VrLTCUb1q+hkLm/5" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-05nJudtFFsdofnlEP8u3LsyzVS5+C6ZhmUh0Nk83tdGTtno5dMLi4iYP6qyKlZ08" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-9PnmxTHmcGbc3eEJXFX7hFxCJ2IuyzBa18a1nBriADUrYgLa8g7FPH4UrDHtuJU8" crossorigin="anonymous"></script>
 </body>
 </html>

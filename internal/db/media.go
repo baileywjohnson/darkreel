@@ -89,3 +89,45 @@ func DeleteMedia(db *sql.DB, id, userID string) error {
 	_, err := db.Exec(`DELETE FROM media WHERE id = ? AND user_id = ?`, id, userID)
 	return err
 }
+
+func UpdateMediaMetadata(db *sql.DB, id, userID string, metadataEnc, metadataNonce []byte) error {
+	result, err := db.Exec(
+		`UPDATE media SET metadata_enc = ?, metadata_nonce = ? WHERE id = ? AND user_id = ?`,
+		metadataEnc, metadataNonce, id, userID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// --- Folder tree (encrypted per-user blob) ---
+
+type UserData struct {
+	FolderTreeEnc   []byte
+	FolderTreeNonce []byte
+}
+
+func GetUserData(db *sql.DB, userID string) (*UserData, error) {
+	d := &UserData{}
+	err := db.QueryRow(
+		`SELECT folder_tree_enc, folder_tree_nonce FROM user_data WHERE user_id = ?`, userID,
+	).Scan(&d.FolderTreeEnc, &d.FolderTreeNonce)
+	if err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+func SaveUserData(db *sql.DB, userID string, folderTreeEnc, folderTreeNonce []byte) error {
+	_, err := db.Exec(`
+		INSERT INTO user_data (user_id, folder_tree_enc, folder_tree_nonce)
+		VALUES (?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET folder_tree_enc = excluded.folder_tree_enc, folder_tree_nonce = excluded.folder_tree_nonce
+	`, userID, folderTreeEnc, folderTreeNonce)
+	return err
+}

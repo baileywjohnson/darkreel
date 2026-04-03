@@ -535,6 +535,198 @@ function showGallery() {
     }, 10000);
 }
 
+// ─── Folders ───
+// Folder tree: [{id, name, parentId}] — decrypted client-side, encrypted at rest
+let folders = [];
+let currentFolderId = null; // null = root
+
+const folderList = document.getElementById('folder-list');
+const breadcrumb = document.getElementById('breadcrumb');
+
+async function loadFolderTree() {
+    try {
+        const res = await api('/api/folders');
+        if (res.folder_tree_enc && res.folder_tree_nonce && hasMasterKey()) {
+            const encData = base64ToBuffer(res.folder_tree_enc);
+            const nonce = base64ToBuffer(res.folder_tree_nonce);
+            const combined = new Uint8Array(nonce.length + encData.length);
+            combined.set(nonce, 0);
+            combined.set(encData, nonce.length);
+            const decrypted = await decryptBlock(combined, getMasterKeyRaw());
+            folders = JSON.parse(new TextDecoder().decode(decrypted));
+        } else {
+            folders = [];
+        }
+    } catch {
+        folders = [];
+    }
+}
+
+async function saveFolderTree() {
+    const data = new TextEncoder().encode(JSON.stringify(folders));
+    const enc = await encryptBlock(data, getMasterKeyRaw());
+    const nonce = enc.slice(0, 12);
+    const ciphertext = enc.slice(12);
+    await api('/api/folders', {
+        method: 'PUT',
+        json: {
+            folder_tree_enc: bufferToBase64(ciphertext),
+            folder_tree_nonce: bufferToBase64(nonce),
+        },
+    });
+}
+
+function getFolderChildren(parentId) {
+    return folders.filter(f => f.parentId === parentId);
+}
+
+function getFolderPath(folderId) {
+    const path = [];
+    let current = folderId;
+    while (current) {
+        const folder = folders.find(f => f.id === current);
+        if (!folder) break;
+        path.unshift(folder);
+        current = folder.parentId;
+    }
+    return path;
+}
+
+function renderBreadcrumb() {
+    const path = getFolderPath(currentFolderId);
+    let html = '<span class="breadcrumb-item" data-folder-id="">All Media</span>';
+    for (const folder of path) {
+        html += '<span class="breadcrumb-sep">/</span>';
+        if (folder.id === currentFolderId) {
+            html += `<span class="breadcrumb-current">${escapeHtml(folder.name)}</span>`;
+        } else {
+            html += `<span class="breadcrumb-item" data-folder-id="${folder.id}">${escapeHtml(folder.name)}</span>`;
+        }
+    }
+    breadcrumb.innerHTML = html;
+    breadcrumb.querySelectorAll('.breadcrumb-item').forEach(el => {
+        el.addEventListener('click', () => {
+            currentFolderId = el.dataset.folderId || null;
+            renderFolders();
+            renderGalleryItems();
+        });
+
+        // Drop target for breadcrumb (drag to parent/root)
+        el.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; el.style.background = 'var(--surface)'; });
+        el.addEventListener('dragleave', () => { el.style.background = ''; });
+        el.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            el.style.background = '';
+            if (!draggedItem) return;
+            const targetFolderId = el.dataset.folderId || null;
+            try {
+                await moveItemToFolder(draggedItem, targetFolderId);
+                renderGalleryItems();
+            } catch {}
+            draggedItem = null;
+        });
+    });
+}
+
+function renderFolders() {
+    renderBreadcrumb();
+    const children = getFolderChildren(currentFolderId);
+    if (children.length === 0) {
+        folderList.innerHTML = '';
+        return;
+    }
+    folderList.innerHTML = children.map(f => `
+        <div class="folder-item" data-folder-id="${f.id}">
+            <span class="folder-icon">📁</span>
+            <span class="folder-name">${escapeHtml(f.name)}</span>
+            <button class="folder-menu-btn" data-folder-action="${f.id}" title="Folder options">⋮</button>
+        </div>
+    `).join('');
+
+    folderList.querySelectorAll('.folder-item').forEach(el => {
+        el.addEventListener('click', (e) => {
+            if (e.target.classList.contains('folder-menu-btn')) return;
+            currentFolderId = el.dataset.folderId;
+            renderFolders();
+            renderGalleryItems();
+        });
+
+        // Drop target
+        el.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; el.classList.add('drag-over'); });
+        el.addEventListener('dragleave', () => { el.classList.remove('drag-over'); });
+        el.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            el.classList.remove('drag-over');
+            if (!draggedItem) return;
+            const targetFolderId = el.dataset.folderId;
+            try {
+                await moveItemToFolder(draggedItem, targetFolderId);
+                renderGalleryItems();
+            } catch {}
+            draggedItem = null;
+        });
+    });
+
+    folderList.querySelectorAll('.folder-menu-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const fId = btn.dataset.folderAction;
+            const folder = folders.find(f => f.id === fId);
+            if (!folder) return;
+
+            const action = prompt(`Folder "${folder.name}"\n\nType "rename" to rename or "delete" to delete:`);
+            if (!action) return;
+
+            if (action.toLowerCase() === 'rename') {
+                const newName = prompt('New folder name:', folder.name);
+                if (newName && newName.trim()) {
+                    folder.name = newName.trim();
+                    saveFolderTree();
+                    renderFolders();
+                }
+            } else if (action.toLowerCase() === 'delete') {
+                // Only delete if empty (no sub-folders and no media)
+                const hasChildren = folders.some(f => f.parentId === fId);
+                const hasMedia = mediaItems.some(m => m.folderId === fId);
+                if (hasChildren || hasMedia) {
+                    alert('Folder must be empty before deleting. Move or delete all items and sub-folders first.');
+                    return;
+                }
+                if (confirm(`Delete folder "${folder.name}"?`)) {
+                    folders = folders.filter(f => f.id !== fId);
+                    saveFolderTree();
+                    renderFolders();
+                }
+            }
+        });
+    });
+}
+
+function renderGalleryItems() {
+    galleryGrid.innerHTML = '';
+    const filtered = mediaItems.filter(m => (m.folderId || null) === currentFolderId);
+    if (filtered.length === 0 && getFolderChildren(currentFolderId).length === 0) {
+        galleryEmpty.classList.remove('hidden');
+    } else {
+        galleryEmpty.classList.add('hidden');
+    }
+    (async () => {
+        for (const item of filtered) {
+            const el = await createGalleryItem(item);
+            galleryGrid.appendChild(el);
+        }
+    })();
+}
+
+document.getElementById('new-folder-btn').addEventListener('click', async () => {
+    const name = prompt('Folder name:');
+    if (!name || !name.trim()) return;
+    const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+    folders.push({ id, name: name.trim(), parentId: currentFolderId });
+    await saveFolderTree();
+    renderFolders();
+});
+
 // ─── Gallery ───
 const galleryGrid = document.getElementById('gallery-grid');
 const galleryEmpty = document.getElementById('gallery-empty');
@@ -591,20 +783,17 @@ async function loadMedia() {
             mediaItems.push(item);
         }
 
-        if (mediaItems.length === 0) {
-            galleryEmpty.classList.remove('hidden');
-        } else {
-            for (const item of mediaItems) {
-                const el = await createGalleryItem(item);
-                galleryGrid.appendChild(el);
-            }
-            if (totalItems > PAGE_SIZE) {
-                pagination.classList.remove('hidden');
-                document.getElementById('page-info').textContent =
-                    `Page ${currentPage} of ${Math.ceil(totalItems / PAGE_SIZE)}`;
-                document.getElementById('prev-page').disabled = currentPage <= 1;
-                document.getElementById('next-page').disabled = currentPage * PAGE_SIZE >= totalItems;
-            }
+        // Load folder tree and render
+        await loadFolderTree();
+        renderFolders();
+        renderGalleryItems();
+
+        if (totalItems > PAGE_SIZE) {
+            pagination.classList.remove('hidden');
+            document.getElementById('page-info').textContent =
+                `Page ${currentPage} of ${Math.ceil(totalItems / PAGE_SIZE)}`;
+            document.getElementById('prev-page').disabled = currentPage <= 1;
+            document.getElementById('next-page').disabled = currentPage * PAGE_SIZE >= totalItems;
         }
     } catch (e) {
         console.error('Failed to load media:', e);
@@ -645,19 +834,17 @@ async function pollMedia() {
         }
 
         if (newItems.length > 0) {
-            galleryEmpty.classList.add('hidden');
             for (const item of newItems) {
                 mediaItems.push(item);
-                const el = await createGalleryItem(item);
-                galleryGrid.appendChild(el);
             }
+            renderGalleryItems();
         }
 
         totalItems = newTotal;
 
         // Also detect deletions
         if (rawItems.length < mediaItems.length) {
-            loadMedia(); // full reload if items were removed
+            loadMedia();
         }
     } catch {}
 }
@@ -689,6 +876,19 @@ async function createGalleryItem(item) {
     div.appendChild(badge);
     div.appendChild(nameEl);
     div.addEventListener('click', () => openViewer(item));
+
+    // Drag support
+    div.draggable = true;
+    div.addEventListener('dragstart', (e) => {
+        draggedItem = item;
+        div.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', item.id);
+    });
+    div.addEventListener('dragend', () => {
+        div.classList.remove('dragging');
+        draggedItem = null;
+    });
 
     return div;
 }
@@ -723,6 +923,92 @@ let currentViewerItem = null;
 document.getElementById('viewer-close').addEventListener('click', closeViewer);
 document.getElementById('viewer-delete').addEventListener('click', deleteCurrentItem);
 document.getElementById('viewer-download').addEventListener('click', downloadCurrentItem);
+document.getElementById('viewer-move').addEventListener('click', moveCurrentItem);
+
+// --- Move item to folder (shared logic) ---
+async function moveItemToFolder(item, newFolderId) {
+    const meta = {
+        name: item.name,
+        media_type: item.media_type,
+        mime_type: item.mime_type,
+        size: item.size,
+        chunk_count: item.chunk_count_trusted || item.chunk_count,
+        folderId: newFolderId,
+    };
+    if (item.width) meta.width = item.width;
+    if (item.height) meta.height = item.height;
+    if (item.duration) meta.duration = item.duration;
+
+    const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
+    const enc = await encryptBlock(metaBytes, getMasterKeyRaw());
+    const nonce = enc.slice(0, 12);
+    const ciphertext = enc.slice(12);
+
+    await api(`/api/media/${item.id}`, {
+        method: 'PATCH',
+        json: {
+            metadata_enc: bufferToBase64(ciphertext),
+            metadata_nonce: bufferToBase64(nonce),
+        },
+    });
+    item.folderId = newFolderId;
+}
+
+// --- Move modal ---
+const moveModal = document.getElementById('move-modal');
+const moveFolderList = document.getElementById('move-folder-list');
+let moveTargetItem = null;
+
+function openMoveModal(item) {
+    moveTargetItem = item;
+    moveFolderList.innerHTML = '';
+
+    // Root option
+    const rootEl = document.createElement('div');
+    rootEl.className = 'move-folder-item' + ((item.folderId || null) === null ? ' active' : '');
+    rootEl.innerHTML = '📂 All Media (root)';
+    rootEl.addEventListener('click', () => doMove(null));
+    moveFolderList.appendChild(rootEl);
+
+    // Recursively add folders
+    function addFolders(parentId, depth) {
+        for (const f of folders.filter(x => x.parentId === parentId)) {
+            const el = document.createElement('div');
+            el.className = 'move-folder-item' + (item.folderId === f.id ? ' active' : '');
+            el.innerHTML = `<span class="move-folder-indent" style="width:${depth * 20}px"></span>📁 ${escapeHtml(f.name)}`;
+            el.addEventListener('click', () => doMove(f.id));
+            moveFolderList.appendChild(el);
+            addFolders(f.id, depth + 1);
+        }
+    }
+    addFolders(null, 1);
+
+    moveModal.classList.remove('hidden');
+}
+
+async function doMove(folderId) {
+    if (!moveTargetItem) return;
+    try {
+        await moveItemToFolder(moveTargetItem, folderId);
+        moveModal.classList.add('hidden');
+        closeViewer();
+        renderGalleryItems();
+    } catch (e) {
+        alert('Failed to move: ' + e.message);
+    }
+}
+
+document.getElementById('move-cancel').addEventListener('click', () => {
+    moveModal.classList.add('hidden');
+    moveTargetItem = null;
+});
+
+function moveCurrentItem() {
+    if (currentViewerItem) openMoveModal(currentViewerItem);
+}
+
+// --- Drag and drop ---
+let draggedItem = null;
 
 /**
  * Verify the number of chunks received matches the trusted count from encrypted metadata.

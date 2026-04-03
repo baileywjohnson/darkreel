@@ -296,6 +296,85 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// UpdateMetadata allows the client to update an item's encrypted metadata
+// (e.g., to assign a folder). The server never decrypts it.
+func (h *Handler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r)
+	mediaID := chi.URLParam(r, "id")
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	var req struct {
+		MetadataEnc   string `json:"metadata_enc"`
+		MetadataNonce string `json:"metadata_nonce"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	encBytes, _ := FromB64(req.MetadataEnc)
+	nonceBytes, _ := FromB64(req.MetadataNonce)
+	if len(encBytes) == 0 || len(nonceBytes) == 0 {
+		http.Error(w, "invalid metadata", http.StatusBadRequest)
+		return
+	}
+
+	if err := db.UpdateMediaMetadata(h.DB, mediaID, userID, encBytes, nonceBytes); err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetFolders returns the user's encrypted folder tree.
+func (h *Handler) GetFolders(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r)
+
+	data, err := db.GetUserData(h.DB, userID)
+	if err != nil {
+		// No folder tree yet — return empty
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"folder_tree_enc": nil, "folder_tree_nonce": nil})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"folder_tree_enc":   B64(data.FolderTreeEnc),
+		"folder_tree_nonce": B64(data.FolderTreeNonce),
+	})
+}
+
+// SaveFolders saves the user's encrypted folder tree.
+func (h *Handler) SaveFolders(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r)
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB max for folder tree
+	var req struct {
+		FolderTreeEnc   string `json:"folder_tree_enc"`
+		FolderTreeNonce string `json:"folder_tree_nonce"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	encBytes, _ := FromB64(req.FolderTreeEnc)
+	nonceBytes, _ := FromB64(req.FolderTreeNonce)
+	if len(encBytes) == 0 || len(nonceBytes) == 0 {
+		http.Error(w, "invalid folder tree", http.StatusBadRequest)
+		return
+	}
+
+	if err := db.SaveUserData(h.DB, userID, encBytes, nonceBytes); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func toAPIItem(m *db.MediaItem) APIMediaItem {
 	return APIMediaItem{
 		ID:            m.ID,

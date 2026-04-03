@@ -96,6 +96,10 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/media/{id}/chunk/{index}", mediaHandler.GetChunk)
 		r.Get("/api/media/{id}/thumbnail", mediaHandler.GetThumbnail)
 		r.Get("/api/media/{id}/download", mediaHandler.Download)
+		r.Patch("/api/media/{id}", mediaHandler.UpdateMetadata)
+
+		r.Get("/api/folders", mediaHandler.GetFolders)
+		r.Put("/api/folders", mediaHandler.SaveFolders)
 	})
 
 	// Admin routes (authenticated + admin only)

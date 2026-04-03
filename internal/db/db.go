@@ -45,6 +45,12 @@ func migrate(db *sql.DB) error {
 			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
+		CREATE TABLE IF NOT EXISTS user_data (
+			user_id         TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			folder_tree_enc BLOB,
+			folder_tree_nonce BLOB
+		);
+
 		CREATE TABLE IF NOT EXISTS media (
 			id             TEXT PRIMARY KEY,
 			user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
