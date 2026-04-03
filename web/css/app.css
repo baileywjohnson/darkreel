@@ -141,6 +141,12 @@ header {
     background: rgba(99,102,241,0.15); color: var(--accent); margin-left: 8px;
 }
 .admin-user-card .btn-danger { font-size: 13px; padding: 6px 12px; }
+.admin-create form input[type="password"] {
+    display: block; width: 100%; padding: 12px 16px; margin-bottom: 12px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); font-size: 15px;
+}
+.admin-create form input[type="password"]:focus { outline: none; border-color: var(--accent); }
 
 /* Gallery */
 #gallery-view { padding: 24px; }

@@ -274,6 +274,150 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+type changePasswordRequest struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
+func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	claims := GetClaims(r)
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req changePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if !isStrongPassword(req.NewPassword) {
+		http.Error(w, "password must be 16-128 characters with at least one letter, one number, and one symbol", http.StatusBadRequest)
+		return
+	}
+
+	user, err := db.GetUserByID(h.DB, claims.UserID)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	if !crypto.VerifyPassword(req.OldPassword, user.AuthSalt, user.PasswordHash) {
+		http.Error(w, "current password is incorrect", http.StatusBadRequest)
+		return
+	}
+
+	// Decrypt master key with old password
+	oldKdfKey := crypto.DeriveKey(req.OldPassword, user.KDFSalt)
+	masterKey, err := crypto.DecryptBlock(user.EncryptedMK, oldKdfKey)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	for i := range oldKdfKey {
+		oldKdfKey[i] = 0
+	}
+
+	// Re-encrypt master key with new password
+	newAuthSalt, err := crypto.GenerateSalt()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	newKdfSalt, err := crypto.GenerateSalt()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	newKdfKey := crypto.DeriveKey(req.NewPassword, newKdfSalt)
+	newEncryptedMK, err := crypto.EncryptBlock(masterKey, newKdfKey)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	for i := range newKdfKey {
+		newKdfKey[i] = 0
+	}
+
+	newPasswordHash := crypto.HashPassword(req.NewPassword, newAuthSalt)
+	if err := db.UpdateUserAuth(h.DB, user.ID, newPasswordHash, newAuthSalt, newKdfSalt, newEncryptedMK); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Re-encrypt master key with new session key for the client
+	newSessionKey := crypto.DeriveSessionKey(req.NewPassword)
+	newEncMKForClient, err := crypto.EncryptBlock(masterKey, newSessionKey)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	for i := range newSessionKey {
+		newSessionKey[i] = 0
+	}
+	for i := range masterKey {
+		masterKey[i] = 0
+	}
+
+	// Generate new token (session stays alive, no re-login needed)
+	newToken, err := GenerateToken(user.ID, claims.SessionID, claims.IsAdmin)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"success":              true,
+		"token":                newToken,
+		"encrypted_master_key": base64.StdEncoding.EncodeToString(newEncMKForClient),
+	})
+}
+
+func (h *Handler) DeleteOwnAccount(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	claims := GetClaims(r)
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	user, err := db.GetUserByID(h.DB, claims.UserID)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	if !crypto.VerifyPassword(req.Password, user.AuthSalt, user.PasswordHash) {
+		http.Error(w, "password is incorrect", http.StatusBadRequest)
+		return
+	}
+
+	// Delete all media
+	mediaIDs, err := db.ListMediaIDsByUser(h.DB, user.ID)
+	if err == nil {
+		for _, mid := range mediaIDs {
+			h.Storage.RemoveMedia(user.ID, mid)
+		}
+	}
+
+	Sessions.DeleteAllForUser(user.ID)
+	db.DeleteUser(h.DB, user.ID)
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 type recoveryRequest struct {
 	Username     string `json:"username"`
 	RecoveryCode string `json:"recovery_code"` // base64url-encoded

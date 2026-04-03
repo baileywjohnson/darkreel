@@ -281,11 +281,17 @@ const adminCreateError = document.getElementById('admin-create-error');
 const adminCreateSuccess = document.getElementById('admin-create-success');
 const adminUserList = document.getElementById('admin-user-list');
 
-adminBtn.addEventListener('click', () => {
+adminBtn.addEventListener('click', async () => {
     galleryView.classList.add('hidden');
+    settingsView.classList.add('hidden');
     adminView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'admin');
     loadAdminUsers();
+    // Fetch current registration state
+    try {
+        const config = await fetch('/api/config').then(r => r.json());
+        adminRegToggle.checked = config.allowRegistration;
+    } catch {}
 });
 
 document.getElementById('admin-back-btn').addEventListener('click', () => {
@@ -335,7 +341,7 @@ async function loadAdminUsers() {
                     ${escapeHtml(u.username)}
                     ${u.is_admin ? '<span class="admin-badge">Admin</span>' : ''}
                 </div>
-                ${u.is_admin ? '' : '<button class="btn btn-danger" data-delete-uid="' + u.id + '">Delete</button>'}
+                ${u.id === userId ? '<span style="font-size:12px;color:var(--text-dim)">You</span>' : '<button class="btn btn-danger" data-delete-uid="' + u.id + '">Delete</button>'}
             </div>
         `).join('');
 
@@ -353,6 +359,105 @@ async function loadAdminUsers() {
     } catch {}
 }
 
+// --- Registration toggle (admin) ---
+const adminRegToggle = document.getElementById('admin-reg-toggle');
+adminRegToggle.addEventListener('change', async () => {
+    try {
+        await api('/api/admin/registration', { json: { enabled: adminRegToggle.checked } });
+        serverConfig.allowRegistration = adminRegToggle.checked;
+    } catch {
+        adminRegToggle.checked = !adminRegToggle.checked;
+    }
+});
+
+// --- Settings page ---
+const settingsView = document.getElementById('settings-view');
+const settingsBtn = document.getElementById('settings-btn');
+
+settingsBtn.addEventListener('click', () => {
+    galleryView.classList.add('hidden');
+    adminView.classList.add('hidden');
+    settingsView.classList.remove('hidden');
+    sessionStorage.setItem('activeView', 'settings');
+});
+
+document.getElementById('settings-back-btn').addEventListener('click', () => {
+    settingsView.classList.add('hidden');
+    galleryView.classList.remove('hidden');
+    sessionStorage.setItem('activeView', 'gallery');
+});
+
+document.getElementById('settings-change-pw-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('settings-pw-error');
+    const succEl = document.getElementById('settings-pw-success');
+    errEl.classList.add('hidden');
+    succEl.classList.add('hidden');
+
+    const oldPw = document.getElementById('settings-old-pw').value;
+    const newPw = document.getElementById('settings-new-pw').value;
+    const confirmPw = document.getElementById('settings-new-pw-confirm').value;
+
+    if (newPw !== confirmPw) {
+        errEl.textContent = 'Passwords do not match';
+        errEl.classList.remove('hidden');
+        return;
+    }
+
+    try {
+        const res = await api('/api/auth/change-password', { json: { old_password: oldPw, new_password: newPw } });
+
+        // Update session with new token and master key
+        if (res.token) {
+            token = res.token;
+            sessionStorage.setItem('token', token);
+        }
+        if (res.encrypted_master_key) {
+            const encMK = base64ToBuffer(res.encrypted_master_key);
+            const sessionKeyMaterial = await crypto.subtle.importKey(
+                'raw', new TextEncoder().encode(newPw), 'PBKDF2', false, ['deriveBits', 'deriveKey']
+            );
+            const sessionKey = await crypto.subtle.deriveKey(
+                { name: 'PBKDF2', salt: new TextEncoder().encode('darkreel-session-key'), iterations: 100000, hash: 'SHA-256' },
+                sessionKeyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
+            );
+            const iv = encMK.slice(0, 12);
+            const ct = encMK.slice(12);
+            const mk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, sessionKey, ct));
+            await setMasterKeyDirect(mk);
+            if (serverConfig.persistSession) {
+                sessionStorage.setItem('masterKey', bufferToBase64(getMasterKeyRaw()));
+            }
+        }
+
+        succEl.textContent = 'Password changed successfully.';
+        succEl.classList.remove('hidden');
+        document.getElementById('settings-change-pw-form').reset();
+    } catch (err) {
+        errEl.textContent = err.message || 'Failed to change password';
+        errEl.classList.remove('hidden');
+    }
+});
+
+document.getElementById('settings-delete-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('settings-delete-error');
+    errEl.classList.add('hidden');
+
+    if (!confirm('Are you sure you want to delete your account? All your encrypted media will be permanently destroyed.')) return;
+
+    const password = document.getElementById('settings-delete-pw').value;
+
+    try {
+        await api('/api/auth/account', { method: 'DELETE', json: { password } });
+        sessionStorage.clear();
+        showAuth();
+    } catch (err) {
+        errEl.textContent = err.message || 'Failed to delete account';
+        errEl.classList.remove('hidden');
+    }
+});
+
 document.getElementById('logout-btn').addEventListener('click', async () => {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
     clearMasterKey();
@@ -366,12 +471,15 @@ function showAuth() {
     authView.classList.remove('hidden');
     galleryView.classList.add('hidden');
     adminView.classList.add('hidden');
+    settingsView.classList.add('hidden');
     header.classList.add('hidden');
     authError.classList.add('hidden');
     // Reset to login form (not recovery/register)
     authFormEl.classList.remove('hidden');
     recoveryForm.classList.add('hidden');
     registerFormEl.classList.add('hidden');
+    // Show/hide register button based on current registration state
+    registerBtn.classList.toggle('hidden', !serverConfig.allowRegistration);
     // Clear all form fields
     authFormEl.reset();
     recoveryForm.reset();
@@ -402,13 +510,19 @@ function showGallery() {
     adminBtn.classList.toggle('hidden', !serverConfig.isAdmin);
 
     // Restore active view
-    const activeView = sessionStorage.getItem('activeView');
-    if (activeView === 'admin' && serverConfig.isAdmin) {
-        galleryView.classList.add('hidden');
+    const activeViewName = sessionStorage.getItem('activeView');
+    galleryView.classList.add('hidden');
+    adminView.classList.add('hidden');
+    settingsView.classList.add('hidden');
+
+    if (activeViewName === 'admin' && serverConfig.isAdmin) {
         adminView.classList.remove('hidden');
         loadAdminUsers();
+        // Set registration toggle state
+        adminRegToggle.checked = serverConfig.allowRegistration || false;
+    } else if (activeViewName === 'settings') {
+        settingsView.classList.remove('hidden');
     } else {
-        adminView.classList.add('hidden');
         galleryView.classList.remove('hidden');
         loadMedia();
     }

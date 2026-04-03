@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Darkreel</title>
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-H/jsE9uwO2ywyhYLFgQkhait0nV7AaEfLUy8bur5T1K9X4Vk2MzMemPOJLVfTWF+" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-Xq2CC8H5Dw2SMoKVf0kacbJiWW5DOY1ZKaaI0LQiP/9HkyvhyDf57Hefnz5rXl7t" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -31,6 +31,7 @@
             </div>
             <div class="header-right">
                 <button id="upload-btn" class="btn btn-primary">Upload</button>
+                <button id="settings-btn" class="btn btn-ghost">Settings</button>
                 <button id="admin-btn" class="btn btn-ghost hidden">Admin</button>
                 <button id="logout-btn" class="btn btn-ghost">Logout</button>
             </div>
@@ -117,6 +118,43 @@
                         <h3>Users</h3>
                         <div id="admin-user-list"></div>
                     </div>
+                    <div class="admin-create">
+                        <h3>Registration</h3>
+                        <label class="admin-checkbox">
+                            <input type="checkbox" id="admin-reg-toggle">
+                            Allow new user registration
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings view -->
+            <div id="settings-view" class="view hidden">
+                <div class="admin-panel">
+                    <div class="admin-header">
+                        <h2>Settings</h2>
+                        <button id="settings-back-btn" class="btn btn-ghost">Back to Gallery</button>
+                    </div>
+                    <div class="admin-create">
+                        <h3>Change Password</h3>
+                        <form id="settings-change-pw-form">
+                            <input type="password" id="settings-old-pw" placeholder="Current Password" required autocomplete="current-password">
+                            <input type="password" id="settings-new-pw" placeholder="New Password (16+ chars)" required minlength="16" autocomplete="new-password">
+                            <input type="password" id="settings-new-pw-confirm" placeholder="Confirm New Password" required minlength="16" autocomplete="new-password">
+                            <button type="submit" class="btn btn-primary">Change Password</button>
+                        </form>
+                        <p id="settings-pw-error" class="error hidden"></p>
+                        <p id="settings-pw-success" class="success hidden"></p>
+                    </div>
+                    <div class="admin-create">
+                        <h3>Delete Account</h3>
+                        <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px">This will permanently delete your account and all your encrypted media. This cannot be undone.</p>
+                        <form id="settings-delete-form">
+                            <input type="password" id="settings-delete-pw" placeholder="Enter your password to confirm" required autocomplete="current-password">
+                            <button type="submit" class="btn btn-danger">Delete My Account</button>
+                        </form>
+                        <p id="settings-delete-error" class="error hidden"></p>
+                    </div>
                 </div>
             </div>
 
@@ -157,6 +195,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-M6SR5UbMlrfTSXdPquiPdGJSpupC9f6e2N7i5CAIMJZaRZp8VrLTCUb1q+hkLm/5" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-B07S4OAxaIb6zdec2ZENuol0WA0Yt5V86t5LJl5+nJlp3rScjKNDNW1aZnOMrqq5" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-05nJudtFFsdofnlEP8u3LsyzVS5+C6ZhmUh0Nk83tdGTtno5dMLi4iYP6qyKlZ08" crossorigin="anonymous"></script>
 </body>
 </html>

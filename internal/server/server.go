@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/baileywjohnson/darkreel/internal/auth"
@@ -46,25 +47,37 @@ func (s *Server) routes() chi.Router {
 	// Auth rate limiter: 5 attempts per minute per IP
 	authLimiter := RateLimit(5, time.Minute)
 
+	// Registration state — mutable by admins at runtime
+	type regState struct {
+		sync.RWMutex
+		allowed bool
+	}
+	registration := &regState{allowed: s.AllowRegistration}
+
 	// Public config endpoint
 	persistSession := s.PersistSession
-	allowRegistration := s.AllowRegistration
 	r.Get("/api/config", func(w http.ResponseWriter, r *http.Request) {
+		registration.RLock()
+		allowed := registration.allowed
+		registration.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"persistSession":    persistSession,
-			"allowRegistration": allowRegistration,
+			"allowRegistration": allowed,
 		})
 	})
 
 	// Public routes (with strict rate limiting)
-	if s.AllowRegistration {
-		r.With(authLimiter).Post("/api/auth/register", authHandler.Register)
-	} else {
-		r.Post("/api/auth/register", func(w http.ResponseWriter, r *http.Request) {
+	r.With(authLimiter).Post("/api/auth/register", func(w http.ResponseWriter, r *http.Request) {
+		registration.RLock()
+		allowed := registration.allowed
+		registration.RUnlock()
+		if !allowed {
 			http.Error(w, "registration is disabled", http.StatusForbidden)
-		})
-	}
+			return
+		}
+		authHandler.Register(w, r)
+	})
 	r.With(authLimiter).Post("/api/auth/login", authHandler.Login)
 	r.With(authLimiter).Post("/api/auth/recover", authHandler.Recover)
 
@@ -73,6 +86,8 @@ func (s *Server) routes() chi.Router {
 		r.Use(auth.Middleware)
 
 		r.Post("/api/auth/logout", authHandler.Logout)
+		r.Post("/api/auth/change-password", authHandler.ChangePassword)
+		r.Delete("/api/auth/account", authHandler.DeleteOwnAccount)
 
 		r.Get("/api/media", mediaHandler.List)
 		r.Get("/api/media/{id}", mediaHandler.Get)
@@ -91,6 +106,21 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/admin/users", authHandler.ListUsers)
 		r.Post("/api/admin/users", authHandler.CreateUser)
 		r.Delete("/api/admin/users/{id}", authHandler.DeleteUser)
+
+		r.Post("/api/admin/registration", func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Enabled bool `json:"enabled"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid request body", http.StatusBadRequest)
+				return
+			}
+			registration.Lock()
+			registration.allowed = req.Enabled
+			registration.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]bool{"enabled": req.Enabled})
+		})
 	})
 
 	// Serve frontend — SPA fallback
