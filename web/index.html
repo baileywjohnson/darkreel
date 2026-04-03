@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Darkreel</title>
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-mSoPCHCg7l3xAuT6iQgeo3bnNoO2YpX/XEAxdcnLBn9rMetc1ClUB7v2K3NTjv0T" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-eokH2GTRazvJbDQ9zd9+eLDAfkUm+pm7FK1oDwTQ9RLMpXS1Zpg0/KxtbQQ6PPtu" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -87,11 +87,14 @@
                         <button id="new-folder-btn" class="btn btn-ghost btn-sm">New Folder</button>
                     </div>
                 </div>
-                <div id="folder-list" class="folder-list"></div>
                 <div id="gallery-grid" class="gallery-grid"></div>
                 <div id="gallery-empty" class="gallery-empty hidden">
-                    <p>No media yet. Upload files to get started.</p>
+                    <p>No media yet. Drag files here or click Upload to get started.</p>
                 </div>
+                <div id="gallery-drop-overlay" class="gallery-drop-overlay hidden">
+                    <p>Drop files to upload</p>
+                </div>
+                <div id="drop-upload-status" class="drop-upload-status hidden"></div>
                 <div id="gallery-loading" class="gallery-loading hidden">
                     <div class="spinner"></div>
                 </div>
@@ -212,6 +215,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-M6SR5UbMlrfTSXdPquiPdGJSpupC9f6e2N7i5CAIMJZaRZp8VrLTCUb1q+hkLm/5" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-9PnmxTHmcGbc3eEJXFX7hFxCJ2IuyzBa18a1nBriADUrYgLa8g7FPH4UrDHtuJU8" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-6nZtEW0hb5FCzl0jyYQhBozSRKBftTpjiB+MyXLG8Jqj47zepHcPFvOvJMzXhqEb" crossorigin="anonymous"></script>
 </body>
 </html>

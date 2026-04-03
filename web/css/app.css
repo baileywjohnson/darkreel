@@ -127,22 +127,46 @@ header {
 .breadcrumb-sep { color: var(--text-dim); font-size: 12px; }
 .folder-actions { display: flex; gap: 8px; }
 .btn-sm { font-size: 13px; padding: 6px 12px; }
-.folder-list { display: flex; flex-wrap: wrap; gap: 12px; padding: 16px 24px 0; }
-.folder-list:empty { display: none; }
 .folder-item {
-    display: flex; align-items: center; gap: 8px;
-    padding: 10px 16px; background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); cursor: pointer; font-size: 14px;
-    transition: border-color 0.15s;
+    position: relative;
+    aspect-ratio: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: transform 0.15s ease, border-color 0.15s ease;
 }
-.folder-item:hover { border-color: var(--accent); }
-.folder-icon { font-size: 18px; }
-.folder-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-item:hover { transform: scale(1.02); border-color: var(--accent); }
+.folder-icon { font-size: 48px; line-height: 1; }
+.folder-name {
+    font-size: 13px; max-width: 90%; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; text-align: center;
+}
 .folder-item .folder-menu-btn {
-    background: none; border: none; color: var(--text-dim); cursor: pointer;
-    font-size: 16px; padding: 0 4px; line-height: 1;
+    position: absolute; top: 8px; right: 8px;
+    background: rgba(0,0,0,0.5); border: none; color: #fff; cursor: pointer;
+    font-size: 16px; padding: 2px 6px; border-radius: 4px; line-height: 1;
 }
-.folder-item .folder-menu-btn:hover { color: var(--text); }
+.folder-item .folder-menu-btn:hover { background: rgba(0,0,0,0.8); }
+.folder-context-menu {
+    position: absolute; top: 36px; right: 8px; z-index: 50;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; min-width: 120px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+}
+.folder-context-menu button {
+    display: block; width: 100%; padding: 10px 16px; font-size: 13px;
+    background: none; border: none; color: var(--text); cursor: pointer;
+    text-align: left;
+}
+.folder-context-menu button:hover { background: var(--surface); }
+.folder-context-menu button.danger { color: var(--danger); }
+.folder-context-menu button.danger:hover { background: rgba(239,68,68,0.1); }
 
 /* Move modal */
 .modal-overlay {
@@ -165,6 +189,44 @@ header {
 .move-folder-item:hover { background: var(--bg); }
 .move-folder-item.active { background: var(--accent); color: #fff; }
 .move-folder-indent { display: inline-block; }
+
+/* Gallery drop-to-upload */
+.gallery-drop-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+}
+.gallery-drop-overlay.hidden { display: none; }
+.gallery-drop-overlay p {
+    font-size: 24px; font-weight: 600; color: var(--accent);
+    border: 3px dashed var(--accent); border-radius: var(--radius-lg);
+    padding: 48px 64px;
+}
+
+.drop-upload-status {
+    position: fixed; bottom: 24px; right: 24px; z-index: 100;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 16px 20px;
+    font-size: 13px; min-width: 250px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+}
+.drop-upload-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px;
+}
+.drop-upload-header span { font-weight: 600; font-size: 13px; }
+.drop-upload-close {
+    background: none; border: none; color: var(--text-dim); cursor: pointer;
+    font-size: 16px; padding: 0 2px; line-height: 1;
+}
+.drop-upload-close:hover { color: var(--text); }
+.drop-upload-status.hidden { display: none; }
+.drop-upload-status { transition: opacity 0.5s ease; }
+.drop-upload-item { padding: 4px 0; display: flex; justify-content: space-between; gap: 12px; }
+.drop-upload-item .status { color: var(--text-dim); }
+.drop-upload-item .status.done { color: var(--success, #22c55e); }
+.drop-upload-item .status.error { color: var(--danger); }
 
 /* Drag and drop */
 .gallery-item[draggable="true"] { cursor: grab; }

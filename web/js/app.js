@@ -540,7 +540,6 @@ function showGallery() {
 let folders = [];
 let currentFolderId = null; // null = root
 
-const folderList = document.getElementById('folder-list');
 const breadcrumb = document.getElementById('breadcrumb');
 
 async function loadFolderTree() {
@@ -630,23 +629,25 @@ function renderBreadcrumb() {
 
 function renderFolders() {
     renderBreadcrumb();
+}
+
+function createFolderElements() {
     const children = getFolderChildren(currentFolderId);
-    if (children.length === 0) {
-        folderList.innerHTML = '';
-        return;
-    }
-    folderList.innerHTML = children.map(f => `
-        <div class="folder-item" data-folder-id="${f.id}">
+    const elements = [];
+
+    for (const f of children) {
+        const el = document.createElement('div');
+        el.className = 'folder-item';
+        el.dataset.folderId = f.id;
+        el.innerHTML = `
             <span class="folder-icon">📁</span>
             <span class="folder-name">${escapeHtml(f.name)}</span>
             <button class="folder-menu-btn" data-folder-action="${f.id}" title="Folder options">⋮</button>
-        </div>
-    `).join('');
+        `;
 
-    folderList.querySelectorAll('.folder-item').forEach(el => {
         el.addEventListener('click', (e) => {
             if (e.target.classList.contains('folder-menu-btn')) return;
-            currentFolderId = el.dataset.folderId;
+            currentFolderId = f.id;
             renderFolders();
             renderGalleryItems();
         });
@@ -658,54 +659,114 @@ function renderFolders() {
             e.preventDefault();
             el.classList.remove('drag-over');
             if (!draggedItem) return;
-            const targetFolderId = el.dataset.folderId;
             try {
-                await moveItemToFolder(draggedItem, targetFolderId);
+                await moveItemToFolder(draggedItem, f.id);
                 renderGalleryItems();
             } catch {}
             draggedItem = null;
         });
-    });
 
-    folderList.querySelectorAll('.folder-menu-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+        const menuBtn = el.querySelector('.folder-menu-btn');
+        menuBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const fId = btn.dataset.folderAction;
-            const folder = folders.find(f => f.id === fId);
-            if (!folder) return;
+            // Close any existing context menu
+            document.querySelectorAll('.folder-context-menu').forEach(m => m.remove());
 
-            const action = prompt(`Folder "${folder.name}"\n\nType "rename" to rename or "delete" to delete:`);
-            if (!action) return;
+            const menu = document.createElement('div');
+            menu.className = 'folder-context-menu';
 
-            if (action.toLowerCase() === 'rename') {
-                const newName = prompt('New folder name:', folder.name);
+            const renameBtn = document.createElement('button');
+            renameBtn.textContent = 'Rename';
+            renameBtn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                menu.remove();
+                const newName = prompt('New folder name:', f.name);
                 if (newName && newName.trim()) {
-                    folder.name = newName.trim();
+                    f.name = newName.trim();
                     saveFolderTree();
-                    renderFolders();
+                    renderGalleryItems();
                 }
-            } else if (action.toLowerCase() === 'delete') {
-                // Only delete if empty (no sub-folders and no media)
-                const hasChildren = folders.some(f => f.parentId === fId);
-                const hasMedia = mediaItems.some(m => m.folderId === fId);
-                if (hasChildren || hasMedia) {
-                    alert('Folder must be empty before deleting. Move or delete all items and sub-folders first.');
-                    return;
+            });
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.className = 'danger';
+            deleteBtn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                menu.remove();
+
+                // Collect all sub-folder IDs recursively
+                function getAllDescendantIds(parentId) {
+                    const ids = [parentId];
+                    for (const child of folders.filter(x => x.parentId === parentId)) {
+                        ids.push(...getAllDescendantIds(child.id));
+                    }
+                    return ids;
                 }
-                if (confirm(`Delete folder "${folder.name}"?`)) {
-                    folders = folders.filter(f => f.id !== fId);
-                    saveFolderTree();
-                    renderFolders();
+                const allFolderIds = new Set(getAllDescendantIds(f.id));
+                const affectedMedia = mediaItems.filter(m => allFolderIds.has(m.folderId));
+                const subFolderCount = allFolderIds.size - 1;
+
+                let msg = `Delete folder "${f.name}"?`;
+                if (affectedMedia.length > 0 || subFolderCount > 0) {
+                    const parts = [];
+                    if (affectedMedia.length > 0) parts.push(`${affectedMedia.length} media item${affectedMedia.length !== 1 ? 's' : ''}`);
+                    if (subFolderCount > 0) parts.push(`${subFolderCount} sub-folder${subFolderCount !== 1 ? 's' : ''}`);
+                    msg += `\n\nThis will also permanently delete ${parts.join(' and ')} inside it.`;
                 }
-            }
+
+                showDeleteFolderConfirm(msg, async () => {
+                    // Delete all media in the folder and sub-folders
+                    for (const item of affectedMedia) {
+                        try {
+                            await api(`/api/media/${item.id}`, { method: 'DELETE' });
+                        } catch {}
+                    }
+                    mediaItems = mediaItems.filter(m => !allFolderIds.has(m.folderId));
+
+                    // Remove folder and all descendants
+                    folders = folders.filter(x => !allFolderIds.has(x.id));
+                    await saveFolderTree();
+
+                    // If we were inside the deleted folder, go to parent
+                    if (allFolderIds.has(currentFolderId)) {
+                        currentFolderId = f.parentId;
+                    }
+                    renderGalleryItems();
+                });
+            });
+
+            menu.appendChild(renameBtn);
+            menu.appendChild(deleteBtn);
+            el.appendChild(menu);
+
+            // Close menu on outside click
+            const closeMenu = (ev) => {
+                if (!menu.contains(ev.target)) {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closeMenu), 0);
         });
-    });
+
+        elements.push(el);
+    }
+    return elements;
 }
 
 function renderGalleryItems() {
+    renderBreadcrumb();
     galleryGrid.innerHTML = '';
+
+    // Render folders first, then media
+    const folderEls = createFolderElements();
+    for (const el of folderEls) {
+        galleryGrid.appendChild(el);
+    }
+
     const filtered = mediaItems.filter(m => (m.folderId || null) === currentFolderId);
-    if (filtered.length === 0 && getFolderChildren(currentFolderId).length === 0) {
+    if (filtered.length === 0 && folderEls.length === 0) {
         galleryEmpty.classList.remove('hidden');
     } else {
         galleryEmpty.classList.add('hidden');
@@ -724,7 +785,7 @@ document.getElementById('new-folder-btn').addEventListener('click', async () => 
     const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
     folders.push({ id, name: name.trim(), parentId: currentFolderId });
     await saveFolderTree();
-    renderFolders();
+    renderGalleryItems();
 });
 
 // ─── Gallery ───
@@ -1007,8 +1068,129 @@ function moveCurrentItem() {
     if (currentViewerItem) openMoveModal(currentViewerItem);
 }
 
+// --- Delete folder confirmation ---
+function showDeleteFolderConfirm(message, onConfirm) {
+    // Reuse modal overlay pattern
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal-card">
+            <h3>Delete Folder</h3>
+            <p style="font-size:14px;color:var(--text-dim);white-space:pre-line;margin-bottom:20px">${escapeHtml(message)}</p>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-danger" style="flex:1;padding:12px" id="confirm-delete-folder">Delete</button>
+                <button class="btn btn-ghost" style="flex:1;padding:12px" id="cancel-delete-folder">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('#confirm-delete-folder').addEventListener('click', () => {
+        overlay.remove();
+        onConfirm();
+    });
+    overlay.querySelector('#cancel-delete-folder').addEventListener('click', () => {
+        overlay.remove();
+    });
+}
+
 // --- Drag and drop ---
 let draggedItem = null;
+
+// --- Gallery drag-to-upload ---
+const galleryDropOverlay = document.getElementById('gallery-drop-overlay');
+let dragCounter = 0;
+
+document.addEventListener('dragenter', (e) => {
+    // Only show overlay for external file drops when gallery is visible
+    if (draggedItem) return;
+    if (!e.dataTransfer.types.includes('Files')) return;
+    if (galleryView.classList.contains('hidden')) return;
+    e.preventDefault();
+    dragCounter++;
+    galleryDropOverlay.classList.remove('hidden');
+});
+
+document.addEventListener('dragleave', (e) => {
+    if (draggedItem) return;
+    dragCounter--;
+    if (dragCounter <= 0) {
+        dragCounter = 0;
+        galleryDropOverlay.classList.add('hidden');
+    }
+});
+
+document.addEventListener('dragover', (e) => {
+    if (draggedItem) return;
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+});
+
+document.addEventListener('drop', (e) => {
+    if (draggedItem) return;
+    e.preventDefault();
+    dragCounter = 0;
+    galleryDropOverlay.classList.add('hidden');
+    if (e.dataTransfer.files.length > 0) {
+        handleDropUpload(e.dataTransfer.files);
+    }
+});
+
+// --- Drop-to-upload (no modal) ---
+const dropUploadStatus = document.getElementById('drop-upload-status');
+
+async function handleDropUpload(files) {
+    dropUploadStatus.innerHTML = '';
+    dropUploadStatus.classList.remove('hidden');
+
+    for (const file of files) {
+        const row = document.createElement('div');
+        row.className = 'drop-upload-item';
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = file.name;
+        nameSpan.style.overflow = 'hidden';
+        nameSpan.style.textOverflow = 'ellipsis';
+        nameSpan.style.whiteSpace = 'nowrap';
+        const statusSpan = document.createElement('span');
+        statusSpan.className = 'status';
+        statusSpan.textContent = 'Uploading...';
+        row.appendChild(nameSpan);
+        row.appendChild(statusSpan);
+        dropUploadStatus.appendChild(row);
+
+        // Add a placeholder tile to the gallery
+        const placeholder = document.createElement('div');
+        placeholder.className = 'gallery-item';
+        placeholder.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span style="font-size:12px;color:var(--text-dim)">' + escapeHtml(file.name) + '</span></div>';
+        galleryGrid.appendChild(placeholder);
+
+        try {
+            const dummyEl = createUploadItem(file.name);
+            dummyEl.style.display = 'none';
+            document.body.appendChild(dummyEl);
+            await uploadFile(file, dummyEl);
+            dummyEl.remove();
+            statusSpan.textContent = 'Done';
+            statusSpan.className = 'status done';
+        } catch (e) {
+            console.error('Drop upload failed:', e);
+            placeholder.remove();
+            statusSpan.textContent = 'Error';
+            statusSpan.className = 'status error';
+        }
+    }
+
+    // Fade out toast after 2 seconds, then refresh gallery
+    setTimeout(() => {
+        dropUploadStatus.style.opacity = '0';
+        setTimeout(() => {
+            dropUploadStatus.classList.add('hidden');
+            dropUploadStatus.style.opacity = '';
+        }, 500);
+    }, 2000);
+    loadMedia();
+}
 
 /**
  * Verify the number of chunks received matches the trusted count from encrypted metadata.
