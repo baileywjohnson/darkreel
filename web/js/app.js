@@ -206,6 +206,10 @@ forgotBtn.addEventListener('click', () => {
     recoveryForm.classList.remove('hidden');
     recoveryError.classList.add('hidden');
     recoverySuccess.classList.add('hidden');
+    // Reset form fields visibility in case they were hidden after a successful recovery
+    recoveryForm.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = '');
+    const oldContinue = recoverySuccess.querySelector('button');
+    if (oldContinue) oldContinue.remove();
 });
 
 backToLoginBtn.addEventListener('click', () => {
@@ -244,12 +248,23 @@ recoveryForm.addEventListener('submit', async (e) => {
         }
 
         const data = await res.json();
-        recoverySuccess.innerHTML = 'Password reset! Your new recovery code:<br><code style="user-select:all;font-size:11px;word-break:break-all">' + data.recovery_code + '</code><br>Save this code — it cannot be shown again.';
+
+        // Hide form fields, show only recovery code + continue button
+        recoveryForm.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = 'none');
+        recoverySuccess.innerHTML = 'Password reset! Your new recovery code:<br><br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + data.recovery_code + '</code><br>Save this code somewhere safe — it cannot be shown again.';
         recoverySuccess.classList.remove('hidden');
 
-        // Clear the form
-        document.getElementById('recovery-code').value = '';
-        document.getElementById('recovery-new-password').value = '';
+        const continueBtn = document.createElement('button');
+        continueBtn.className = 'btn btn-primary';
+        continueBtn.style.width = '100%';
+        continueBtn.style.marginTop = '8px';
+        continueBtn.style.padding = '12px';
+        continueBtn.textContent = 'Continue to Darkreel';
+        continueBtn.addEventListener('click', async () => {
+            authView.classList.add('hidden');
+            await handleLogin(username, newPassword);
+        });
+        recoverySuccess.appendChild(continueBtn);
     } catch {
         recoveryError.textContent = 'Connection failed';
         recoveryError.classList.remove('hidden');
@@ -274,6 +289,24 @@ function showAuth() {
     authFormEl.classList.remove('hidden');
     recoveryForm.classList.add('hidden');
     registerFormEl.classList.add('hidden');
+    // Clear all form fields
+    authFormEl.reset();
+    recoveryForm.reset();
+    registerFormEl.reset();
+    // Reset visibility of fields (in case hidden after success)
+    recoveryForm.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = '');
+    registerFormEl.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = '');
+    // Remove dynamically added continue buttons
+    const recContinue = recoverySuccess.querySelector('button');
+    if (recContinue) recContinue.remove();
+    const regContinue = regSuccess.querySelector('button');
+    if (regContinue) regContinue.remove();
+    // Hide success/error messages
+    recoveryError.classList.add('hidden');
+    recoverySuccess.classList.add('hidden');
+    regError.classList.add('hidden');
+    regSuccess.classList.add('hidden');
+    authError.classList.add('hidden');
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
