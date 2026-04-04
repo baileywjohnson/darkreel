@@ -44,7 +44,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 			ID:        u.ID,
 			Username:  u.Username,
 			IsAdmin:   u.IsAdmin,
-			CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			CreatedAt: u.CreatedAt,
 		}
 	}
 

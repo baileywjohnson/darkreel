@@ -2,7 +2,6 @@ package db
 
 import (
 	"database/sql"
-	"time"
 )
 
 type User struct {
@@ -14,7 +13,7 @@ type User struct {
 	EncryptedMK  []byte // master key encrypted with KDF-derived key
 	RecoveryMK   []byte // master key encrypted with recovery code
 	IsAdmin      bool
-	CreatedAt    time.Time
+	CreatedAt    string
 }
 
 func CreateUser(db *sql.DB, u *User) error {

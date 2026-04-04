@@ -77,7 +77,7 @@ func main() {
 		Storage:           store,
 		WebFS:             webFS,
 		Addr:              *addr,
-		PersistSession:    os.Getenv("PERSIST_SESSION") == "true",
+		PersistSession:    os.Getenv("PERSIST_SESSION") != "false",
 		AllowRegistration: os.Getenv("ALLOW_REGISTRATION") == "true", // default false
 	}
 
