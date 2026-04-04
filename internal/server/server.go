@@ -39,7 +39,7 @@ func (s *Server) routes() chi.Router {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
 	r.Use(securityHeaders)
-	r.Use(RateLimit(100, time.Minute)) // Global: 100 req/min per IP
+	r.Use(RateLimit(600, time.Minute)) // Global: 600 req/min per IP
 
 	authHandler := &auth.Handler{DB: s.DB, Storage: s.Storage}
 	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage}

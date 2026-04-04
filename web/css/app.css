@@ -59,11 +59,12 @@ header {
 .nav-active { color: var(--text); background: var(--bg-hover); }
 .header-right { display: flex; gap: 8px; align-items: center; }
 .header-mobile-only { display: none; }
+#header-menu-btn { font-size: 22px; }
 .header-menu-wrap { position: relative; }
 .header-menu-popup {
     position: absolute;
     right: 0;
-    top: 100%;
+    top: calc(100% + 20px);
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -78,8 +79,6 @@ header {
 .header-menu-popup.hidden { display: none; }
 .header-menu-popup .btn { text-align: left; justify-content: flex-start; width: 100%; }
 .controls { display: flex; gap: 8px; }
-.folder-filters select,
-.folder-actions select,
 .controls select {
     background: var(--bg);
     color: var(--text);
@@ -152,11 +151,53 @@ header {
 .folder-filters { position: relative; display: flex; gap: 8px; align-items: center; }
 .folder-actions { display: flex; gap: 8px; align-items: center; }
 .filter-mobile { display: none; }
+.custom-select {
+    position: relative;
+    display: inline-block;
+}
+.custom-select-trigger {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+.custom-select-trigger:hover { border-color: var(--accent); }
+.custom-select-trigger .caret { font-size: 10px; color: var(--text-dim); }
+.custom-select-options {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px;
+    z-index: 70;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.custom-select-options.hidden { display: none; }
+.custom-select-option {
+    padding: 6px 12px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+.custom-select-option:hover { background: var(--surface); }
+.custom-select-option.selected { color: var(--accent); font-weight: 600; }
 .filter-popup {
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
-    top: 100%;
+    top: calc(100% + 25px);
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -169,20 +210,12 @@ header {
 }
 .filter-popup.hidden { display: none; }
 .filter-popup label {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
     font-size: 13px;
     color: var(--text-dim);
 }
-.filter-popup select {
-    background: var(--surface);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 6px 10px;
-    font-size: 13px;
-}
+.filter-popup .custom-select { width: 100%; }
+.filter-popup .custom-select-trigger { width: 100%; justify-content: space-between; }
+.filter-popup .custom-select-options { width: 100%; }
 .btn-sm { font-size: 13px; padding: 6px 12px; }
 .folder-item {
     position: relative;
@@ -433,6 +466,31 @@ header {
     font-size: 16px;
 }
 .gallery-loading { display: flex; justify-content: center; padding: 48px; }
+.gallery-refresh { display: flex; justify-content: center; padding: 24px; }
+.btn-refresh {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-dim);
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+.btn-refresh:hover { border-color: var(--accent); color: var(--accent); }
+.refresh-tile {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: default;
+}
+.refresh-tile:hover { transform: none; border-color: var(--border); }
+.refreshing #refresh-wrap,
+.refreshing .gallery-refresh { display: none !important; }
 .spinner {
     width: 32px; height: 32px;
     border: 3px solid var(--border);
@@ -581,7 +639,8 @@ header {
 
 /* Responsive */
 @media (max-width: 768px) {
-    header { flex-wrap: wrap; gap: 0; }
+    header { gap: 0; }
+    .header-left { flex: 1; }
     .header-center { display: none; }
     .header-right { flex: 1; justify-content: center; gap: 0; }
     .header-desktop { display: none !important; }

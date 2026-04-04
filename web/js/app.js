@@ -505,14 +505,16 @@ const adminBtnMobile = document.getElementById('admin-btn-mobile');
 headerMenuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     headerMenuPopup.classList.toggle('hidden');
+    headerMenuBtn.classList.toggle('nav-active', !headerMenuPopup.classList.contains('hidden'));
 });
 document.addEventListener('click', (e) => {
     if (!headerMenuPopup.classList.contains('hidden') && !headerMenuPopup.contains(e.target) && e.target !== headerMenuBtn) {
         headerMenuPopup.classList.add('hidden');
+        headerMenuBtn.classList.remove('nav-active');
     }
 });
 
-function closeHeaderMenu() { headerMenuPopup.classList.add('hidden'); }
+function closeHeaderMenu() { headerMenuPopup.classList.add('hidden'); headerMenuBtn.classList.remove('nav-active'); }
 
 async function doLogout() {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
@@ -680,6 +682,16 @@ function fileNameExistsInFolder(name, folderId) {
     return mediaItems.some(m => (m.folderId || null) === folderId && m.name && m.name.toLowerCase() === name.toLowerCase());
 }
 
+function uniqueFileName(name, folderId) {
+    if (!fileNameExistsInFolder(name, folderId)) return name;
+    const dot = name.lastIndexOf('.');
+    const base = dot !== -1 ? name.substring(0, dot) : name;
+    const ext = dot !== -1 ? name.substring(dot) : '';
+    let n = 1;
+    while (fileNameExistsInFolder(`${base} (${n})${ext}`, folderId)) n++;
+    return `${base} (${n})${ext}`;
+}
+
 function getFolderPath(folderId) {
     const path = [];
     let current = folderId;
@@ -694,7 +706,7 @@ function getFolderPath(folderId) {
 
 function renderBreadcrumb() {
     const path = getFolderPath(currentFolderId);
-    let html = '<span class="breadcrumb-item" data-folder-id="">All Media</span>';
+    let html = '<span class="breadcrumb-item" data-folder-id="">/ All Media</span>';
     for (const folder of path) {
         html += '<span class="breadcrumb-sep">/</span>';
         if (folder.id === currentFolderId) {
@@ -935,15 +947,10 @@ function createFolderElements() {
     return elements;
 }
 
-function renderGalleryItems() {
+async function renderGalleryItems() {
     renderBreadcrumb();
-    galleryGrid.innerHTML = '';
 
-    // Render folders first, then media
     const folderEls = createFolderElements();
-    for (const el of folderEls) {
-        galleryGrid.appendChild(el);
-    }
 
     let filtered = mediaItems.filter(m => (m.folderId || null) === currentFolderId);
 
@@ -976,12 +983,25 @@ function renderGalleryItems() {
     } else {
         galleryEmpty.classList.add('hidden');
     }
-    (async () => {
-        for (const item of filtered) {
-            const el = await createGalleryItem(item);
-            galleryGrid.appendChild(el);
-        }
-    })();
+
+    // Build all elements first, then swap in one shot
+    const fragment = document.createDocumentFragment();
+    for (const el of folderEls) {
+        fragment.appendChild(el);
+    }
+    for (const item of filtered) {
+        const el = await createGalleryItem(item);
+        fragment.appendChild(el);
+    }
+
+    // Remove old refresh button and swap grid content
+    document.getElementById('refresh-wrap')?.remove();
+    galleryGrid.innerHTML = '';
+    galleryGrid.appendChild(fragment);
+
+    if (!_silentRefresh) {
+        addRefreshButton();
+    }
 }
 
 document.getElementById('new-folder-btn').addEventListener('click', async () => {
@@ -1002,18 +1022,59 @@ const galleryGrid = document.getElementById('gallery-grid');
 const galleryEmpty = document.getElementById('gallery-empty');
 const galleryLoading = document.getElementById('gallery-loading');
 const pagination = document.getElementById('pagination');
-const sortSelect = document.getElementById('sort-select');
-const typeFilter = document.getElementById('type-filter');
+// Custom select components
+const sortSelect = { value: 'date-desc' };
+const typeFilter = { value: '' };
 
-const sortSelectMobile = document.getElementById('sort-select-mobile');
-const typeFilterMobile = document.getElementById('type-filter-mobile');
+function initCustomSelect(wrapId, state, key, linkedId) {
+    const wrap = document.getElementById(wrapId);
+    const trigger = wrap.querySelector('.custom-select-trigger');
+    const optionsEl = wrap.querySelector('.custom-select-options');
+
+    trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Close all other custom selects
+        document.querySelectorAll('.custom-select-options').forEach(o => {
+            if (o !== optionsEl) o.classList.add('hidden');
+        });
+        optionsEl.classList.toggle('hidden');
+    });
+
+    optionsEl.addEventListener('click', (e) => {
+        const opt = e.target.closest('.custom-select-option');
+        if (!opt) return;
+        e.stopPropagation();
+        const val = opt.dataset.value;
+        state[key] = val;
+        wrap.dataset.value = val;
+        trigger.innerHTML = opt.textContent + ' <span class="caret">&#9662;</span>';
+        optionsEl.querySelectorAll('.custom-select-option').forEach(o => o.classList.toggle('selected', o.dataset.value === val));
+        optionsEl.classList.add('hidden');
+
+        // Sync linked select
+        if (linkedId) {
+            const linked = document.getElementById(linkedId);
+            linked.dataset.value = val;
+            const linkedTrigger = linked.querySelector('.custom-select-trigger');
+            linkedTrigger.innerHTML = opt.textContent + ' <span class="caret">&#9662;</span>';
+            linked.querySelectorAll('.custom-select-option').forEach(o => o.classList.toggle('selected', o.dataset.value === val));
+        }
+        renderGalleryItems();
+    });
+}
+
+initCustomSelect('sort-select-wrap', sortSelect, 'value', 'sort-select-mobile-wrap');
+initCustomSelect('type-filter-wrap', typeFilter, 'value', 'type-filter-mobile-wrap');
+initCustomSelect('sort-select-mobile-wrap', sortSelect, 'value', 'sort-select-wrap');
+initCustomSelect('type-filter-mobile-wrap', typeFilter, 'value', 'type-filter-wrap');
+
+// Close custom selects on outside click
+document.addEventListener('click', () => {
+    document.querySelectorAll('.custom-select-options').forEach(o => o.classList.add('hidden'));
+});
+
 const filterPopup = document.getElementById('filter-popup');
 const filterMenuBtn = document.getElementById('filter-menu-btn');
-
-sortSelect.addEventListener('change', () => { sortSelectMobile.value = sortSelect.value; renderGalleryItems(); });
-typeFilter.addEventListener('change', () => { typeFilterMobile.value = typeFilter.value; renderGalleryItems(); });
-sortSelectMobile.addEventListener('change', () => { sortSelect.value = sortSelectMobile.value; renderGalleryItems(); });
-typeFilterMobile.addEventListener('change', () => { typeFilter.value = typeFilterMobile.value; renderGalleryItems(); });
 
 filterMenuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1032,9 +1093,47 @@ document.getElementById('next-page').addEventListener('click', () => {
     if (currentPage * PAGE_SIZE < totalItems) { currentPage++; loadMedia(); }
 });
 
+let _silentRefresh = false;
+function addRefreshButton() {
+    document.getElementById('refresh-wrap')?.remove();
+    const refreshBtn = document.createElement('button');
+    refreshBtn.className = 'btn-refresh';
+    refreshBtn.setAttribute('aria-label', 'Refresh');
+    refreshBtn.innerHTML = '&#8635;';
+    refreshBtn.addEventListener('click', onRefreshClick);
+
+    const hasItems = galleryGrid.querySelector('.gallery-item:not(.refresh-tile)') || galleryGrid.querySelector('.folder-item');
+    if (hasItems) {
+        const refreshTile = document.createElement('div');
+        refreshTile.id = 'refresh-wrap';
+        refreshTile.className = 'gallery-item refresh-tile';
+        refreshTile.appendChild(refreshBtn);
+        galleryGrid.appendChild(refreshTile);
+    } else {
+        const refreshWrap = document.createElement('div');
+        refreshWrap.id = 'refresh-wrap';
+        refreshWrap.className = 'gallery-refresh';
+        refreshWrap.appendChild(refreshBtn);
+        galleryEmpty.after(refreshWrap);
+    }
+}
+function onRefreshClick() {
+    _silentRefresh = true;
+    galleryView.classList.add('refreshing');
+    galleryGrid.style.minHeight = galleryGrid.offsetHeight + 'px';
+    loadMedia().finally(() => {
+        _silentRefresh = false;
+        galleryGrid.style.minHeight = '';
+        galleryView.classList.remove('refreshing');
+        addRefreshButton();
+    });
+}
+
 async function loadMedia() {
-    galleryLoading.classList.remove('hidden');
-    galleryGrid.innerHTML = '';
+    if (!_silentRefresh) {
+        galleryLoading.classList.remove('hidden');
+        galleryGrid.innerHTML = '';
+    }
     galleryEmpty.classList.add('hidden');
     pagination.classList.add('hidden');
 
@@ -1073,7 +1172,7 @@ async function loadMedia() {
         // Load folder tree and render
         await loadFolderTree();
         renderFolders();
-        renderGalleryItems();
+        await renderGalleryItems();
 
         if (totalItems > PAGE_SIZE) {
             pagination.classList.remove('hidden');
@@ -1936,6 +2035,7 @@ async function rotateCurrentItem() {
             hash_nonce: bufferToBase64(newHashNonce),
             metadata_enc: bufferToBase64(metadataCiphertext),
             metadata_nonce: bufferToBase64(metadataNonce),
+            created_at: item.created_at,
         };
 
         // Delete old
@@ -1958,11 +2058,21 @@ async function rotateCurrentItem() {
         const uploadData = await uploadRes.json();
         const newId = uploadData.id;
 
-        // Reload media and re-open viewer on the rotated item
+        // Reload media and re-open viewer on the new item at the same position
+        const savedIndex = viewerIndex;
         viewerList = [];
         await loadMedia();
         const newItem = mediaItems.find(m => m.id === newId);
         if (newItem) {
+            // Rebuild viewer list and insert the new item at the original position
+            viewerList = mediaItems.filter(m => (m.folderId || null) === currentFolderId);
+            const actualIdx = viewerList.indexOf(newItem);
+            if (actualIdx !== -1 && actualIdx !== savedIndex && savedIndex < viewerList.length) {
+                // Move it to the saved position
+                viewerList.splice(actualIdx, 1);
+                viewerList.splice(savedIndex, 0, newItem);
+            }
+            viewerIndex = viewerList.indexOf(newItem);
             openViewer(newItem);
         } else {
             closeViewer();
@@ -2344,10 +2454,7 @@ function setUploadProgress(el, pct) {
 
 async function uploadFile(file, itemEl, targetFolderId) {
     if (targetFolderId === undefined) targetFolderId = currentFolderId;
-    if (fileNameExistsInFolder(file.name, targetFolderId)) {
-        setUploadStatus(itemEl, 'Skipped (duplicate name)');
-        return;
-    }
+    const uploadName = uniqueFileName(file.name, targetFolderId);
 
     setUploadStatus(itemEl, 'Reading...');
     const fileData = new Uint8Array(await file.arrayBuffer());
@@ -2390,7 +2497,7 @@ async function uploadFile(file, itemEl, targetFolderId) {
 
     // Build and encrypt metadata blob
     const metaPlain = {
-        name: file.name,
+        name: uploadName,
         media_type: mediaType,
         mime_type: file.type || 'application/octet-stream',
         size: file.size,

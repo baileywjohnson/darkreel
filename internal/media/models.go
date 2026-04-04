@@ -25,6 +25,7 @@ type UploadMeta struct {
 	HashNonce     string `json:"hash_nonce"`       // base64
 	MetadataEnc   string `json:"metadata_enc"`     // base64 — encrypted metadata blob
 	MetadataNonce string `json:"metadata_nonce"`   // base64
+	CreatedAt     string `json:"created_at,omitempty"` // optional: preserve original timestamp on rotate
 }
 
 func B64(data []byte) string {

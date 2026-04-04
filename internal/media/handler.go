@@ -181,6 +181,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		HashNonce:     hashNonceBytes,
 		MetadataEnc:   metadataEncBytes,
 		MetadataNonce: metadataNonceBytes,
+		CreatedAt:     meta.CreatedAt,
 	}
 
 	if err := db.InsertMedia(h.DB, mediaItem); err != nil {

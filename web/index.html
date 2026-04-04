@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-k74CreELvPi1+sioGxbWXUuNQ3zSgi4zAe0q70FYr2wCzeVfZd7vTlPhSlqoRj2f" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-5cFd4FEoWoqDJd/SZLC7oKGEVft1vspNjUMDJhptJKnQjxk9R0hxwMlFmrz/6Y+C" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -77,38 +77,48 @@
                 <div id="folder-bar" class="folder-bar">
                     <div id="breadcrumb" class="breadcrumb"></div>
                     <div class="folder-filters">
-                        <select id="sort-select" class="btn-sm filter-desktop">
-                            <option value="date-desc">Newest first</option>
-                            <option value="date-asc">Oldest first</option>
-                            <option value="size-desc">Largest first</option>
-                            <option value="size-asc">Smallest first</option>
-                            <option value="name-asc">Name A-Z</option>
-                            <option value="name-desc">Name Z-A</option>
-                        </select>
-                        <select id="type-filter" class="btn-sm filter-desktop">
-                            <option value="">All</option>
-                            <option value="image">Images</option>
-                            <option value="video">Videos</option>
-                        </select>
+                        <div class="custom-select filter-desktop" id="sort-select-wrap" data-value="date-desc">
+                            <button class="custom-select-trigger btn-sm">Newest first <span class="caret">&#9662;</span></button>
+                            <div class="custom-select-options hidden">
+                                <div class="custom-select-option selected" data-value="date-desc">Newest first</div>
+                                <div class="custom-select-option" data-value="date-asc">Oldest first</div>
+                                <div class="custom-select-option" data-value="size-desc">Largest first</div>
+                                <div class="custom-select-option" data-value="size-asc">Smallest first</div>
+                                <div class="custom-select-option" data-value="name-asc">Name A-Z</div>
+                                <div class="custom-select-option" data-value="name-desc">Name Z-A</div>
+                            </div>
+                        </div>
+                        <div class="custom-select filter-desktop" id="type-filter-wrap" data-value="">
+                            <button class="custom-select-trigger btn-sm">All <span class="caret">&#9662;</span></button>
+                            <div class="custom-select-options hidden">
+                                <div class="custom-select-option selected" data-value="">All</div>
+                                <div class="custom-select-option" data-value="image">Images</div>
+                                <div class="custom-select-option" data-value="video">Videos</div>
+                            </div>
+                        </div>
                         <button id="filter-menu-btn" class="btn btn-ghost btn-sm filter-mobile" aria-label="Filters">&#128269;</button>
                         <div id="filter-popup" class="filter-popup hidden">
-                            <label>Sort by
-                                <select id="sort-select-mobile">
-                                    <option value="date-desc">Newest first</option>
-                                    <option value="date-asc">Oldest first</option>
-                                    <option value="size-desc">Largest first</option>
-                                    <option value="size-asc">Smallest first</option>
-                                    <option value="name-asc">Name A-Z</option>
-                                    <option value="name-desc">Name Z-A</option>
-                                </select>
-                            </label>
-                            <label>Type
-                                <select id="type-filter-mobile">
-                                    <option value="">All</option>
-                                    <option value="image">Images</option>
-                                    <option value="video">Videos</option>
-                                </select>
-                            </label>
+                            <label>Sort by</label>
+                            <div class="custom-select" id="sort-select-mobile-wrap" data-value="date-desc">
+                                <button class="custom-select-trigger">Newest first <span class="caret">&#9662;</span></button>
+                                <div class="custom-select-options hidden">
+                                    <div class="custom-select-option selected" data-value="date-desc">Newest first</div>
+                                    <div class="custom-select-option" data-value="date-asc">Oldest first</div>
+                                    <div class="custom-select-option" data-value="size-desc">Largest first</div>
+                                    <div class="custom-select-option" data-value="size-asc">Smallest first</div>
+                                    <div class="custom-select-option" data-value="name-asc">Name A-Z</div>
+                                    <div class="custom-select-option" data-value="name-desc">Name Z-A</div>
+                                </div>
+                            </div>
+                            <label>Type</label>
+                            <div class="custom-select" id="type-filter-mobile-wrap" data-value="">
+                                <button class="custom-select-trigger">All <span class="caret">&#9662;</span></button>
+                                <div class="custom-select-options hidden">
+                                    <div class="custom-select-option selected" data-value="">All</div>
+                                    <div class="custom-select-option" data-value="image">Images</div>
+                                    <div class="custom-select-option" data-value="video">Videos</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="folder-actions">
@@ -246,6 +256,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-kz+RdWJ9sKpNLUTzFDdAswYUmAVZOOLlcqsSe2DJuAdRWVeQ3fdRWznWK/50al62" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-A2Krf67caGQvaev0mrQtjWQNdrvLvXIQUG29r6W9bz3yMfMttlna/ZU/B5RcTOTG" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-tkS8sJQWLqpyNjPPk2VDLTQ115HxorvixA6RY9+FditVUi0sOp/DVMiMyV9UYzuL" crossorigin="anonymous"></script>
 </body>
 </html>
