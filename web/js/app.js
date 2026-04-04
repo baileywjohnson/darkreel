@@ -306,6 +306,7 @@ adminBtn.addEventListener('click', async () => {
     settingsView.classList.add('hidden');
     adminView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'admin');
+    updateNavActive('admin');
     loadAdminUsers();
     // Fetch current registration state
     try {
@@ -318,6 +319,7 @@ document.getElementById('admin-back-btn').addEventListener('click', () => {
     adminView.classList.add('hidden');
     galleryView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'gallery');
+    updateNavActive('gallery');
 });
 
 adminCreateForm.addEventListener('submit', async (e) => {
@@ -390,6 +392,21 @@ adminRegToggle.addEventListener('change', async () => {
     }
 });
 
+document.querySelector('.logo').addEventListener('click', () => {
+    document.getElementById('settings-view')?.classList.add('hidden');
+    document.getElementById('admin-view')?.classList.add('hidden');
+    galleryView.classList.remove('hidden');
+    currentFolderId = null;
+    renderGalleryItems();
+    sessionStorage.setItem('activeView', 'gallery');
+    updateNavActive('gallery');
+});
+
+function updateNavActive(view) {
+    settingsBtn.classList.toggle('nav-active', view === 'settings');
+    adminBtn.classList.toggle('nav-active', view === 'admin');
+}
+
 // --- Settings page ---
 const settingsView = document.getElementById('settings-view');
 const settingsBtn = document.getElementById('settings-btn');
@@ -399,12 +416,14 @@ settingsBtn.addEventListener('click', () => {
     adminView.classList.add('hidden');
     settingsView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'settings');
+    updateNavActive('settings');
 });
 
 document.getElementById('settings-back-btn').addEventListener('click', () => {
     settingsView.classList.add('hidden');
     galleryView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'gallery');
+    updateNavActive('gallery');
 });
 
 document.getElementById('settings-change-pw-form').addEventListener('submit', async (e) => {
@@ -479,13 +498,50 @@ document.getElementById('settings-delete-form').addEventListener('submit', async
     }
 });
 
-document.getElementById('logout-btn').addEventListener('click', async () => {
+const headerMenuBtn = document.getElementById('header-menu-btn');
+const headerMenuPopup = document.getElementById('header-menu-popup');
+const adminBtnMobile = document.getElementById('admin-btn-mobile');
+
+headerMenuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    headerMenuPopup.classList.toggle('hidden');
+});
+document.addEventListener('click', (e) => {
+    if (!headerMenuPopup.classList.contains('hidden') && !headerMenuPopup.contains(e.target) && e.target !== headerMenuBtn) {
+        headerMenuPopup.classList.add('hidden');
+    }
+});
+
+function closeHeaderMenu() { headerMenuPopup.classList.add('hidden'); }
+
+async function doLogout() {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
     clearMasterKey();
     token = null;
     userId = null;
-    sessionStorage.clear(); // clears token, userId, and masterKey
+    sessionStorage.clear();
     showAuth();
+}
+
+document.getElementById('logout-btn').addEventListener('click', doLogout);
+document.getElementById('logout-btn-mobile').addEventListener('click', () => { closeHeaderMenu(); doLogout(); });
+
+document.getElementById('settings-btn-mobile').addEventListener('click', () => {
+    closeHeaderMenu();
+    galleryView.classList.add('hidden');
+    adminView.classList.add('hidden');
+    settingsView.classList.remove('hidden');
+    sessionStorage.setItem('activeView', 'settings');
+    updateNavActive('settings');
+});
+
+document.getElementById('admin-btn-mobile').addEventListener('click', () => {
+    closeHeaderMenu();
+    galleryView.classList.add('hidden');
+    settingsView.classList.add('hidden');
+    adminView.classList.remove('hidden');
+    sessionStorage.setItem('activeView', 'admin');
+    updateNavActive('admin');
 });
 
 function showAuth() {
@@ -532,6 +588,7 @@ function showGallery() {
     header.classList.remove('hidden');
     // Show admin button if user is admin
     adminBtn.classList.toggle('hidden', !serverConfig.isAdmin);
+    adminBtnMobile.classList.toggle('hidden', !serverConfig.isAdmin);
 
     // Restore active view
     const activeViewName = sessionStorage.getItem('activeView');
@@ -542,12 +599,14 @@ function showGallery() {
     if (activeViewName === 'admin' && serverConfig.isAdmin) {
         adminView.classList.remove('hidden');
         loadAdminUsers();
-        // Set registration toggle state
         adminRegToggle.checked = serverConfig.allowRegistration || false;
+        updateNavActive('admin');
     } else if (activeViewName === 'settings') {
         settingsView.classList.remove('hidden');
+        updateNavActive('settings');
     } else {
         galleryView.classList.remove('hidden');
+        updateNavActive('gallery');
         loadMedia();
     }
     // Poll for new media every 10 seconds
@@ -603,6 +662,24 @@ function getFolderChildren(parentId) {
     return folders.filter(f => f.parentId === parentId);
 }
 
+function folderNameExists(name, parentId, excludeId) {
+    return getFolderChildren(parentId).some(f => f.id !== excludeId && f.name.toLowerCase() === name.toLowerCase());
+}
+
+function isFolderDescendant(folderId, ancestorId) {
+    let current = folderId;
+    while (current) {
+        if (current === ancestorId) return true;
+        const f = folders.find(x => x.id === current);
+        current = f ? f.parentId : null;
+    }
+    return false;
+}
+
+function fileNameExistsInFolder(name, folderId) {
+    return mediaItems.some(m => (m.folderId || null) === folderId && m.name && m.name.toLowerCase() === name.toLowerCase());
+}
+
 function getFolderPath(folderId) {
     const path = [];
     let current = folderId;
@@ -635,18 +712,38 @@ function renderBreadcrumb() {
         });
 
         // Drop target for breadcrumb (drag to parent/root)
-        el.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; el.style.background = 'var(--surface)'; });
-        el.addEventListener('dragleave', () => { el.style.background = ''; });
+        el.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; el.classList.add('drag-over'); });
+        el.addEventListener('dragleave', () => { el.classList.remove('drag-over'); });
         el.addEventListener('drop', async (e) => {
             e.preventDefault();
-            el.style.background = '';
-            if (!draggedItem) return;
+            el.classList.remove('drag-over');
             const targetFolderId = el.dataset.folderId || null;
-            try {
-                await moveItemToFolder(draggedItem, targetFolderId);
+            if (draggedFolder) {
+                if ((draggedFolder.parentId || null) === (targetFolderId || null)) { draggedFolder = null; return; }
+                if (targetFolderId && (draggedFolder.id === targetFolderId || isFolderDescendant(targetFolderId, draggedFolder.id))) return;
+                if (folderNameExists(draggedFolder.name, targetFolderId, draggedFolder.id)) {
+                    alert('A folder with that name already exists in the destination.');
+                    return;
+                }
+                draggedFolder.parentId = targetFolderId;
+                await saveFolderTree();
                 renderGalleryItems();
-            } catch {}
-            draggedItem = null;
+                draggedFolder = null;
+                return;
+            }
+            if (draggedItem) {
+                try {
+                    await moveItemToFolder(draggedItem, targetFolderId);
+                    renderGalleryItems();
+                } catch {}
+                draggedItem = null;
+                return;
+            }
+            // Desktop file drop onto breadcrumb
+            e.stopPropagation();
+            if (e.dataTransfer.files.length > 0) {
+                handleDropUpload(e.dataTransfer.files, targetFolderId);
+            }
         });
     });
 }
@@ -676,18 +773,55 @@ function createFolderElements() {
             renderGalleryItems();
         });
 
+        // Drag source (folder, desktop)
+        el.draggable = true;
+        el.addEventListener('dragstart', (e) => {
+            draggedFolder = f;
+            el.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', f.id);
+        });
+        el.addEventListener('dragend', () => {
+            el.classList.remove('dragging');
+            draggedFolder = null;
+        });
+
+        // Touch drag (mobile)
+        initTouchDrag(el, () => ({ type: 'folder', value: f }));
+
         // Drop target
         el.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; el.classList.add('drag-over'); });
         el.addEventListener('dragleave', () => { el.classList.remove('drag-over'); });
         el.addEventListener('drop', async (e) => {
             e.preventDefault();
+            e.stopPropagation();
             el.classList.remove('drag-over');
-            if (!draggedItem) return;
-            try {
-                await moveItemToFolder(draggedItem, f.id);
+            if (draggedFolder) {
+                if (draggedFolder.id === f.id) return;
+                if (isFolderDescendant(f.id, draggedFolder.id)) return;
+                if ((draggedFolder.parentId || null) === f.id) { draggedFolder = null; return; }
+                if (folderNameExists(draggedFolder.name, f.id, draggedFolder.id)) {
+                    alert('A folder with that name already exists in the destination.');
+                    return;
+                }
+                draggedFolder.parentId = f.id;
+                await saveFolderTree();
                 renderGalleryItems();
-            } catch {}
-            draggedItem = null;
+                draggedFolder = null;
+                return;
+            }
+            if (draggedItem) {
+                try {
+                    await moveItemToFolder(draggedItem, f.id);
+                    renderGalleryItems();
+                } catch {}
+                draggedItem = null;
+                return;
+            }
+            // Desktop file drop into this folder
+            if (e.dataTransfer.files.length > 0) {
+                handleDropUpload(e.dataTransfer.files, f.id);
+            }
         });
 
         const menuBtn = el.querySelector('.folder-menu-btn');
@@ -706,6 +840,10 @@ function createFolderElements() {
                 menu.remove();
                 const newName = prompt('New folder name:', f.name);
                 if (newName && newName.trim()) {
+                    if (folderNameExists(newName.trim(), f.parentId, f.id)) {
+                        alert('A folder with that name already exists here.');
+                        return;
+                    }
                     f.name = newName.trim();
                     saveFolderTree();
                     renderGalleryItems();
@@ -760,7 +898,25 @@ function createFolderElements() {
                 });
             });
 
+            const moveBtn = document.createElement('button');
+            moveBtn.textContent = 'Move';
+            moveBtn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                menu.remove();
+                openMoveFolderModal(f);
+            });
+
+            const downloadBtn = document.createElement('button');
+            downloadBtn.textContent = 'Download';
+            downloadBtn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                menu.remove();
+                downloadFolder(f);
+            });
+
             menu.appendChild(renameBtn);
+            menu.appendChild(moveBtn);
+            menu.appendChild(downloadBtn);
             menu.appendChild(deleteBtn);
             el.appendChild(menu);
 
@@ -789,9 +945,34 @@ function renderGalleryItems() {
         galleryGrid.appendChild(el);
     }
 
-    const filtered = mediaItems.filter(m => (m.folderId || null) === currentFolderId);
+    let filtered = mediaItems.filter(m => (m.folderId || null) === currentFolderId);
+
+    // Type filter
+    const type = typeFilter.value;
+    if (type) {
+        filtered = filtered.filter(m => m.media_type === type);
+    }
+
+    // Sort
+    const [sort, order] = sortSelect.value.split('-');
+    filtered.sort((a, b) => {
+        let cmp = 0;
+        if (sort === 'date') {
+            cmp = (a.created_at || '').localeCompare(b.created_at || '');
+        } else if (sort === 'size') {
+            cmp = (a.size || 0) - (b.size || 0);
+        } else if (sort === 'name') {
+            cmp = (a.name || '').localeCompare(b.name || '');
+        }
+        return order === 'desc' ? -cmp : cmp;
+    });
+
+    const allInFolder = mediaItems.filter(m => (m.folderId || null) === currentFolderId);
     if (filtered.length === 0 && folderEls.length === 0) {
         galleryEmpty.classList.remove('hidden');
+        galleryEmpty.querySelector('p').textContent = allInFolder.length > 0
+            ? 'No media found matching these filters.'
+            : 'No media yet. Drag files here or click Upload to get started.';
     } else {
         galleryEmpty.classList.add('hidden');
     }
@@ -806,6 +987,10 @@ function renderGalleryItems() {
 document.getElementById('new-folder-btn').addEventListener('click', async () => {
     const name = prompt('Folder name:');
     if (!name || !name.trim()) return;
+    if (folderNameExists(name.trim(), currentFolderId)) {
+        alert('A folder with that name already exists here.');
+        return;
+    }
     const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
     folders.push({ id, name: name.trim(), parentId: currentFolderId });
     await saveFolderTree();
@@ -820,8 +1005,25 @@ const pagination = document.getElementById('pagination');
 const sortSelect = document.getElementById('sort-select');
 const typeFilter = document.getElementById('type-filter');
 
-sortSelect.addEventListener('change', () => { currentPage = 1; loadMedia(); });
-typeFilter.addEventListener('change', () => { currentPage = 1; loadMedia(); });
+const sortSelectMobile = document.getElementById('sort-select-mobile');
+const typeFilterMobile = document.getElementById('type-filter-mobile');
+const filterPopup = document.getElementById('filter-popup');
+const filterMenuBtn = document.getElementById('filter-menu-btn');
+
+sortSelect.addEventListener('change', () => { sortSelectMobile.value = sortSelect.value; renderGalleryItems(); });
+typeFilter.addEventListener('change', () => { typeFilterMobile.value = typeFilter.value; renderGalleryItems(); });
+sortSelectMobile.addEventListener('change', () => { sortSelect.value = sortSelectMobile.value; renderGalleryItems(); });
+typeFilterMobile.addEventListener('change', () => { typeFilter.value = typeFilterMobile.value; renderGalleryItems(); });
+
+filterMenuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    filterPopup.classList.toggle('hidden');
+});
+document.addEventListener('click', (e) => {
+    if (!filterPopup.classList.contains('hidden') && !filterPopup.contains(e.target) && e.target !== filterMenuBtn) {
+        filterPopup.classList.add('hidden');
+    }
+});
 
 document.getElementById('prev-page').addEventListener('click', () => {
     if (currentPage > 1) { currentPage--; loadMedia(); }
@@ -951,6 +1153,15 @@ async function createGalleryItem(item) {
     badge.className = 'badge';
     badge.textContent = item.media_type === 'video' ? 'VID' : 'IMG';
 
+    const menuBtn = document.createElement('button');
+    menuBtn.className = 'item-menu-btn';
+    menuBtn.textContent = '⋮';
+    menuBtn.title = 'Options';
+    menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openItemContextMenu(item, div, menuBtn);
+    });
+
     const nameEl = document.createElement('span');
     nameEl.className = 'item-name';
 
@@ -959,10 +1170,14 @@ async function createGalleryItem(item) {
 
     div.appendChild(img);
     div.appendChild(badge);
+    div.appendChild(menuBtn);
     div.appendChild(nameEl);
-    div.addEventListener('click', () => openViewer(item));
+    div.addEventListener('click', (e) => {
+        if (e.target.closest('.item-menu-btn') || e.target.closest('.folder-context-menu')) return;
+        openViewer(item);
+    });
 
-    // Drag support
+    // Drag support (desktop)
     div.draggable = true;
     div.addEventListener('dragstart', (e) => {
         draggedItem = item;
@@ -975,7 +1190,45 @@ async function createGalleryItem(item) {
         draggedItem = null;
     });
 
+    // Touch drag (mobile)
+    initTouchDrag(div, () => ({ type: 'item', value: item }));
+
     return div;
+}
+
+function openItemContextMenu(item, parentEl, anchorBtn) {
+    document.querySelectorAll('.menu-active').forEach(el => el.classList.remove('menu-active'));
+    document.querySelectorAll('.folder-context-menu').forEach(m => m.remove());
+
+    const menu = document.createElement('div');
+    menu.className = 'folder-context-menu';
+
+    const actions = [
+        { label: 'Rename', handler: () => { menu.remove(); parentEl.classList.remove('menu-active'); renameItem(item); } },
+        { label: 'Move', handler: () => { menu.remove(); parentEl.classList.remove('menu-active'); openMoveModal(item); } },
+        { label: 'Download', handler: () => { menu.remove(); parentEl.classList.remove('menu-active'); downloadItem(item); } },
+        { label: 'Delete', cls: 'danger', handler: () => { menu.remove(); parentEl.classList.remove('menu-active'); deleteItem(item); } },
+    ];
+
+    for (const a of actions) {
+        const btn = document.createElement('button');
+        btn.textContent = a.label;
+        if (a.cls) btn.className = a.cls;
+        btn.addEventListener('click', (e) => { e.stopPropagation(); a.handler(); });
+        menu.appendChild(btn);
+    }
+
+    parentEl.appendChild(menu);
+    parentEl.classList.add('menu-active');
+
+    const closeMenu = (ev) => {
+        if (!menu.contains(ev.target)) {
+            menu.remove();
+            parentEl.classList.remove('menu-active');
+            document.removeEventListener('click', closeMenu);
+        }
+    };
+    setTimeout(() => document.addEventListener('click', closeMenu), 0);
 }
 
 async function loadThumbnail(item, img) {
@@ -1003,15 +1256,78 @@ const viewer = document.getElementById('viewer');
 const viewerVideo = document.getElementById('viewer-video');
 const viewerImage = document.getElementById('viewer-image');
 const viewerTitle = document.getElementById('viewer-title');
+const viewerPrev = document.getElementById('viewer-prev');
+const viewerNext = document.getElementById('viewer-next');
 let currentViewerItem = null;
+let viewerList = [];
+let viewerIndex = -1;
 
 document.getElementById('viewer-close').addEventListener('click', closeViewer);
 document.getElementById('viewer-delete').addEventListener('click', deleteCurrentItem);
 document.getElementById('viewer-download').addEventListener('click', downloadCurrentItem);
 document.getElementById('viewer-move').addEventListener('click', moveCurrentItem);
+document.getElementById('viewer-rotate').addEventListener('click', rotateCurrentItem);
+viewerPrev.addEventListener('click', (e) => { e.stopPropagation(); navigateViewer(-1); });
+viewerNext.addEventListener('click', (e) => { e.stopPropagation(); navigateViewer(1); });
+
+// Keyboard navigation
+document.addEventListener('keydown', (e) => {
+    if (viewer.classList.contains('hidden')) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); navigateViewer(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); navigateViewer(1); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeViewer(); }
+});
+
+// Touch swipe for mobile
+let _touchStartX = 0;
+let _touchStartY = 0;
+viewer.addEventListener('touchstart', (e) => {
+    _touchStartX = e.touches[0].clientX;
+    _touchStartY = e.touches[0].clientY;
+}, { passive: true });
+viewer.addEventListener('touchend', (e) => {
+    const dx = e.changedTouches[0].clientX - _touchStartX;
+    const dy = e.changedTouches[0].clientY - _touchStartY;
+    // Only trigger if horizontal swipe is dominant and long enough
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        if (dx < 0) navigateViewer(1);
+        else navigateViewer(-1);
+    }
+});
+
+function navigateViewer(dir) {
+    const newIndex = viewerIndex + dir;
+    if (newIndex < 0 || newIndex >= viewerList.length) return;
+    viewerIndex = newIndex;
+    // Clean up current playback before switching
+    viewerVideo.pause();
+    viewerVideo.removeAttribute('src');
+    viewerVideo.load();
+    viewerImage.src = '';
+    if (_viewerBlobUrl) {
+        URL.revokeObjectURL(_viewerBlobUrl);
+        _viewerBlobUrl = null;
+    }
+    if (viewerVideo._mediaSource) {
+        try { viewerVideo._mediaSource.endOfStream(); } catch {}
+        viewerVideo._mediaSource = null;
+    }
+    openViewer(viewerList[viewerIndex]);
+}
+
+function updateViewerNav() {
+    viewerPrev.disabled = viewerIndex <= 0;
+    viewerNext.disabled = viewerIndex >= viewerList.length - 1;
+}
 
 // --- Move item to folder (shared logic) ---
-async function moveItemToFolder(item, newFolderId) {
+async function moveItemToFolder(item, newFolderId, skipDupeCheck) {
+    // Already in this folder — no-op
+    if ((item.folderId || null) === (newFolderId || null)) return true;
+    if (!skipDupeCheck && item.name && fileNameExistsInFolder(item.name, newFolderId)) {
+        alert('A file with that name already exists in the destination folder.');
+        return false;
+    }
     const meta = {
         name: item.name,
         media_type: item.media_type,
@@ -1023,6 +1339,7 @@ async function moveItemToFolder(item, newFolderId) {
     if (item.width) meta.width = item.width;
     if (item.height) meta.height = item.height;
     if (item.duration) meta.duration = item.duration;
+    if (item.rotation) meta.rotation = item.rotation;
 
     const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
     const enc = await encryptBlock(metaBytes, getMasterKeyRaw());
@@ -1037,6 +1354,7 @@ async function moveItemToFolder(item, newFolderId) {
         },
     });
     item.folderId = newFolderId;
+    return true;
 }
 
 // --- Move modal ---
@@ -1086,7 +1404,64 @@ async function doMove(folderId) {
 document.getElementById('move-cancel').addEventListener('click', () => {
     moveModal.classList.add('hidden');
     moveTargetItem = null;
+    moveFolderTarget = null;
 });
+
+let moveFolderTarget = null;
+
+function openMoveFolderModal(folder) {
+    moveFolderTarget = folder;
+    moveFolderList.innerHTML = '';
+
+    const descendantIds = new Set();
+    function collectDescendants(id) {
+        descendantIds.add(id);
+        for (const child of folders.filter(x => x.parentId === id)) {
+            collectDescendants(child.id);
+        }
+    }
+    collectDescendants(folder.id);
+
+    // Root option
+    const rootEl = document.createElement('div');
+    rootEl.className = 'move-folder-item' + ((folder.parentId || null) === null ? ' active' : '');
+    rootEl.innerHTML = '📂 All Media (root)';
+    rootEl.addEventListener('click', () => doMoveFolder(null));
+    moveFolderList.appendChild(rootEl);
+
+    function addFolders(parentId, depth) {
+        for (const f of folders.filter(x => x.parentId === parentId)) {
+            if (descendantIds.has(f.id)) continue;
+            const el = document.createElement('div');
+            el.className = 'move-folder-item' + (folder.parentId === f.id ? ' active' : '');
+            el.innerHTML = `<span class="move-folder-indent" style="width:${depth * 20}px"></span>📁 ${escapeHtml(f.name)}`;
+            el.addEventListener('click', () => doMoveFolder(f.id));
+            moveFolderList.appendChild(el);
+            addFolders(f.id, depth + 1);
+        }
+    }
+    addFolders(null, 1);
+
+    moveModal.classList.remove('hidden');
+}
+
+async function doMoveFolder(newParentId) {
+    if (!moveFolderTarget) return;
+    if ((moveFolderTarget.parentId || null) === (newParentId || null)) {
+        moveModal.classList.add('hidden');
+        moveFolderTarget = null;
+        return;
+    }
+    if (folderNameExists(moveFolderTarget.name, newParentId, moveFolderTarget.id)) {
+        alert('A folder with that name already exists in the destination.');
+        return;
+    }
+    moveFolderTarget.parentId = newParentId;
+    await saveFolderTree();
+    moveModal.classList.add('hidden');
+    moveFolderTarget = null;
+    renderGalleryItems();
+}
 
 function moveCurrentItem() {
     if (currentViewerItem) openMoveModal(currentViewerItem);
@@ -1120,6 +1495,7 @@ function showDeleteFolderConfirm(message, onConfirm) {
 
 // --- Drag and drop ---
 let draggedItem = null;
+let draggedFolder = null;
 
 // --- Gallery drag-to-upload ---
 const galleryDropOverlay = document.getElementById('gallery-drop-overlay');
@@ -1161,10 +1537,121 @@ document.addEventListener('drop', (e) => {
     }
 });
 
+// --- Touch drag-and-drop (mobile) ---
+let _touchDragState = null;
+
+function initTouchDrag(el, getData) {
+    let timer = null;
+    let startX, startY;
+
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    el.addEventListener('touchstart', (e) => {
+        if (_touchDragState) return;
+        const touch = e.touches[0];
+        startX = touch.clientX;
+        startY = touch.clientY;
+        timer = setTimeout(() => {
+            timer = null;
+            const data = getData();
+            if (!data) return;
+            e.preventDefault();
+
+            // Create ghost
+            const ghost = el.cloneNode(true);
+            ghost.className = 'touch-drag-ghost';
+            ghost.style.width = el.offsetWidth + 'px';
+            ghost.style.height = el.offsetHeight + 'px';
+            ghost.style.left = (startX - el.offsetWidth / 2) + 'px';
+            ghost.style.top = (startY - el.offsetHeight / 2) + 'px';
+            document.body.appendChild(ghost);
+
+            el.classList.add('dragging');
+            _touchDragState = { data, ghost, sourceEl: el };
+
+            if (data.type === 'item') draggedItem = data.value;
+            else if (data.type === 'folder') draggedFolder = data.value;
+        }, 400);
+    }, { passive: false });
+
+    el.addEventListener('touchmove', (e) => {
+        if (timer) {
+            const t = e.touches[0];
+            if (Math.abs(t.clientX - startX) > 10 || Math.abs(t.clientY - startY) > 10) {
+                clearTimeout(timer);
+                timer = null;
+            }
+            return;
+        }
+        if (!_touchDragState) return;
+        e.preventDefault();
+        const touch = e.touches[0];
+        _touchDragState.ghost.style.left = (touch.clientX - _touchDragState.ghost.offsetWidth / 2) + 'px';
+        _touchDragState.ghost.style.top = (touch.clientY - _touchDragState.ghost.offsetHeight / 2) + 'px';
+
+        // Highlight drop targets
+        const target = findDropTarget(touch.clientX, touch.clientY);
+        document.querySelectorAll('.touch-drag-over').forEach(el => el.classList.remove('touch-drag-over'));
+        if (target) target.classList.add('touch-drag-over');
+    }, { passive: false });
+
+    el.addEventListener('touchend', (e) => {
+        if (timer) { clearTimeout(timer); timer = null; return; }
+        if (!_touchDragState) return;
+        e.preventDefault();
+
+        const touch = e.changedTouches[0];
+        const target = findDropTarget(touch.clientX, touch.clientY);
+        document.querySelectorAll('.touch-drag-over').forEach(el => el.classList.remove('touch-drag-over'));
+
+        if (target) {
+            // Simulate a drop event on the target
+            const dropEvent = new Event('drop', { bubbles: true });
+            dropEvent.preventDefault = () => {};
+            dropEvent.stopPropagation = () => {};
+            dropEvent.dataTransfer = { files: [] };
+            target.dispatchEvent(dropEvent);
+        }
+
+        cleanupTouchDrag();
+    });
+
+    el.addEventListener('touchcancel', () => {
+        if (timer) { clearTimeout(timer); timer = null; }
+        if (_touchDragState) cleanupTouchDrag();
+    });
+}
+
+function cleanupTouchDrag() {
+    if (!_touchDragState) return;
+    _touchDragState.ghost.remove();
+    _touchDragState.sourceEl.classList.remove('dragging');
+    _touchDragState = null;
+    draggedItem = null;
+    draggedFolder = null;
+}
+
+function findDropTarget(x, y) {
+    // Hide ghost temporarily so elementFromPoint doesn't hit it
+    const ghost = _touchDragState?.ghost;
+    if (ghost) ghost.style.display = 'none';
+    const el = document.elementFromPoint(x, y);
+    if (ghost) ghost.style.display = '';
+
+    if (!el) return null;
+    // Check for folder item drop target
+    const folderItem = el.closest('.folder-item');
+    if (folderItem) return folderItem;
+    // Check for breadcrumb drop target
+    const breadcrumb = el.closest('.breadcrumb-item');
+    if (breadcrumb) return breadcrumb;
+    return null;
+}
+
 // --- Drop-to-upload (no modal) ---
 const dropUploadStatus = document.getElementById('drop-upload-status');
 
-async function handleDropUpload(files) {
+async function handleDropUpload(files, targetFolderId) {
     dropUploadStatus.innerHTML = '';
     dropUploadStatus.classList.remove('hidden');
 
@@ -1193,7 +1680,7 @@ async function handleDropUpload(files) {
             const dummyEl = createUploadItem(file.name);
             dummyEl.style.display = 'none';
             document.body.appendChild(dummyEl);
-            await uploadFile(file, dummyEl);
+            await uploadFile(file, dummyEl, targetFolderId);
             dummyEl.remove();
             statusSpan.textContent = 'Done';
             statusSpan.className = 'status done';
@@ -1233,7 +1720,17 @@ async function openViewer(item) {
     viewerVideo.classList.add('hidden');
     viewerImage.classList.add('hidden');
 
+    // Build navigation list from current folder's media (only on first open, not during navigation)
+    if (viewerList.length === 0 || !viewerList.includes(item)) {
+        viewerList = mediaItems.filter(m => (m.folderId || null) === currentFolderId);
+    }
+    viewerIndex = viewerList.indexOf(item);
+    updateViewerNav();
+
     viewerTitle.textContent = item.name || 'Encrypted file';
+    // Only apply CSS rotation for videos (images are rotated at the file level)
+    viewerImage.style.transform = '';
+    viewerVideo.style.transform = (item.media_type === 'video' && item.rotation) ? `rotate(${item.rotation}deg)` : '';
 
     // Decrypt file key
     const fileKeyEnc = base64ToBuffer(item.file_key_enc);
@@ -1252,9 +1749,11 @@ function closeViewer() {
     viewer.classList.add('hidden');
     viewerVideo.pause();
     viewerVideo.removeAttribute('src');
+    viewerVideo.load();
     viewerVideo.classList.add('hidden');
     viewerImage.classList.add('hidden');
     viewerImage.src = '';
+    applyRotation(0);
     if (_viewerBlobUrl) {
         URL.revokeObjectURL(_viewerBlobUrl);
         _viewerBlobUrl = null;
@@ -1264,6 +1763,8 @@ function closeViewer() {
         viewerVideo._mediaSource = null;
     }
     currentViewerItem = null;
+    viewerList = [];
+    viewerIndex = -1;
 }
 
 async function showImage(item, fileKey) {
@@ -1288,6 +1789,7 @@ async function showImage(item, fileKey) {
     _viewerBlobUrl = URL.createObjectURL(blob);
     viewerImage.src = _viewerBlobUrl;
 }
+
 
 async function playVideo(item, fileKey) {
     viewerVideo.classList.remove('hidden');
@@ -1330,12 +1832,182 @@ function waitForBuffer(sb) {
     });
 }
 
+function applyRotation(deg) {
+    viewerVideo.style.transform = deg ? `rotate(${deg}deg)` : '';
+    viewerImage.style.transform = deg ? `rotate(${deg}deg)` : '';
+}
+
+async function rotateCurrentItem() {
+    if (!currentViewerItem) return;
+    const item = currentViewerItem;
+
+    if (item.media_type === 'video') {
+        // Videos: CSS rotation stored in metadata (can't re-encode in browser)
+        item.rotation = ((item.rotation || 0) + 90) % 360;
+        applyRotation(item.rotation);
+        await updateItemMetadata(item);
+        return;
+    }
+
+    // Images: actually rotate the pixel data and re-upload
+    viewerTitle.textContent = 'Rotating...';
+    try {
+        // Decrypt file
+        const fileKeyEnc = base64ToBuffer(item.file_key_enc);
+        const fileKey = await decryptFileKey(fileKeyEnc);
+        const chunks = [];
+        for (let i = 0; i < item.chunk_count; i++) {
+            const res = await fetch(`/api/media/${item.id}/chunk/${i}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const encData = new Uint8Array(await res.arrayBuffer());
+            chunks.push(await workerDecrypt('decryptChunk', encData, fileKey, i));
+        }
+        const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+        const merged = new Uint8Array(totalLen);
+        let off = 0;
+        for (const c of chunks) { merged.set(c, off); off += c.length; }
+
+        // Rotate via canvas
+        const blob = new Blob([merged], { type: item.mime_type || 'image/jpeg' });
+        const rotatedData = await rotateImageData(blob, item.mime_type || 'image/jpeg');
+
+        // Generate thumbnail from rotated data
+        const thumbBlob = new Blob([rotatedData], { type: item.mime_type || 'image/jpeg' });
+        const thumbFile = new File([thumbBlob], 'thumb.jpg', { type: item.mime_type || 'image/jpeg' });
+        let thumbData;
+        try {
+            thumbData = await generateThumbnail(thumbFile);
+        } catch {
+            thumbData = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46]);
+        }
+
+        // New keys
+        const newFileKey = generateFileKey();
+        const newThumbKey = generateFileKey();
+        const newHashNonce = generateHashNonce();
+
+        // Hash modification on rotated data
+        const modifiedData = modifyHash(rotatedData, item.mime_type || 'image/jpeg', newHashNonce);
+
+        // Encrypt
+        const encThumb = await encryptChunk(thumbData, newThumbKey, 0);
+        const chunkCount = Math.ceil(modifiedData.length / CHUNK_SIZE);
+        const encChunks = [];
+        for (let i = 0; i < chunkCount; i++) {
+            const start = i * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, modifiedData.length);
+            encChunks.push(await encryptChunk(modifiedData.slice(start, end), newFileKey, i));
+        }
+
+        const encFileKey = await encryptFileKey(newFileKey);
+        const encThumbKey = await encryptFileKey(newThumbKey);
+
+        // Get rotated dimensions
+        const rotImg = new Image();
+        const dimUrl = URL.createObjectURL(thumbBlob);
+        const dims = await new Promise((resolve) => {
+            rotImg.onload = () => { resolve({ width: rotImg.naturalWidth, height: rotImg.naturalHeight }); URL.revokeObjectURL(dimUrl); };
+            rotImg.onerror = () => { resolve({ width: item.height || 0, height: item.width || 0 }); URL.revokeObjectURL(dimUrl); };
+            rotImg.src = dimUrl;
+        });
+
+        // Build metadata (preserve name, folder, etc.)
+        const metaPlain = {
+            name: item.name,
+            media_type: 'image',
+            mime_type: item.mime_type || 'image/jpeg',
+            size: modifiedData.length,
+            chunk_count: chunkCount,
+            width: dims.width,
+            height: dims.height,
+        };
+        if (item.folderId) metaPlain.folderId = item.folderId;
+
+        const metaBytes = new TextEncoder().encode(JSON.stringify(metaPlain));
+        const encMetadata = await encryptBlock(metaBytes, getMasterKeyRaw());
+        const metadataNonce = encMetadata.slice(0, 12);
+        const metadataCiphertext = encMetadata.slice(12);
+
+        const metadata = {
+            chunk_count: chunkCount,
+            file_key_enc: bufferToBase64(encFileKey),
+            thumb_key_enc: bufferToBase64(encThumbKey),
+            hash_nonce: bufferToBase64(newHashNonce),
+            metadata_enc: bufferToBase64(metadataCiphertext),
+            metadata_nonce: bufferToBase64(metadataNonce),
+        };
+
+        // Delete old
+        await api(`/api/media/${item.id}`, { method: 'DELETE' });
+
+        // Upload rotated
+        const formData = new FormData();
+        formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+        formData.append('thumbnail', new Blob([encThumb]));
+        for (let i = 0; i < encChunks.length; i++) {
+            formData.append(`chunk_${i}`, new Blob([encChunks[i]]));
+        }
+
+        const uploadRes = await fetch('/api/media/upload', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData,
+        });
+        if (!uploadRes.ok) throw new Error('Upload failed');
+        const uploadData = await uploadRes.json();
+        const newId = uploadData.id;
+
+        // Reload media and re-open viewer on the rotated item
+        viewerList = [];
+        await loadMedia();
+        const newItem = mediaItems.find(m => m.id === newId);
+        if (newItem) {
+            openViewer(newItem);
+        } else {
+            closeViewer();
+        }
+    } catch (e) {
+        viewerTitle.textContent = 'Rotate failed: ' + e.message;
+    }
+}
+
+function rotateImageData(blob, mimeType) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            // Swap width/height for 90° rotation
+            canvas.width = img.naturalHeight;
+            canvas.height = img.naturalWidth;
+            const ctx = canvas.getContext('2d');
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.rotate(Math.PI / 2);
+            ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+            // Use original MIME if PNG, otherwise JPEG
+            const outType = mimeType.includes('png') ? 'image/png' : 'image/jpeg';
+            const quality = outType === 'image/jpeg' ? 0.95 : undefined;
+            canvas.toBlob(outBlob => {
+                if (!outBlob) { reject(new Error('Canvas export failed')); return; }
+                outBlob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
+            }, outType, quality);
+            URL.revokeObjectURL(img.src);
+        };
+        img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('Image decode failed')); };
+        img.src = URL.createObjectURL(blob);
+    });
+}
+
 async function deleteCurrentItem() {
     if (!currentViewerItem) return;
+    await deleteItem(currentViewerItem);
+    closeViewer();
+}
+
+async function deleteItem(item) {
     if (!confirm('Delete this item? This cannot be undone.')) return;
     try {
-        await api(`/api/media/${currentViewerItem.id}`, { method: 'DELETE' });
-        closeViewer();
+        await api(`/api/media/${item.id}`, { method: 'DELETE' });
         loadMedia();
     } catch (e) {
         alert('Delete failed: ' + e.message);
@@ -1344,8 +2016,10 @@ async function deleteCurrentItem() {
 
 async function downloadCurrentItem() {
     if (!currentViewerItem) return;
-    const item = currentViewerItem;
+    await downloadItem(currentViewerItem);
+}
 
+async function downloadItem(item) {
     try {
         const fileKeyEnc = base64ToBuffer(item.file_key_enc);
         const fileKey = await decryptFileKey(fileKeyEnc);
@@ -1378,6 +2052,226 @@ async function downloadCurrentItem() {
     } catch (e) {
         alert('Download failed: ' + e.message);
     }
+}
+
+async function downloadFolder(folder) {
+    // Collect all descendant folder IDs
+    const allFolderIds = new Set();
+    function collectIds(id) {
+        allFolderIds.add(id);
+        for (const child of folders.filter(x => x.parentId === id)) {
+            collectIds(child.id);
+        }
+    }
+    collectIds(folder.id);
+
+    // Build a map of folder ID -> path prefix
+    const folderPaths = new Map();
+    function buildPaths(id, prefix) {
+        folderPaths.set(id, prefix);
+        for (const child of folders.filter(x => x.parentId === id)) {
+            buildPaths(child.id, prefix + child.name + '/');
+        }
+    }
+    buildPaths(folder.id, '');
+
+    // Gather all media items in this folder tree
+    const items = mediaItems.filter(m => allFolderIds.has(m.folderId));
+    if (items.length === 0) {
+        alert('This folder is empty.');
+        return;
+    }
+
+    try {
+        const zipFiles = [];
+        for (let idx = 0; idx < items.length; idx++) {
+            const item = items[idx];
+            const prefix = folderPaths.get(item.folderId) || '';
+            const filename = prefix + (item.name || `file-${idx}`);
+
+            const fileKeyEnc = base64ToBuffer(item.file_key_enc);
+            const fileKey = await decryptFileKey(fileKeyEnc);
+
+            const chunks = [];
+            for (let i = 0; i < item.chunk_count; i++) {
+                const res = await fetch(`/api/media/${item.id}/chunk/${i}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const encData = new Uint8Array(await res.arrayBuffer());
+                const dec = await workerDecrypt('decryptChunk', encData, fileKey, i);
+                chunks.push(dec);
+            }
+            verifyChunkCount(item, chunks.length);
+            const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+            const merged = new Uint8Array(totalLen);
+            let off = 0;
+            for (const c of chunks) { merged.set(c, off); off += c.length; }
+
+            zipFiles.push({ name: filename, data: merged });
+        }
+
+        const zipBlob = buildZip(zipFiles);
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = folder.name + '.zip';
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        alert('Folder download failed: ' + e.message);
+    }
+}
+
+/**
+ * Minimal ZIP builder (store method, no compression).
+ * Supports filenames and binary data. No external dependencies.
+ */
+function buildZip(files) {
+    const entries = [];
+    let offset = 0;
+
+    for (const file of files) {
+        const nameBytes = new TextEncoder().encode(file.name);
+        const data = file.data;
+
+        // CRC-32
+        const crc = crc32(data);
+
+        // Local file header (30 + name length)
+        const localHeader = new Uint8Array(30 + nameBytes.length);
+        const lv = new DataView(localHeader.buffer);
+        lv.setUint32(0, 0x04034b50, true);   // signature
+        lv.setUint16(4, 20, true);            // version needed
+        lv.setUint16(6, 0, true);             // flags
+        lv.setUint16(8, 0, true);             // compression (store)
+        lv.setUint16(10, 0, true);            // mod time
+        lv.setUint16(12, 0, true);            // mod date
+        lv.setUint32(14, crc, true);          // crc-32
+        lv.setUint32(18, data.length, true);  // compressed size
+        lv.setUint32(22, data.length, true);  // uncompressed size
+        lv.setUint16(26, nameBytes.length, true); // filename length
+        lv.setUint16(28, 0, true);            // extra field length
+        localHeader.set(nameBytes, 30);
+
+        entries.push({ nameBytes, data, crc, localHeaderOffset: offset, localHeader });
+        offset += localHeader.length + data.length;
+    }
+
+    // Central directory
+    const centralParts = [];
+    let centralSize = 0;
+    for (const entry of entries) {
+        const cd = new Uint8Array(46 + entry.nameBytes.length);
+        const cv = new DataView(cd.buffer);
+        cv.setUint32(0, 0x02014b50, true);    // signature
+        cv.setUint16(4, 20, true);             // version made by
+        cv.setUint16(6, 20, true);             // version needed
+        cv.setUint16(8, 0, true);              // flags
+        cv.setUint16(10, 0, true);             // compression
+        cv.setUint16(12, 0, true);             // mod time
+        cv.setUint16(14, 0, true);             // mod date
+        cv.setUint32(16, entry.crc, true);     // crc-32
+        cv.setUint32(20, entry.data.length, true); // compressed size
+        cv.setUint32(24, entry.data.length, true); // uncompressed size
+        cv.setUint16(28, entry.nameBytes.length, true); // filename length
+        cv.setUint16(30, 0, true);             // extra field length
+        cv.setUint16(32, 0, true);             // comment length
+        cv.setUint16(34, 0, true);             // disk number
+        cv.setUint16(36, 0, true);             // internal attrs
+        cv.setUint32(38, 0, true);             // external attrs
+        cv.setUint32(42, entry.localHeaderOffset, true); // local header offset
+        cd.set(entry.nameBytes, 46);
+        centralParts.push(cd);
+        centralSize += cd.length;
+    }
+
+    // End of central directory
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true);         // signature
+    ev.setUint16(4, 0, true);                  // disk number
+    ev.setUint16(6, 0, true);                  // disk with central dir
+    ev.setUint16(8, entries.length, true);      // entries on this disk
+    ev.setUint16(10, entries.length, true);     // total entries
+    ev.setUint32(12, centralSize, true);        // central dir size
+    ev.setUint32(16, offset, true);             // central dir offset
+    ev.setUint16(20, 0, true);                 // comment length
+
+    // Assemble final blob
+    const parts = [];
+    for (const entry of entries) {
+        parts.push(entry.localHeader);
+        parts.push(entry.data);
+    }
+    for (const cd of centralParts) {
+        parts.push(cd);
+    }
+    parts.push(eocd);
+
+    return new Blob(parts, { type: 'application/zip' });
+}
+
+/** CRC-32 (IEEE) */
+const _crc32Table = (() => {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let j = 0; j < 8; j++) {
+            c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        }
+        table[i] = c;
+    }
+    return table;
+})();
+
+function crc32(data) {
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < data.length; i++) {
+        crc = _crc32Table[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+
+function renameItem(item) {
+    const newName = prompt('New name:', item.name);
+    if (!newName || !newName.trim() || newName.trim() === item.name) return;
+    if (fileNameExistsInFolder(newName.trim(), item.folderId || null)) {
+        alert('A file with that name already exists in this folder.');
+        return;
+    }
+    item.name = newName.trim();
+    // Re-encrypt and save metadata
+    updateItemMetadata(item);
+    renderGalleryItems();
+}
+
+async function updateItemMetadata(item) {
+    const meta = {
+        name: item.name,
+        media_type: item.media_type,
+        mime_type: item.mime_type,
+        size: item.size,
+        chunk_count: item.chunk_count_trusted || item.chunk_count,
+    };
+    if (item.folderId) meta.folderId = item.folderId;
+    if (item.width) meta.width = item.width;
+    if (item.height) meta.height = item.height;
+    if (item.duration) meta.duration = item.duration;
+    if (item.rotation) meta.rotation = item.rotation;
+
+    const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
+    const enc = await encryptBlock(metaBytes, getMasterKeyRaw());
+    const nonce = enc.slice(0, 12);
+    const ciphertext = enc.slice(12);
+
+    await api(`/api/media/${item.id}`, {
+        method: 'PATCH',
+        json: {
+            metadata_enc: bufferToBase64(ciphertext),
+            metadata_nonce: bufferToBase64(nonce),
+        },
+    });
 }
 
 // ─── Upload ───
@@ -1448,7 +2342,13 @@ function setUploadProgress(el, pct) {
     el.querySelector('.fill').style.width = pct + '%';
 }
 
-async function uploadFile(file, itemEl) {
+async function uploadFile(file, itemEl, targetFolderId) {
+    if (targetFolderId === undefined) targetFolderId = currentFolderId;
+    if (fileNameExistsInFolder(file.name, targetFolderId)) {
+        setUploadStatus(itemEl, 'Skipped (duplicate name)');
+        return;
+    }
+
     setUploadStatus(itemEl, 'Reading...');
     const fileData = new Uint8Array(await file.arrayBuffer());
 
@@ -1496,6 +2396,7 @@ async function uploadFile(file, itemEl) {
         size: file.size,
         chunk_count: chunkCount,
     };
+    if (targetFolderId) metaPlain.folderId = targetFolderId;
 
     // Get video dimensions/duration
     if (mediaType === 'video') {

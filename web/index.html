@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-0u7nR25FnyNyqcXyRq3GVL+KFPeHIq6QyFoWStMSYAYa4FNd+03nQNUnmkqE1RaB" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-k74CreELvPi1+sioGxbWXUuNQ3zSgi4zAe0q70FYr2wCzeVfZd7vTlPhSlqoRj2f" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -13,28 +13,20 @@
             <div class="header-left">
                 <h1 class="logo">Darkreel</h1>
             </div>
-            <div class="header-center">
-                <div class="controls">
-                    <select id="sort-select">
-                        <option value="date-desc">Newest first</option>
-                        <option value="date-asc">Oldest first</option>
-                        <option value="size-desc">Largest first</option>
-                        <option value="size-asc">Smallest first</option>
-                        <option value="name-asc">Name A-Z</option>
-                        <option value="name-desc">Name Z-A</option>
-                    </select>
-                    <select id="type-filter">
-                        <option value="">All</option>
-                        <option value="image">Images</option>
-                        <option value="video">Videos</option>
-                    </select>
-                </div>
-            </div>
+            <div class="header-center"></div>
             <div class="header-right">
                 <button id="upload-btn" class="btn btn-primary">Upload</button>
-                <button id="settings-btn" class="btn btn-ghost">Settings</button>
-                <button id="admin-btn" class="btn btn-ghost hidden">Admin</button>
-                <button id="logout-btn" class="btn btn-ghost">Logout</button>
+                <button id="settings-btn" class="btn btn-ghost header-desktop">Settings</button>
+                <button id="admin-btn" class="btn btn-ghost header-desktop hidden">Admin</button>
+                <button id="logout-btn" class="btn btn-ghost header-desktop">Logout</button>
+                <div class="header-menu-wrap">
+                    <button id="header-menu-btn" class="btn btn-ghost header-mobile-only" aria-label="Menu">&#9776;</button>
+                    <div id="header-menu-popup" class="header-menu-popup hidden">
+                        <button id="settings-btn-mobile" class="btn btn-ghost">Settings</button>
+                        <button id="admin-btn-mobile" class="btn btn-ghost hidden">Admin</button>
+                        <button id="logout-btn-mobile" class="btn btn-ghost">Logout</button>
+                    </div>
+                </div>
             </div>
         </header>
 
@@ -43,7 +35,7 @@
             <div id="auth-view" class="view hidden">
                 <div class="auth-card">
                     <h2 class="auth-title">Darkreel</h2>
-                    <p class="auth-subtitle">E2E Encrypted Media</p>
+
                     <form id="auth-form">
                         <input type="text" id="auth-username" placeholder="Username" required minlength="3" autocomplete="username">
                         <input type="password" id="auth-password" placeholder="Password" required autocomplete="current-password">
@@ -84,6 +76,41 @@
             <div id="gallery-view" class="view hidden">
                 <div id="folder-bar" class="folder-bar">
                     <div id="breadcrumb" class="breadcrumb"></div>
+                    <div class="folder-filters">
+                        <select id="sort-select" class="btn-sm filter-desktop">
+                            <option value="date-desc">Newest first</option>
+                            <option value="date-asc">Oldest first</option>
+                            <option value="size-desc">Largest first</option>
+                            <option value="size-asc">Smallest first</option>
+                            <option value="name-asc">Name A-Z</option>
+                            <option value="name-desc">Name Z-A</option>
+                        </select>
+                        <select id="type-filter" class="btn-sm filter-desktop">
+                            <option value="">All</option>
+                            <option value="image">Images</option>
+                            <option value="video">Videos</option>
+                        </select>
+                        <button id="filter-menu-btn" class="btn btn-ghost btn-sm filter-mobile" aria-label="Filters">&#128269;</button>
+                        <div id="filter-popup" class="filter-popup hidden">
+                            <label>Sort by
+                                <select id="sort-select-mobile">
+                                    <option value="date-desc">Newest first</option>
+                                    <option value="date-asc">Oldest first</option>
+                                    <option value="size-desc">Largest first</option>
+                                    <option value="size-asc">Smallest first</option>
+                                    <option value="name-asc">Name A-Z</option>
+                                    <option value="name-desc">Name Z-A</option>
+                                </select>
+                            </label>
+                            <label>Type
+                                <select id="type-filter-mobile">
+                                    <option value="">All</option>
+                                    <option value="image">Images</option>
+                                    <option value="video">Videos</option>
+                                </select>
+                            </label>
+                        </div>
+                    </div>
                     <div class="folder-actions">
                         <button id="new-folder-btn" class="btn btn-ghost btn-sm">New Folder</button>
                     </div>
@@ -110,8 +137,8 @@
             <div id="admin-view" class="view hidden">
                 <div class="admin-panel">
                     <div class="admin-header">
-                        <h2>User Management</h2>
-                        <button id="admin-back-btn" class="btn btn-ghost">Back to Gallery</button>
+                        <button id="admin-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back">&#8592;</button>
+                        <h2>Admin</h2>
                     </div>
                     <div class="admin-create">
                         <h3>Create User</h3>
@@ -143,8 +170,8 @@
             <div id="settings-view" class="view hidden">
                 <div class="admin-panel">
                     <div class="admin-header">
+                        <button id="settings-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back">&#8592;</button>
                         <h2>Settings</h2>
-                        <button id="settings-back-btn" class="btn btn-ghost">Back to Gallery</button>
                     </div>
                     <div class="admin-create">
                         <h3>Change Password</h3>
@@ -184,14 +211,17 @@
                     <span id="viewer-title"></span>
                     <div class="viewer-actions">
                         <button id="viewer-move" class="btn btn-ghost">Move</button>
+                        <button id="viewer-rotate" class="btn btn-ghost">Rotate</button>
                         <button id="viewer-download" class="btn btn-ghost">Download</button>
                         <button id="viewer-delete" class="btn btn-danger">Delete</button>
                         <button id="viewer-close" class="btn btn-ghost">Close</button>
                     </div>
                 </div>
                 <div class="viewer-content">
+                    <button id="viewer-prev" class="viewer-nav viewer-nav-prev" aria-label="Previous">&#8249;</button>
                     <video id="viewer-video" class="hidden" controls></video>
                     <img id="viewer-image" class="hidden" alt="">
+                    <button id="viewer-next" class="viewer-nav viewer-nav-next" aria-label="Next">&#8250;</button>
                 </div>
             </div>
         </main>
@@ -216,6 +246,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-kz+RdWJ9sKpNLUTzFDdAswYUmAVZOOLlcqsSe2DJuAdRWVeQ3fdRWznWK/50al62" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-/zeaw4ZAZoLzN7/1SVRUlqESxlw2WWjkadiXafJVN8ER0wm5mPtZVTczyj+m6ryR" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-A2Krf67caGQvaev0mrQtjWQNdrvLvXIQUG29r6W9bz3yMfMttlna/ZU/B5RcTOTG" crossorigin="anonymous"></script>
 </body>
 </html>
