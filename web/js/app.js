@@ -175,7 +175,7 @@ registerFormEl.addEventListener('submit', async (e) => {
 
         // Hide form fields, show only recovery code + continue button
         registerFormEl.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = 'none');
-        regSuccess.innerHTML = 'Account created! Your recovery code:<br><br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + (res.recovery_code || '') + '</code><br>Save this code somewhere safe — it cannot be shown again.';
+        regSuccess.innerHTML = 'Account created! Your recovery code:<br><br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + escapeHtml(res.recovery_code || '') + '</code><br>Save this code somewhere safe — it cannot be shown again.';
         regSuccess.classList.remove('hidden');
 
         // Add continue button
@@ -338,7 +338,7 @@ adminCreateForm.addEventListener('submit', async (e) => {
 
     try {
         const res = await api('/api/admin/users', { json: { username, password, is_admin: isAdmin } });
-        adminCreateSuccess.innerHTML = 'User "' + escapeHtml(res.username) + '" created.<br>Recovery code:<br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:8px;margin-top:4px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + res.recovery_code + '</code>';
+        adminCreateSuccess.innerHTML = 'User "' + escapeHtml(res.username) + '" created.<br>Recovery code:<br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:8px;margin-top:4px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + escapeHtml(res.recovery_code) + '</code>';
         adminCreateSuccess.classList.remove('hidden');
         adminCreateForm.reset();
         loadAdminUsers();
@@ -1246,6 +1246,8 @@ async function openViewer(item) {
     }
 }
 
+let _viewerBlobUrl = null;
+
 function closeViewer() {
     viewer.classList.add('hidden');
     viewerVideo.pause();
@@ -1253,6 +1255,10 @@ function closeViewer() {
     viewerVideo.classList.add('hidden');
     viewerImage.classList.add('hidden');
     viewerImage.src = '';
+    if (_viewerBlobUrl) {
+        URL.revokeObjectURL(_viewerBlobUrl);
+        _viewerBlobUrl = null;
+    }
     if (viewerVideo._mediaSource) {
         try { viewerVideo._mediaSource.endOfStream(); } catch {}
         viewerVideo._mediaSource = null;
@@ -1278,7 +1284,9 @@ async function showImage(item, fileKey) {
     for (const c of chunks) { merged.set(c, offset); offset += c.length; }
 
     const blob = new Blob([merged], { type: item.mime_type });
-    viewerImage.src = URL.createObjectURL(blob);
+    if (_viewerBlobUrl) URL.revokeObjectURL(_viewerBlobUrl);
+    _viewerBlobUrl = URL.createObjectURL(blob);
+    viewerImage.src = _viewerBlobUrl;
 }
 
 async function playVideo(item, fileKey) {
@@ -1306,7 +1314,9 @@ async function playVideo(item, fileKey) {
         viewerTitle.textContent = item.name || 'Video';
 
         const blob = new Blob([merged], { type: item.mime_type || 'video/mp4' });
-        viewerVideo.src = URL.createObjectURL(blob);
+        if (_viewerBlobUrl) URL.revokeObjectURL(_viewerBlobUrl);
+        _viewerBlobUrl = URL.createObjectURL(blob);
+        viewerVideo.src = _viewerBlobUrl;
         viewerVideo.play().catch(() => {});
     } catch (e) {
         viewerTitle.textContent = 'Playback failed: ' + e.message;

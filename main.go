@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -49,7 +50,11 @@ func main() {
 			log.Fatalf("Failed to create admin user: %v", err)
 		}
 		log.Printf("Admin user %q created", adminUser)
-		log.Printf("RECOVERY CODE (save this — it cannot be shown again): %s", recoveryCode)
+		fmt.Fprintf(os.Stderr, "\n========================================\n")
+		fmt.Fprintf(os.Stderr, "  RECOVERY CODE — save this now!\n")
+		fmt.Fprintf(os.Stderr, "  It cannot be shown again.\n\n")
+		fmt.Fprintf(os.Stderr, "  %s\n", recoveryCode)
+		fmt.Fprintf(os.Stderr, "========================================\n\n")
 	}
 
 	// Clean up orphaned data directories not referenced in DB

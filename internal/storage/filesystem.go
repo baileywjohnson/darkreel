@@ -6,12 +6,21 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 )
 
 // paddedChunkSize is the fixed size for all chunk files on disk.
 // 1MB plaintext + 12 nonce + 16 tag = 1048604 bytes max encrypted chunk.
 // We pad all chunks to this size to prevent size-based fingerprinting.
 const paddedChunkSize = 1048576 + 28
+
+// paddedThumbSize is the fixed size for thumbnail files on disk.
+// Max thumbnail is ~320px wide JPEG at quality 5, which fits in 256 KB.
+const paddedThumbSize = 256 * 1024
+
+// epoch is a fixed timestamp applied to all written files so that
+// filesystem modification times don't leak when uploads occurred.
+var epoch = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 // WriteChunk writes an encrypted chunk to disk, padded to a fixed size.
 // Format: [4 bytes big-endian real length][data][random padding]
@@ -26,7 +35,10 @@ func (l *Layout) WriteChunk(userID, mediaID string, index int, data []byte) erro
 		rand.Read(padded[4+len(data):])
 	}
 
-	return os.WriteFile(path, padded, 0600)
+	if err := os.WriteFile(path, padded, 0600); err != nil {
+		return err
+	}
+	return os.Chtimes(path, epoch, epoch)
 }
 
 // ReadChunk reads an encrypted chunk from disk, stripping the padding.
@@ -68,18 +80,37 @@ func (r readerAt) ReadAt(p []byte, off int64) (n int, err error) {
 	return
 }
 
-// WriteThumbnail writes an encrypted thumbnail to disk.
+// WriteThumbnail writes an encrypted thumbnail to disk, padded to a fixed size.
 func (l *Layout) WriteThumbnail(userID, mediaID string, data []byte) error {
 	path := l.ThumbnailPath(userID, mediaID)
-	return os.WriteFile(path, data, 0600)
+
+	// Pad to fixed size to prevent size-based content inference
+	padded := make([]byte, 4+paddedThumbSize)
+	binary.BigEndian.PutUint32(padded[:4], uint32(len(data)))
+	copy(padded[4:], data)
+	if pad := paddedThumbSize - len(data); pad > 0 {
+		rand.Read(padded[4+len(data):])
+	}
+
+	if err := os.WriteFile(path, padded, 0600); err != nil {
+		return err
+	}
+	return os.Chtimes(path, epoch, epoch)
 }
 
-// ReadThumbnail reads an encrypted thumbnail from disk.
+// ReadThumbnail reads an encrypted thumbnail from disk, stripping the padding.
 func (l *Layout) ReadThumbnail(userID, mediaID string) ([]byte, error) {
 	path := l.ThumbnailPath(userID, mediaID)
-	data, err := os.ReadFile(path)
+	padded, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read thumbnail: %w", err)
 	}
-	return data, nil
+	if len(padded) < 4 {
+		return nil, fmt.Errorf("thumbnail too small")
+	}
+	realLen := binary.BigEndian.Uint32(padded[:4])
+	if int(realLen) > len(padded)-4 {
+		return nil, fmt.Errorf("invalid thumbnail length")
+	}
+	return padded[4 : 4+realLen], nil
 }

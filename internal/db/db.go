@@ -42,7 +42,7 @@ func migrate(db *sql.DB) error {
 			encrypted_mk  BLOB NOT NULL,
 			recovery_mk   BLOB,
 			is_admin      INTEGER NOT NULL DEFAULT 0,
-			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at    TEXT DEFAULT (strftime('%Y-%W', 'now'))
 		);
 
 		CREATE TABLE IF NOT EXISTS user_data (
