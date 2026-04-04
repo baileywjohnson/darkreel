@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-5cFd4FEoWoqDJd/SZLC7oKGEVft1vspNjUMDJhptJKnQjxk9R0hxwMlFmrz/6Y+C" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-wFPeXLlfEN3IbcDGTTdRl2UltZMdG0V8cDWQH6dLiyp151Z+KPcE/11SM6sU7wRR" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -48,8 +48,11 @@
                     </form>
                     <form id="register-form" class="hidden">
                         <input type="text" id="reg-username" placeholder="Username" required minlength="3" autocomplete="username">
-                        <input type="password" id="reg-password" placeholder="Password (16+ chars, letter + number + symbol)" required minlength="16" autocomplete="new-password">
-                        <input type="password" id="reg-password-confirm" placeholder="Confirm Password" required minlength="16" autocomplete="new-password">
+                        <p id="reg-username-reqs" class="password-reqs hidden">Username must be at least <span data-req="ulen">3 characters</span>, at most <span data-req="umax">64 characters</span>, and may only contain <span data-req="ualpha">letters and numbers</span>.</p>
+                        <input type="password" id="reg-password" placeholder="Password" required autocomplete="new-password">
+                        <p id="reg-password-reqs" class="password-reqs hidden">Password must be at least <span data-req="length">16 characters</span>, and must contain a <span data-req="letter">letter</span>, a <span data-req="number">number</span>, and a <span data-req="symbol">symbol</span>.</p>
+                        <input type="password" id="reg-password-confirm" placeholder="Confirm Password" required autocomplete="new-password">
+                        <p id="reg-confirm-hint" class="password-reqs hidden" style="color: var(--danger, #ef4444);">Passwords must match.</p>
                         <div class="auth-buttons">
                             <button type="submit" class="btn btn-primary">Create Account</button>
                         </div>
@@ -60,8 +63,10 @@
                     <form id="recovery-form" class="hidden">
                         <input type="text" id="recovery-username" placeholder="Username" required minlength="3" autocomplete="username">
                         <input type="text" id="recovery-code" placeholder="Recovery Code" required autocomplete="off">
-                        <input type="password" id="recovery-new-password" placeholder="New Password (16+ chars)" required minlength="16" autocomplete="new-password">
-                        <input type="password" id="recovery-confirm-password" placeholder="Confirm New Password" required minlength="16" autocomplete="new-password">
+                        <input type="password" id="recovery-new-password" placeholder="New Password" required autocomplete="new-password">
+                        <p id="recovery-password-reqs" class="password-reqs hidden">Password must be at least <span data-req="length">16 characters</span>, and must contain a <span data-req="letter">letter</span>, a <span data-req="number">number</span>, and a <span data-req="symbol">symbol</span>.</p>
+                        <input type="password" id="recovery-confirm-password" placeholder="Confirm New Password" required autocomplete="new-password">
+                        <p id="recovery-confirm-hint" class="password-reqs hidden" style="color: var(--danger, #ef4444);">Passwords must match.</p>
                         <div class="auth-buttons">
                             <button type="submit" class="btn btn-primary">Reset Password</button>
                         </div>
@@ -255,7 +260,7 @@
 
     </div>
 
-    <script src="/js/crypto.js" type="module" integrity="sha384-kz+RdWJ9sKpNLUTzFDdAswYUmAVZOOLlcqsSe2DJuAdRWVeQ3fdRWznWK/50al62" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-tkS8sJQWLqpyNjPPk2VDLTQ115HxorvixA6RY9+FditVUi0sOp/DVMiMyV9UYzuL" crossorigin="anonymous"></script>
+    <script src="/js/crypto.js" type="module" integrity="sha384-ERnWjpfZFdw1O+QB5F1c99U6Xfl3L89RRZyWs3WPLF8ZqLP/U8UTYfUADFTBgMjc" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-kKNoWWpSf0NOmy5KkPCdT46JnY8LRWUMlKVB5VqbSDaCC8BQDayMVFujV0hqFfaY" crossorigin="anonymous"></script>
 </body>
 </html>

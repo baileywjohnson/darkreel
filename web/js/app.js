@@ -77,6 +77,16 @@ const loginBtn = document.getElementById('login-btn');
 const registerBtn = document.getElementById('register-btn');
 const adminBtn = document.getElementById('admin-btn');
 
+const authUsername = document.getElementById('auth-username');
+const authPassword = document.getElementById('auth-password');
+loginBtn.disabled = true;
+
+function checkLoginFields() {
+    loginBtn.disabled = !(authUsername.value.length > 0 && authPassword.value.length > 0);
+}
+authUsername.addEventListener('input', checkLoginFields);
+authPassword.addEventListener('input', checkLoginFields);
+
 function showError(msg) {
     authError.textContent = msg;
     authError.classList.remove('hidden');
@@ -127,7 +137,7 @@ async function handleLogin(overrideUsername, overridePassword) {
         if (authView.classList.contains('hidden')) {
             showAuth();
         }
-        showError(e.message);
+        showError(e instanceof TypeError ? 'Connection failed.' : e.message);
     }
 }
 
@@ -139,6 +149,9 @@ const regError = document.getElementById('reg-error');
 const regSuccess = document.getElementById('reg-success');
 
 registerBtn.addEventListener('click', () => {
+    // Carry over username/password from login form
+    document.getElementById('reg-username').value = document.getElementById('auth-username').value;
+    document.getElementById('reg-password').value = document.getElementById('auth-password').value;
     authFormEl.classList.add('hidden');
     registerFormEl.classList.remove('hidden');
     regError.classList.add('hidden');
@@ -148,11 +161,162 @@ registerBtn.addEventListener('click', () => {
     // Remove any dynamically added continue button
     const oldContinue = regSuccess.querySelector('button');
     if (oldContinue) oldContinue.remove();
+    // Check and force-show unmet requirement messages
+    checkUsernameReqs();
+    checkPasswordReqs();
+    const u = regUsernameInput.value;
+    const uMet = u.length >= 3 && u.length <= 64 && /^[a-zA-Z0-9]+$/.test(u);
+    if (!uMet && u.length > 0) regUsernameReqs.classList.remove('hidden');
+    const pw = regPasswordInput.value;
+    const pwMet = pw.length >= 16 && /[a-zA-Z]/.test(pw) && /\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw);
+    if (!pwMet && pw.length > 0) regPasswordReqs.classList.remove('hidden');
 });
 
 document.getElementById('back-to-login-from-reg').addEventListener('click', () => {
     registerFormEl.classList.add('hidden');
     authFormEl.classList.remove('hidden');
+    authFormEl.reset();
+    checkLoginFields();
+});
+
+// Input filtering: usernames alphanumeric only, passwords no spaces
+function filterUsername(e) {
+    const el = e.target;
+    el.value = el.value.replace(/[^a-zA-Z0-9]/g, '');
+}
+function filterPassword(e) {
+    const el = e.target;
+    el.value = el.value.replace(/\s/g, '');
+}
+function cursorToEnd(e) {
+    const el = e.target;
+    setTimeout(() => el.setSelectionRange(el.value.length, el.value.length), 0);
+}
+document.querySelectorAll('#auth-username, #reg-username, #admin-new-username, #recovery-username').forEach(el => {
+    el.addEventListener('input', filterUsername);
+    el.addEventListener('focus', cursorToEnd);
+    el.addEventListener('click', cursorToEnd);
+});
+document.querySelectorAll('#auth-password, #reg-password, #reg-password-confirm, #recovery-new-password, #recovery-confirm-password, #settings-current-pw, #settings-new-pw, #settings-new-pw-confirm, #admin-new-password, #admin-new-password-confirm, #delete-confirm-pw').forEach(el => {
+    if (!el) return;
+    el.addEventListener('input', filterPassword);
+    el.addEventListener('focus', cursorToEnd);
+    el.addEventListener('click', cursorToEnd);
+});
+
+const regUsernameInput = document.getElementById('reg-username');
+const regUsernameReqs = document.getElementById('reg-username-reqs');
+const regConfirmHint = document.getElementById('reg-confirm-hint');
+const regPasswordReqs = document.getElementById('reg-password-reqs');
+const regPasswordInput = document.getElementById('reg-password');
+const regPasswordConfirm = document.getElementById('reg-password-confirm');
+const regSubmitBtn = registerFormEl.querySelector('button[type="submit"]');
+regSubmitBtn.disabled = true;
+regPasswordConfirm.disabled = true;
+
+function checkUsernameReqs() {
+    const u = regUsernameInput.value;
+    const checks = {
+        ulen: u.length >= 3,
+        umax: u.length <= 64,
+        ualpha: u.length > 0 && /^[a-zA-Z0-9]+$/.test(u),
+    };
+    const allMet = Object.values(checks).every(Boolean);
+
+    for (const [key, met] of Object.entries(checks)) {
+        const el = regUsernameReqs.querySelector(`[data-req="${key}"]`);
+        if (el) el.classList.toggle('met', met);
+    }
+
+    if (allMet) {
+        regUsernameReqs.classList.add('hidden');
+    } else if (document.activeElement === regUsernameInput) {
+        regUsernameReqs.classList.remove('hidden');
+    }
+
+
+    checkPasswordReqs();
+}
+
+regUsernameInput.addEventListener('input', () => { filterUsername({ target: regUsernameInput }); checkUsernameReqs(); });
+regUsernameInput.addEventListener('focus', () => {
+    const u = regUsernameInput.value;
+    const allMet = u.length >= 3 && u.length <= 64 && /^[a-zA-Z0-9]+$/.test(u);
+    if (!allMet) regUsernameReqs.classList.remove('hidden');
+});
+regUsernameInput.addEventListener('blur', () => {
+    const u = regUsernameInput.value;
+    const allMet = u.length >= 3 && u.length <= 64 && /^[a-zA-Z0-9]+$/.test(u);
+    if (allMet) regUsernameReqs.classList.add('hidden');
+});
+
+function checkPasswordReqs() {
+    const pw = regPasswordInput.value;
+    const confirm = regPasswordConfirm.value;
+    const checks = {
+        length: pw.length >= 16,
+        letter: /[a-zA-Z]/.test(pw),
+        number: /\d/.test(pw),
+        symbol: /[^a-zA-Z0-9]/.test(pw),
+    };
+
+    const allMet = Object.values(checks).every(Boolean);
+    // Show if not all met, hide only if all met
+    if (allMet) {
+        regPasswordReqs.classList.add('hidden');
+    } else if (document.activeElement === regPasswordInput) {
+        regPasswordReqs.classList.remove('hidden');
+    }
+
+    for (const [key, met] of Object.entries(checks)) {
+        const el = regPasswordReqs.querySelector(`[data-req="${key}"]`);
+        if (el) el.classList.toggle('met', met);
+    }
+
+    regPasswordConfirm.disabled = !allMet;
+    if (!allMet) {
+        regPasswordConfirm.value = '';
+        regConfirmHint.classList.add('hidden');
+    }
+
+    const passwordsMatch = pw === confirm && confirm.length > 0;
+    const u = regUsernameInput.value;
+    const usernameOk = u.length >= 3 && /^[a-zA-Z0-9]+$/.test(u);
+    regSubmitBtn.disabled = !(allMet && passwordsMatch && usernameOk);
+}
+
+regPasswordInput.addEventListener('input', checkPasswordReqs);
+regPasswordInput.addEventListener('focus', () => {
+    const pw = regPasswordInput.value;
+    const allMet = pw.length >= 16 && /[a-zA-Z]/.test(pw) && /\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw);
+    if (!allMet) regPasswordReqs.classList.remove('hidden');
+});
+regPasswordInput.addEventListener('blur', () => {
+    const pw = regPasswordInput.value;
+    const allMet = pw.length >= 16 && /[a-zA-Z]/.test(pw) && /\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw);
+    if (allMet) regPasswordReqs.classList.add('hidden');
+});
+
+function checkConfirmMatch() {
+    const pw = regPasswordInput.value;
+    const confirm = regPasswordConfirm.value;
+    const matches = pw === confirm && confirm.length > 0;
+    if (matches) {
+        regConfirmHint.classList.add('hidden');
+    } else if (document.activeElement === regPasswordConfirm) {
+        regConfirmHint.classList.remove('hidden');
+    }
+}
+
+regPasswordConfirm.addEventListener('input', () => { checkPasswordReqs(); checkConfirmMatch(); });
+regPasswordInput.addEventListener('input', () => { checkConfirmMatch(); });
+regPasswordConfirm.addEventListener('focus', () => {
+    const matches = regPasswordInput.value === regPasswordConfirm.value && regPasswordConfirm.value.length > 0;
+    if (!matches) regConfirmHint.classList.remove('hidden');
+});
+regPasswordConfirm.addEventListener('blur', () => {
+    const matches = regPasswordInput.value === regPasswordConfirm.value && regPasswordConfirm.value.length > 0;
+    if (matches) regConfirmHint.classList.add('hidden');
 });
 
 registerFormEl.addEventListener('submit', async (e) => {
@@ -161,8 +325,8 @@ registerFormEl.addEventListener('submit', async (e) => {
     regSuccess.classList.add('hidden');
 
     const username = document.getElementById('reg-username').value;
-    const password = document.getElementById('reg-password').value;
-    const confirm = document.getElementById('reg-password-confirm').value;
+    const password = regPasswordInput.value;
+    const confirm = regPasswordConfirm.value;
 
     if (password !== confirm) {
         regError.textContent = 'Passwords do not match';
@@ -175,7 +339,7 @@ registerFormEl.addEventListener('submit', async (e) => {
 
         // Hide form fields, show only recovery code + continue button
         registerFormEl.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = 'none');
-        regSuccess.innerHTML = 'Account created! Your recovery code:<br><br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + escapeHtml(res.recovery_code || '') + '</code><br>Save this code somewhere safe — it cannot be shown again.';
+        regSuccess.innerHTML = 'Account created! Your recovery code:<br><br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + escapeHtml(res.recovery_code || '') + '</code><br><span style="display:block;margin-bottom:6px">Save this code somewhere safe — it cannot be shown again.</span>';
         regSuccess.classList.remove('hidden');
 
         // Add continue button
@@ -192,7 +356,7 @@ registerFormEl.addEventListener('submit', async (e) => {
         });
         regSuccess.appendChild(continueBtn);
     } catch (err) {
-        regError.textContent = err.message || 'Registration failed';
+        regError.textContent = err instanceof TypeError ? 'Connection failed.' : (err.message || 'Registration failed');
         regError.classList.remove('hidden');
     }
 });
@@ -209,7 +373,7 @@ const recoverySuccess = document.getElementById('recovery-success');
 // because the code is persisted in sessionStorage until dismissed.
 function showRecoveryCode(code, username, password) {
     recoveryForm.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = 'none');
-    recoverySuccess.innerHTML = 'Password reset! Your new recovery code:<br><br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + escapeHtml(code) + '</code><br>Save this code somewhere safe — it cannot be shown again.';
+    recoverySuccess.innerHTML = 'Password reset! Your new recovery code:<br><br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + escapeHtml(code) + '</code><br><span style="display:block;margin-bottom:6px">Save this code somewhere safe — it cannot be shown again.</span>';
     recoverySuccess.classList.remove('hidden');
 
     const continueBtn = document.createElement('button');
@@ -245,12 +409,102 @@ forgotBtn.addEventListener('click', () => {
     recoveryForm.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = '');
     const oldContinue = recoverySuccess.querySelector('button');
     if (oldContinue) oldContinue.remove();
+    // Carry over username from login form
+    const loginUsername = document.getElementById('auth-username').value;
+    document.getElementById('recovery-username').value = loginUsername;
+    // Reset password/confirm fields and initialize validation state
+    rcPwInput.value = '';
+    rcPwConfirm.value = '';
+    rcPwConfirm.disabled = true;
+    rcPwReqs.classList.add('hidden');
+    rcConfirmHint.classList.add('hidden');
+    checkRecoveryReqs();
 });
 
 backToLoginBtn.addEventListener('click', () => {
     recoveryForm.classList.add('hidden');
     authFormEl.classList.remove('hidden');
+    authFormEl.reset();
+    checkLoginFields();
 });
+
+// Recovery form validation
+const rcPwInput = document.getElementById('recovery-new-password');
+const rcPwConfirm = document.getElementById('recovery-confirm-password');
+const rcPwReqs = document.getElementById('recovery-password-reqs');
+const rcConfirmHint = document.getElementById('recovery-confirm-hint');
+const rcSubmitBtn = recoveryForm.querySelector('button[type="submit"]');
+rcSubmitBtn.disabled = true;
+rcPwConfirm.disabled = true;
+
+function checkRecoveryReqs() {
+    const pw = rcPwInput.value;
+    const confirm = rcPwConfirm.value;
+    const checks = {
+        length: pw.length >= 16,
+        letter: /[a-zA-Z]/.test(pw),
+        number: /\d/.test(pw),
+        symbol: /[^a-zA-Z0-9]/.test(pw),
+    };
+    const allMet = Object.values(checks).every(Boolean);
+
+    for (const [key, met] of Object.entries(checks)) {
+        const el = rcPwReqs.querySelector(`[data-req="${key}"]`);
+        if (el) el.classList.toggle('met', met);
+    }
+
+    if (allMet) {
+        rcPwReqs.classList.add('hidden');
+    } else if (document.activeElement === rcPwInput) {
+        rcPwReqs.classList.remove('hidden');
+    }
+
+    rcPwConfirm.disabled = !allMet;
+    if (!allMet) {
+        rcPwConfirm.value = '';
+        rcConfirmHint.classList.add('hidden');
+    }
+
+    const passwordsMatch = pw === confirm && confirm.length > 0;
+    const usernameOk = document.getElementById('recovery-username').value.length > 0;
+    const codeOk = document.getElementById('recovery-code').value.trim().length > 0;
+    rcSubmitBtn.disabled = !(allMet && passwordsMatch && usernameOk && codeOk);
+}
+
+function checkRecoveryConfirm() {
+    const pw = rcPwInput.value;
+    const confirm = rcPwConfirm.value;
+    const matches = pw === confirm && confirm.length > 0;
+    if (matches) {
+        rcConfirmHint.classList.add('hidden');
+    } else if (document.activeElement === rcPwConfirm) {
+        rcConfirmHint.classList.remove('hidden');
+    }
+    checkRecoveryReqs();
+}
+
+rcPwInput.addEventListener('input', checkRecoveryReqs);
+rcPwInput.addEventListener('focus', () => {
+    const pw = rcPwInput.value;
+    const allMet = pw.length >= 16 && /[a-zA-Z]/.test(pw) && /\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw);
+    if (!allMet) rcPwReqs.classList.remove('hidden');
+});
+rcPwInput.addEventListener('blur', () => {
+    const pw = rcPwInput.value;
+    const allMet = pw.length >= 16 && /[a-zA-Z]/.test(pw) && /\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw);
+    if (allMet) rcPwReqs.classList.add('hidden');
+});
+rcPwConfirm.addEventListener('input', checkRecoveryConfirm);
+rcPwConfirm.addEventListener('focus', () => {
+    const matches = rcPwInput.value === rcPwConfirm.value && rcPwConfirm.value.length > 0;
+    if (!matches) rcConfirmHint.classList.remove('hidden');
+});
+rcPwConfirm.addEventListener('blur', () => {
+    const matches = rcPwInput.value === rcPwConfirm.value && rcPwConfirm.value.length > 0;
+    if (matches) rcConfirmHint.classList.add('hidden');
+});
+document.getElementById('recovery-username').addEventListener('input', checkRecoveryReqs);
+document.getElementById('recovery-code').addEventListener('input', checkRecoveryReqs);
 
 recoveryForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -259,8 +513,8 @@ recoveryForm.addEventListener('submit', async (e) => {
 
     const username = document.getElementById('recovery-username').value;
     const recoveryCode = document.getElementById('recovery-code').value.trim();
-    const newPassword = document.getElementById('recovery-new-password').value;
-    const confirmPassword = document.getElementById('recovery-confirm-password').value;
+    const newPassword = rcPwInput.value;
+    const confirmPassword = rcPwConfirm.value;
 
     if (newPassword !== confirmPassword) {
         recoveryError.textContent = 'Passwords do not match';
@@ -277,7 +531,7 @@ recoveryForm.addEventListener('submit', async (e) => {
 
         if (!res.ok) {
             const text = await res.text();
-            recoveryError.textContent = text || 'Recovery failed';
+            recoveryError.textContent = text || 'Username and/or recovery code is incorrect.';
             recoveryError.classList.remove('hidden');
             return;
         }
@@ -290,7 +544,7 @@ recoveryForm.addEventListener('submit', async (e) => {
 
         showRecoveryCode(data.recovery_code, username, newPassword);
     } catch {
-        recoveryError.textContent = 'Connection failed';
+        recoveryError.textContent = 'Connection failed.';
         recoveryError.classList.remove('hidden');
     }
 });
@@ -563,6 +817,7 @@ function showAuth() {
     authFormEl.reset();
     recoveryForm.reset();
     registerFormEl.reset();
+    checkLoginFields();
     // Reset visibility of fields (in case hidden after success)
     recoveryForm.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = '');
     registerFormEl.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = '');
@@ -706,7 +961,12 @@ function getFolderPath(folderId) {
 
 function renderBreadcrumb() {
     const path = getFolderPath(currentFolderId);
-    let html = '<span class="breadcrumb-item" data-folder-id="">/ All Media</span>';
+    let html = '<span class="breadcrumb-sep">/</span>';
+    if (!currentFolderId && path.length === 0) {
+        html += '<span class="breadcrumb-current">All Media</span>';
+    } else {
+        html += '<span class="breadcrumb-item" data-folder-id="">All Media</span>';
+    }
     for (const folder of path) {
         html += '<span class="breadcrumb-sep">/</span>';
         if (folder.id === currentFolderId) {
@@ -1121,7 +1381,8 @@ function onRefreshClick() {
     _silentRefresh = true;
     galleryView.classList.add('refreshing');
     galleryGrid.style.minHeight = galleryGrid.offsetHeight + 'px';
-    loadMedia().finally(() => {
+    const minDelay = new Promise(r => setTimeout(r, 1000));
+    Promise.all([loadMedia(), minDelay]).finally(() => {
         _silentRefresh = false;
         galleryGrid.style.minHeight = '';
         galleryView.classList.remove('refreshing');
@@ -1914,13 +2175,178 @@ async function playVideo(item, fileKey) {
 
         viewerTitle.textContent = item.name || 'Video';
 
-        const blob = new Blob([merged], { type: item.mime_type || 'video/mp4' });
-        if (_viewerBlobUrl) URL.revokeObjectURL(_viewerBlobUrl);
-        _viewerBlobUrl = URL.createObjectURL(blob);
-        viewerVideo.src = _viewerBlobUrl;
-        viewerVideo.play().catch(() => {});
+        const mime = item.mime_type || 'video/mp4';
+
+        // Try MediaSource for better buffering control, fall back to blob URL
+        if (window.MediaSource && MediaSource.isTypeSupported(mime)) {
+            const ms = new MediaSource();
+            if (_viewerBlobUrl) URL.revokeObjectURL(_viewerBlobUrl);
+            _viewerBlobUrl = URL.createObjectURL(ms);
+            viewerVideo.src = _viewerBlobUrl;
+            viewerVideo._mediaSource = ms;
+
+            await new Promise((resolve, reject) => {
+                ms.addEventListener('sourceopen', async () => {
+                    try {
+                        const sb = ms.addSourceBuffer(mime);
+                        sb.appendBuffer(merged);
+                        await waitForBuffer(sb);
+                        ms.endOfStream();
+                        resolve();
+                    } catch (e) {
+                        reject(e);
+                    }
+                }, { once: true });
+            });
+            viewerVideo.play().catch(() => {});
+        } else {
+            const blob = new Blob([merged], { type: mime });
+            if (_viewerBlobUrl) URL.revokeObjectURL(_viewerBlobUrl);
+            _viewerBlobUrl = URL.createObjectURL(blob);
+            viewerVideo.src = _viewerBlobUrl;
+            viewerVideo.play().catch(() => {});
+        }
     } catch (e) {
         viewerTitle.textContent = 'Playback failed: ' + e.message;
+    }
+}
+
+/**
+ * Rearrange MP4 top-level boxes so moov comes before mdat (faststart).
+ * Updates stco/co64 chunk offset tables to account for the move.
+ * If already faststarted or not an MP4, returns data unchanged.
+ */
+function fastStartMP4(data) {
+    if (data.length < 8) return data;
+
+    // Parse top-level boxes
+    const boxes = [];
+    let pos = 0;
+    while (pos + 8 <= data.length) {
+        let size = (data[pos] << 24) | (data[pos+1] << 16) | (data[pos+2] << 8) | data[pos+3];
+        const type = String.fromCharCode(data[pos+4], data[pos+5], data[pos+6], data[pos+7]);
+        if (size === 0) size = data.length - pos; // box extends to EOF
+        if (size < 8) break;
+        const boxEnd = Math.min(pos + size, data.length);
+        boxes.push({ type, start: pos, size: boxEnd - pos });
+        pos = boxEnd;
+    }
+
+    const moovIdx = boxes.findIndex(b => b.type === 'moov');
+    const mdatIdx = boxes.findIndex(b => b.type === 'mdat');
+    if (moovIdx === -1 || mdatIdx === -1 || moovIdx < mdatIdx) return data;
+
+    // Calculate how much mdat shifts forward (moov is inserted before it)
+    // Offset delta = moov.size (moov moves from after mdat to before it,
+    // so mdat and everything in it shifts forward by moov.size)
+    // But we also need to account for any boxes between mdat and moov that stay.
+    // Simple approach: compute new mdat position vs old mdat position.
+    let newMdatPos = 0;
+    for (let i = 0; i < mdatIdx; i++) {
+        if (i !== moovIdx) newMdatPos += boxes[i].size;
+    }
+    newMdatPos += boxes[moovIdx].size; // moov inserted before mdat
+    const oldMdatPos = boxes[mdatIdx].start;
+    const delta = newMdatPos - oldMdatPos;
+
+    // Copy moov and adjust stco/co64 offsets
+    const moov = data.slice(boxes[moovIdx].start, boxes[moovIdx].start + boxes[moovIdx].size);
+    adjustMoovOffsets(moov, delta);
+
+    // Assemble result
+    const result = new Uint8Array(data.length);
+    let offset = 0;
+    for (let i = 0; i < mdatIdx; i++) {
+        if (i === moovIdx) continue;
+        result.set(data.subarray(boxes[i].start, boxes[i].start + boxes[i].size), offset);
+        offset += boxes[i].size;
+    }
+    result.set(moov, offset);
+    offset += moov.length;
+    for (let i = mdatIdx; i < boxes.length; i++) {
+        if (i === moovIdx) continue;
+        result.set(data.subarray(boxes[i].start, boxes[i].start + boxes[i].size), offset);
+        offset += boxes[i].size;
+    }
+    return result.subarray(0, offset);
+}
+
+/** Recursively find and adjust stco/co64 boxes inside moov */
+function adjustMoovOffsets(moov, delta) {
+    let pos = 8; // skip moov header
+    while (pos + 8 <= moov.length) {
+        let size = (moov[pos] << 24) | (moov[pos+1] << 16) | (moov[pos+2] << 8) | moov[pos+3];
+        const type = String.fromCharCode(moov[pos+4], moov[pos+5], moov[pos+6], moov[pos+7]);
+        if (size === 0) size = moov.length - pos;
+        if (size < 8) break;
+
+        if (type === 'trak' || type === 'mdia' || type === 'minf' || type === 'stbl') {
+            // Container box — recurse into its children
+            const inner = moov.subarray(pos, pos + size);
+            adjustContainerOffsets(inner, delta);
+        } else if (type === 'stco') {
+            // 32-bit chunk offset table
+            const entryCount = (moov[pos+12] << 24) | (moov[pos+13] << 16) | (moov[pos+14] << 8) | moov[pos+15];
+            for (let i = 0; i < entryCount; i++) {
+                const o = pos + 16 + i * 4;
+                const val = (moov[o] << 24) | (moov[o+1] << 16) | (moov[o+2] << 8) | moov[o+3];
+                const newVal = val + delta;
+                moov[o]   = (newVal >> 24) & 0xFF;
+                moov[o+1] = (newVal >> 16) & 0xFF;
+                moov[o+2] = (newVal >> 8) & 0xFF;
+                moov[o+3] = newVal & 0xFF;
+            }
+        } else if (type === 'co64') {
+            // 64-bit chunk offset table
+            const entryCount = (moov[pos+12] << 24) | (moov[pos+13] << 16) | (moov[pos+14] << 8) | moov[pos+15];
+            const view = new DataView(moov.buffer, moov.byteOffset, moov.byteLength);
+            for (let i = 0; i < entryCount; i++) {
+                const o = pos + 16 + i * 8;
+                const hi = view.getUint32(o);
+                const lo = view.getUint32(o + 4);
+                const val = hi * 0x100000000 + lo + delta;
+                view.setUint32(o, Math.floor(val / 0x100000000));
+                view.setUint32(o + 4, val >>> 0);
+            }
+        }
+        pos += size;
+    }
+}
+
+function adjustContainerOffsets(box, delta) {
+    let pos = 8;
+    while (pos + 8 <= box.length) {
+        let size = (box[pos] << 24) | (box[pos+1] << 16) | (box[pos+2] << 8) | box[pos+3];
+        const type = String.fromCharCode(box[pos+4], box[pos+5], box[pos+6], box[pos+7]);
+        if (size === 0) size = box.length - pos;
+        if (size < 8) break;
+
+        if (type === 'trak' || type === 'mdia' || type === 'minf' || type === 'stbl') {
+            adjustContainerOffsets(box.subarray(pos, pos + size), delta);
+        } else if (type === 'stco') {
+            const entryCount = (box[pos+12] << 24) | (box[pos+13] << 16) | (box[pos+14] << 8) | box[pos+15];
+            for (let i = 0; i < entryCount; i++) {
+                const o = pos + 16 + i * 4;
+                const val = (box[o] << 24) | (box[o+1] << 16) | (box[o+2] << 8) | box[o+3];
+                const newVal = val + delta;
+                box[o]   = (newVal >> 24) & 0xFF;
+                box[o+1] = (newVal >> 16) & 0xFF;
+                box[o+2] = (newVal >> 8) & 0xFF;
+                box[o+3] = newVal & 0xFF;
+            }
+        } else if (type === 'co64') {
+            const entryCount = (box[pos+12] << 24) | (box[pos+13] << 16) | (box[pos+14] << 8) | box[pos+15];
+            const view = new DataView(box.buffer, box.byteOffset, box.byteLength);
+            for (let i = 0; i < entryCount; i++) {
+                const o = pos + 16 + i * 8;
+                const hi = view.getUint32(o);
+                const lo = view.getUint32(o + 4);
+                const val = hi * 0x100000000 + lo + delta;
+                view.setUint32(o, Math.floor(val / 0x100000000));
+                view.setUint32(o + 4, val >>> 0);
+            }
+        }
+        pos += size;
     }
 }
 
@@ -2473,9 +2899,9 @@ async function uploadFile(file, itemEl, targetFolderId) {
     const thumbKey = generateFileKey();
     const hashNonce = generateHashNonce();
 
-    // Hash modification
+    // Hash modification (skip for videos to preserve container integrity)
     const mediaType = file.type.startsWith('video/') ? 'video' : 'image';
-    const modifiedData = modifyHash(fileData, file.type, hashNonce);
+    const modifiedData = mediaType === 'video' ? fileData : modifyHash(fileData, file.type, hashNonce);
 
     // Encrypt thumbnail
     const encThumb = await encryptChunk(thumbData, thumbKey, 0);

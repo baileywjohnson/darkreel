@@ -266,12 +266,34 @@ export function modifyHash(data, mimeType, nonce) {
     if (lower.includes('png')) {
         return modifyPNG(data, nonce);
     }
+    // MP4/M4V/MOV: wrap nonce in a valid 'free' box so the container stays parseable
+    if (lower.includes('mp4') || lower.includes('m4v') || lower.includes('quicktime') || lower.includes('mov')) {
+        return modifyMP4(data, nonce);
+    }
     // For other types, append marker
     const marker = new TextEncoder().encode('DARKREEL:');
     const result = new Uint8Array(data.length + marker.length + nonce.length);
     result.set(data, 0);
     result.set(marker, data.length);
     result.set(nonce, data.length + marker.length);
+    return result;
+}
+
+function modifyMP4(data, nonce) {
+    // Append a 'free' box: 4-byte big-endian size + 'free' + nonce payload
+    const boxSize = 8 + nonce.length;
+    const result = new Uint8Array(data.length + boxSize);
+    result.set(data, 0);
+    const offset = data.length;
+    result[offset]     = (boxSize >> 24) & 0xFF;
+    result[offset + 1] = (boxSize >> 16) & 0xFF;
+    result[offset + 2] = (boxSize >> 8) & 0xFF;
+    result[offset + 3] = boxSize & 0xFF;
+    result[offset + 4] = 0x66; // 'f'
+    result[offset + 5] = 0x72; // 'r'
+    result[offset + 6] = 0x65; // 'e'
+    result[offset + 7] = 0x65; // 'e'
+    result.set(nonce, offset + 8);
     return result;
 }
 

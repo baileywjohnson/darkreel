@@ -67,8 +67,8 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Username) < 3 || len(req.Username) > 64 {
-		http.Error(w, "username must be 3-64 characters", http.StatusBadRequest)
+	if !isValidUsername(req.Username) {
+		http.Error(w, "username must be 3-64 alphanumeric characters", http.StatusBadRequest)
 		return
 	}
 	if !isStrongPassword(req.Password) {
@@ -130,7 +130,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := db.CreateUser(h.DB, user); err != nil {
-		http.Error(w, "username already taken", http.StatusConflict)
+		http.Error(w, "Username is unavailable.", http.StatusConflict)
 		return
 	}
 

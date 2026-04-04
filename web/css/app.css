@@ -36,6 +36,8 @@ body {
 }
 .btn-primary { background: var(--accent); color: #fff; }
 .btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+input:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-secondary { background: var(--bg-hover); color: var(--text); border: 1px solid var(--border); }
 .btn-secondary:hover { background: var(--border); }
 .btn-ghost { background: transparent; color: var(--text-dim); }
@@ -59,7 +61,7 @@ header {
 .nav-active { color: var(--text); background: var(--bg-hover); }
 .header-right { display: flex; gap: 8px; align-items: center; }
 .header-mobile-only { display: none; }
-#header-menu-btn { font-size: 22px; }
+#header-menu-btn { font-size: 26px; }
 .header-menu-wrap { position: relative; }
 .header-menu-popup {
     position: absolute;
@@ -118,6 +120,11 @@ header {
     font-size: 15px;
 }
 #auth-form input:focus, #recovery-form input:focus, #register-form input:focus { outline: none; border-color: var(--accent); }
+.field-hint { color: var(--danger, #ef4444); font-size: 12px; margin: -4px 0 4px; text-align: center; }
+.password-reqs { font-size: 12px; margin: -2px 0 12px; color: #22c55e; text-align: left; padding-left: 3px; }
+.password-reqs.hidden { display: none; }
+.password-reqs span { color: var(--danger, #ef4444); }
+.password-reqs span.met { color: #22c55e; }
 .auth-buttons { display: flex; gap: 8px; margin-top: 8px; }
 .auth-buttons .btn { flex: 1; padding: 12px; }
 .error { color: var(--danger); font-size: 13px; margin-top: 12px; }
@@ -461,12 +468,12 @@ header {
 }
 .gallery-empty {
     text-align: center;
-    padding: 120px 24px;
+    padding: 120px 24px 70px;
     color: var(--text-dim);
     font-size: 16px;
 }
 .gallery-loading { display: flex; justify-content: center; padding: 48px; }
-.gallery-refresh { display: flex; justify-content: center; padding: 24px; }
+.gallery-refresh { display: flex; justify-content: center; padding: 0 24px 24px; }
 .btn-refresh {
     width: 40px;
     height: 40px;
@@ -487,8 +494,10 @@ header {
     align-items: center;
     justify-content: center;
     cursor: default;
+    background: none;
+    border: none;
 }
-.refresh-tile:hover { transform: none; border-color: var(--border); }
+.refresh-tile:hover { transform: none; border-color: transparent; }
 .refreshing #refresh-wrap,
 .refreshing .gallery-refresh { display: none !important; }
 .spinner {

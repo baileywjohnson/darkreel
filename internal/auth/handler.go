@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/baileywjohnson/darkreel/internal/crypto"
 	"github.com/baileywjohnson/darkreel/internal/db"
@@ -24,13 +23,25 @@ func isStrongPassword(pw string) bool {
 			hasLetter = true
 		case c >= '0' && c <= '9':
 			hasDigit = true
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			return false // spaces not allowed
 		default:
-			if !strings.ContainsRune(" \t\n\r", c) {
-				hasSymbol = true
-			}
+			hasSymbol = true
 		}
 	}
 	return hasLetter && hasDigit && hasSymbol
+}
+
+func isValidUsername(u string) bool {
+	if len(u) < 3 || len(u) > 64 {
+		return false
+	}
+	for _, c := range u {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
 }
 
 type Handler struct {
@@ -126,8 +137,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if len(req.Username) < 3 || len(req.Username) > 64 {
-		http.Error(w, "username must be 3-64 characters", http.StatusBadRequest)
+	if !isValidUsername(req.Username) {
+		http.Error(w, "username must be 3-64 alphanumeric characters", http.StatusBadRequest)
 		return
 	}
 	if !isStrongPassword(req.Password) {
@@ -189,7 +200,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := db.CreateUser(h.DB, user); err != nil {
-		http.Error(w, "username already taken", http.StatusConflict)
+		http.Error(w, "Username is unavailable.", http.StatusConflict)
 		return
 	}
 
@@ -211,12 +222,12 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	user, err := db.GetUserByUsername(h.DB, req.Username)
 	if err != nil {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		http.Error(w, "Username and/or password is incorrect.", http.StatusUnauthorized)
 		return
 	}
 
 	if !crypto.VerifyPassword(req.Password, user.AuthSalt, user.PasswordHash) {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		http.Error(w, "Username and/or password is incorrect.", http.StatusUnauthorized)
 		return
 	}
 
@@ -441,21 +452,21 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 
 	user, err := db.GetUserByUsername(h.DB, req.Username)
 	if err != nil || user.RecoveryMK == nil {
-		http.Error(w, "recovery failed", http.StatusBadRequest)
+		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
 		return
 	}
 
 	// Decode recovery code
 	recoveryCode, err := base64.URLEncoding.DecodeString(req.RecoveryCode)
 	if err != nil || len(recoveryCode) != 32 {
-		http.Error(w, "recovery failed", http.StatusBadRequest)
+		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
 		return
 	}
 
 	// Decrypt master key with recovery code
 	masterKey, err := crypto.DecryptMasterKeyWithRecovery(user.RecoveryMK, recoveryCode)
 	if err != nil {
-		http.Error(w, "recovery failed", http.StatusBadRequest)
+		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
 		return
 	}
 
