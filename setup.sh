@@ -3,11 +3,16 @@
 # Darkreel quickstart — sets up Darkreel on a fresh Linux VPS.
 #
 # What this script does:
-#   1. Installs Go (if not present) and Caddy (for automatic TLS)
-#   2. Builds Darkreel from source
-#   3. Creates a systemd service
-#   4. Configures Caddy as a reverse proxy with automatic HTTPS
-#   5. Starts everything
+#   1. Applies system updates and installs security tooling
+#   2. Creates a non-root admin user and a locked-down deploy user
+#   3. Configures UFW firewall (SSH, HTTP, HTTPS only)
+#   4. Disables root SSH login
+#   5. Installs Go (if not present) and Caddy (for automatic TLS)
+#   6. Builds Darkreel from source
+#   7. Creates a hardened systemd service
+#   8. Configures Caddy as a reverse proxy with automatic HTTPS
+#   9. Sets up daily database backups via cron
+#   10. Starts everything
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/baileywjohnson/darkreel/main/setup.sh | bash
@@ -42,6 +47,7 @@ echo ""
 DOMAIN=""
 ADMIN_USER="admin"
 ADMIN_PASS=""
+SSH_USER=""
 DATA_DIR="/var/lib/darkreel"
 INSTALL_DIR="/usr/local/bin"
 
@@ -68,11 +74,11 @@ if [ -n "$SERVER_IP" ]; then
   fi
 fi
 
-read -rp "Admin username [admin]: " input
+read -rp "Darkreel admin username [admin]: " input
 ADMIN_USER="${input:-admin}"
 
 while true; do
-  read -rsp "Admin password (16+ chars, must include letter, number, symbol): " ADMIN_PASS
+  read -rsp "Darkreel admin password (16+ chars, must include letter, number, symbol): " ADMIN_PASS
   echo ""
   if [ ${#ADMIN_PASS} -ge 16 ]; then
     break
@@ -81,10 +87,113 @@ while true; do
 done
 
 echo ""
+read -rp "Create a personal SSH user? Enter username (or leave empty to skip): " SSH_USER
+
+echo ""
 info "Domain:     $DOMAIN"
 info "Admin user: $ADMIN_USER"
 info "Data dir:   $DATA_DIR"
+[ -n "$SSH_USER" ] && info "SSH user:   $SSH_USER"
 echo ""
+
+# ============================================================
+# SYSTEM HARDENING
+# ============================================================
+
+# --- System updates ---
+info "Applying system updates..."
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq >/dev/null 2>&1
+info "System updated"
+
+# --- Install security packages ---
+info "Installing security packages..."
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fail2ban unattended-upgrades ufw >/dev/null
+info "fail2ban, unattended-upgrades, and UFW installed"
+
+# --- Enable unattended security updates ---
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<EOF
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+info "Automatic security updates enabled"
+
+# --- Configure fail2ban ---
+systemctl enable --now fail2ban >/dev/null 2>&1
+info "fail2ban enabled"
+
+# --- Firewall ---
+ufw --force reset >/dev/null 2>&1
+ufw default deny incoming >/dev/null 2>&1
+ufw default allow outgoing >/dev/null 2>&1
+ufw allow OpenSSH >/dev/null 2>&1
+ufw allow 80 >/dev/null 2>&1
+ufw allow 443 >/dev/null 2>&1
+ufw --force enable >/dev/null 2>&1
+info "UFW firewall enabled (SSH, HTTP, HTTPS only)"
+
+# --- Create personal SSH user ---
+if [ -n "$SSH_USER" ]; then
+  if ! id -u "$SSH_USER" &>/dev/null; then
+    useradd -m -s /bin/bash "$SSH_USER"
+    usermod -aG sudo "$SSH_USER"
+
+    # Copy root's SSH keys to the new user
+    if [ -f /root/.ssh/authorized_keys ]; then
+      mkdir -p "/home/${SSH_USER}/.ssh"
+      cp /root/.ssh/authorized_keys "/home/${SSH_USER}/.ssh/"
+      chown -R "${SSH_USER}:${SSH_USER}" "/home/${SSH_USER}/.ssh"
+      chmod 700 "/home/${SSH_USER}/.ssh"
+      chmod 600 "/home/${SSH_USER}/.ssh/authorized_keys"
+    fi
+
+    info "Created SSH user '$SSH_USER' with sudo access"
+    echo ""
+    warn "Set a password for $SSH_USER (needed for sudo):"
+    passwd "$SSH_USER"
+    echo ""
+  else
+    info "SSH user '$SSH_USER' already exists"
+  fi
+fi
+
+# --- Create deploy user (for CI/CD) ---
+if ! id -u deploy &>/dev/null; then
+  useradd -m -s /bin/bash deploy
+  # Only allow copying to the exact binary path, and stop/start the service
+  echo 'deploy ALL=(ALL) NOPASSWD: /usr/bin/cp /home/deploy/darkreel /usr/local/bin/darkreel, /usr/bin/systemctl stop darkreel, /usr/bin/systemctl start darkreel, /usr/bin/systemctl restart darkreel' > /etc/sudoers.d/deploy
+  chmod 440 /etc/sudoers.d/deploy
+  info "Created deploy user with limited sudo"
+else
+  info "Deploy user already exists"
+fi
+
+# --- Install signing public key (for CI/CD binary verification) ---
+mkdir -p /etc/darkreel
+if [ ! -f /etc/darkreel/signing.pub ]; then
+  warn "No signing public key found at /etc/darkreel/signing.pub"
+  warn "CI/CD binary verification will fail without it."
+  warn "Copy your signing public key to the VPS:"
+  warn "  scp ~/.ssh/darkreel_signing.pub youruser@server:/etc/darkreel/signing.pub"
+  echo ""
+fi
+
+# --- Disable root SSH login ---
+if grep -q "^PermitRootLogin yes" /etc/ssh/sshd_config 2>/dev/null || grep -q "^#PermitRootLogin" /etc/ssh/sshd_config 2>/dev/null; then
+  if [ -n "$SSH_USER" ]; then
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+    systemctl restart ssh
+    info "Root SSH login disabled"
+  else
+    warn "Skipping root SSH disable — no personal SSH user was created"
+    warn "Run this manually after setting up SSH access for another user:"
+    warn "  sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && systemctl restart ssh"
+  fi
+fi
+
+# ============================================================
+# DARKREEL INSTALLATION
+# ============================================================
 
 # --- Install Go ---
 if ! command -v go &>/dev/null; then
@@ -123,7 +232,7 @@ fi
 cp darkreel "$INSTALL_DIR/darkreel"
 info "Binary installed to $INSTALL_DIR/darkreel"
 
-# --- Create user and data directory ---
+# --- Create darkreel system user and data directory ---
 if ! id -u darkreel &>/dev/null; then
   useradd --system --no-create-home --shell /usr/sbin/nologin darkreel
   info "Created system user 'darkreel'"
@@ -134,7 +243,6 @@ chown darkreel:darkreel "$DATA_DIR"
 # --- Install Caddy ---
 if ! command -v caddy &>/dev/null; then
   info "Installing Caddy..."
-  apt-get update -qq
   apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl >/dev/null
   curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   echo "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" > /etc/apt/sources.list.d/caddy-stable.list
@@ -183,6 +291,16 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
+# --- Set up daily database backups ---
+mkdir -p "${DATA_DIR}/backups"
+chown darkreel:darkreel "${DATA_DIR}/backups"
+
+cat > /etc/cron.d/darkreel-backup <<EOF
+# Daily Darkreel database backup at 3 AM, keep 7 days
+0 3 * * * darkreel sqlite3 ${DATA_DIR}/darkreel.db ".backup '${DATA_DIR}/backups/darkreel-\$(date +\\%Y\\%m\\%d).db'" && find ${DATA_DIR}/backups -name "darkreel-*.db" -mtime +7 -delete
+EOF
+info "Daily database backup configured (3 AM, 7-day retention)"
+
 # --- Start services ---
 systemctl daemon-reload
 systemctl enable --now darkreel
@@ -225,10 +343,23 @@ if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
     echo ""
   fi
 
+  echo -e "  ${BOLD}What was set up:${NC}"
+  echo "    - System updates applied"
+  echo "    - UFW firewall (SSH, HTTP, HTTPS only)"
+  echo "    - fail2ban (auto-bans brute force SSH attempts)"
+  echo "    - Automatic security updates"
+  echo "    - Caddy reverse proxy with automatic TLS"
+  echo "    - Hardened systemd service"
+  echo "    - Daily database backups (${DATA_DIR}/backups/)"
+  echo "    - Deploy user for CI/CD (limited sudo)"
+  [ -n "$SSH_USER" ] && echo "    - SSH user '$SSH_USER' with sudo access"
+  [ -n "$SSH_USER" ] && echo "    - Root SSH login disabled"
+  echo ""
   echo "  Useful commands:"
   echo "    sudo systemctl status darkreel    # check status"
   echo "    sudo journalctl -fu darkreel      # follow logs"
   echo "    sudo systemctl restart darkreel   # restart"
+  [ -n "$SSH_USER" ] && echo "    ssh ${SSH_USER}@${SERVER_IP:-your-server}       # SSH in"
   echo ""
 else
   error "Darkreel failed to start. Check: sudo journalctl -u darkreel --no-pager"
