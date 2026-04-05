@@ -399,26 +399,46 @@ The backup files are encrypted at rest (file keys are encrypted in the database,
 
 ## Upgrading
 
-Database migrations run automatically on startup -- Darkreel uses `CREATE TABLE IF NOT EXISTS` and will add new columns/tables as needed in future versions. No manual migration steps required.
+Database migrations run automatically on startup -- no manual migration steps required.
 
-### With the setup script
+### Manual upgrade
 
 ```bash
 cd /opt/darkreel  # or wherever you cloned it
 git pull
 bash build.sh
+sudo systemctl stop darkreel
 sudo cp darkreel /usr/local/bin/darkreel
-sudo systemctl restart darkreel
+sudo systemctl start darkreel
 ```
 
-### Manual
+### Auto-update from releases
+
+An update script is included that checks GitHub for new tagged releases, downloads the binary, verifies the SHA-256 checksum, and restarts the service. Updates only happen on tagged releases (e.g., `v1.0.0`) -- not every commit to main.
 
 ```bash
-cd /path/to/darkreel
-git pull
-bash build.sh
-sudo systemctl restart darkreel
+# Run once to check for updates
+sudo ./update.sh
+
+# Install as a daily cron job (checks at 4 AM)
+sudo ./update.sh --install
+
+# Remove the cron job
+sudo ./update.sh --uninstall
 ```
+
+Logs go to `/var/log/darkreel-update.log`. The update is atomic: if the checksum doesn't match, nothing is installed.
+
+### Creating a release (for maintainers)
+
+Push a version tag to trigger the release workflow:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions builds binaries for Linux amd64 and arm64, generates SHA-256 checksums, and creates a GitHub release. Self-hosters with auto-update enabled will pick it up within 24 hours.
 
 Check that it's healthy after upgrading:
 
