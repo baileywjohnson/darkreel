@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-wFPeXLlfEN3IbcDGTTdRl2UltZMdG0V8cDWQH6dLiyp151Z+KPcE/11SM6sU7wRR" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-cvQ1QoE3WEgptbIgE/M+ZOMHawY+I2m8u3dRCViY441unl51OD8ZeZRu7eaZdmZv" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -101,7 +101,7 @@
                                 <div class="custom-select-option" data-value="video">Videos</div>
                             </div>
                         </div>
-                        <button id="filter-menu-btn" class="btn btn-ghost btn-sm filter-mobile" aria-label="Filters">&#128269;</button>
+                        <button id="filter-menu-btn" class="btn btn-ghost btn-sm filter-mobile" aria-label="Filters"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2h14l-5 6v5l-4 2V8z"/></svg></button>
                         <div id="filter-popup" class="filter-popup hidden">
                             <label>Sort by</label>
                             <div class="custom-select" id="sort-select-mobile-wrap" data-value="date-desc">
@@ -127,7 +127,7 @@
                         </div>
                     </div>
                     <div class="folder-actions">
-                        <button id="new-folder-btn" class="btn btn-ghost btn-sm">New Folder</button>
+                        <button id="new-folder-btn" class="btn btn-secondary btn-sm">New Folder</button>
                     </div>
                 </div>
                 <div id="gallery-grid" class="gallery-grid"></div>
@@ -211,6 +211,31 @@
                 </div>
             </div>
 
+            <!-- Rename / New Folder modal -->
+            <div id="rename-modal" class="modal-overlay hidden">
+                <div class="modal-card">
+                    <h3 id="rename-title">Rename</h3>
+                    <input type="text" id="rename-input" placeholder="New name" autocomplete="off">
+                    <p id="rename-error" class="error hidden"></p>
+                    <div class="modal-card-actions">
+                        <button id="rename-cancel" class="btn btn-ghost">Cancel</button>
+                        <button id="rename-confirm" class="btn btn-primary">Rename</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Confirm modal -->
+            <div id="confirm-modal" class="modal-overlay hidden">
+                <div class="modal-card">
+                    <h3 id="confirm-title">Confirm</h3>
+                    <p id="confirm-message" style="font-size:14px;color:var(--text-dim);margin-bottom:20px"></p>
+                    <div class="modal-card-actions">
+                        <button id="confirm-cancel" class="btn btn-ghost">Cancel</button>
+                        <button id="confirm-ok" class="btn btn-danger">Delete</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Move to folder modal -->
             <div id="move-modal" class="modal-overlay hidden">
                 <div class="modal-card">
@@ -261,6 +286,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-ERnWjpfZFdw1O+QB5F1c99U6Xfl3L89RRZyWs3WPLF8ZqLP/U8UTYfUADFTBgMjc" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-kKNoWWpSf0NOmy5KkPCdT46JnY8LRWUMlKVB5VqbSDaCC8BQDayMVFujV0hqFfaY" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-ev/VxWEGc/YXzTkqbE8LPtmjbmtl7gVrS3WzZTD7slCQkdCUWeMO1IiUP821Zw+z" crossorigin="anonymous"></script>
 </body>
 </html>

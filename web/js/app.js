@@ -95,6 +95,10 @@ function showError(msg) {
 async function handleLogin(overrideUsername, overridePassword) {
     const username = overrideUsername || document.getElementById('auth-username').value;
     const password = overridePassword || document.getElementById('auth-password').value;
+    authError.classList.add('hidden');
+    loginBtn.disabled = true;
+    loginBtn.dataset.origText = loginBtn.textContent;
+    loginBtn.innerHTML = '<div class="spinner spinner-sm"></div>';
     try {
         const res = await api('/api/auth/login', { json: { username, password } });
         token = res.token;
@@ -133,6 +137,8 @@ async function handleLogin(overrideUsername, overridePassword) {
 
         showGallery();
     } catch (e) {
+        loginBtn.textContent = loginBtn.dataset.origText || 'Login';
+        loginBtn.disabled = false;
         // If auth view was hidden (e.g., auto-login from registration), show it back
         if (authView.classList.contains('hidden')) {
             showAuth();
@@ -756,19 +762,35 @@ const headerMenuBtn = document.getElementById('header-menu-btn');
 const headerMenuPopup = document.getElementById('header-menu-popup');
 const adminBtnMobile = document.getElementById('admin-btn-mobile');
 
+function setGalleryDimmed(dimmed) {
+    galleryGrid.classList.toggle('filter-dimmed', dimmed);
+    galleryEmpty.classList.toggle('filter-dimmed', dimmed);
+    document.getElementById('refresh-wrap')?.classList.toggle('filter-dimmed', dimmed);
+    document.getElementById('folder-bar').classList.toggle('filter-dimmed', dimmed);
+}
+
 headerMenuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    filterPopup.classList.add('hidden');
+    filterMenuBtn.classList.remove('nav-active');
     headerMenuPopup.classList.toggle('hidden');
-    headerMenuBtn.classList.toggle('nav-active', !headerMenuPopup.classList.contains('hidden'));
+    const open = !headerMenuPopup.classList.contains('hidden');
+    headerMenuBtn.classList.toggle('nav-active', open);
+    setGalleryDimmed(open);
 });
 document.addEventListener('click', (e) => {
     if (!headerMenuPopup.classList.contains('hidden') && !headerMenuPopup.contains(e.target) && e.target !== headerMenuBtn) {
         headerMenuPopup.classList.add('hidden');
         headerMenuBtn.classList.remove('nav-active');
+        setGalleryDimmed(false);
     }
 });
 
-function closeHeaderMenu() { headerMenuPopup.classList.add('hidden'); headerMenuBtn.classList.remove('nav-active'); }
+function closeHeaderMenu() {
+    headerMenuPopup.classList.add('hidden');
+    headerMenuBtn.classList.remove('nav-active');
+    setGalleryDimmed(false);
+}
 
 async function doLogout() {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
@@ -836,6 +858,7 @@ function showAuth() {
     regSuccess.classList.add('hidden');
     authError.classList.add('hidden');
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    document.getElementById('auth-username').focus();
 }
 
 let pollTimer = null;
@@ -1110,16 +1133,15 @@ function createFolderElements() {
             renameBtn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
                 menu.remove();
-                const newName = prompt('New folder name:', f.name);
-                if (newName && newName.trim()) {
-                    if (folderNameExists(newName.trim(), f.parentId, f.id)) {
-                        alert('A folder with that name already exists here.');
-                        return;
+                showRenameModal('Rename folder', f.name, (newName) => {
+                    if (folderNameExists(newName, f.parentId, f.id)) {
+                        return 'A folder with that name already exists here.';
                     }
-                    f.name = newName.trim();
+                    f.name = newName;
                     saveFolderTree();
                     renderGalleryItems();
-                }
+                    return null;
+                });
             });
 
             const deleteBtn = document.createElement('button');
@@ -1258,23 +1280,20 @@ async function renderGalleryItems() {
     document.getElementById('refresh-wrap')?.remove();
     galleryGrid.innerHTML = '';
     galleryGrid.appendChild(fragment);
-
-    if (!_silentRefresh) {
-        addRefreshButton();
-    }
+    addRefreshButton();
 }
 
-document.getElementById('new-folder-btn').addEventListener('click', async () => {
-    const name = prompt('Folder name:');
-    if (!name || !name.trim()) return;
-    if (folderNameExists(name.trim(), currentFolderId)) {
-        alert('A folder with that name already exists here.');
-        return;
-    }
-    const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
-    folders.push({ id, name: name.trim(), parentId: currentFolderId });
-    await saveFolderTree();
-    renderGalleryItems();
+document.getElementById('new-folder-btn').addEventListener('click', () => {
+    showRenameModal('New Folder', '', (name) => {
+        if (folderNameExists(name, currentFolderId)) {
+            return 'A folder with that name already exists here.';
+        }
+        const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+        folders.push({ id, name, parentId: currentFolderId });
+        saveFolderTree();
+        renderGalleryItems();
+        return null;
+    }, { placeholder: 'Folder name', buttonLabel: 'Create' });
 });
 
 // ─── Gallery ───
@@ -1338,11 +1357,17 @@ const filterMenuBtn = document.getElementById('filter-menu-btn');
 
 filterMenuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    closeHeaderMenu();
     filterPopup.classList.toggle('hidden');
+    const open = !filterPopup.classList.contains('hidden');
+    setGalleryDimmed(open);
+    filterMenuBtn.classList.toggle('nav-active', open);
 });
 document.addEventListener('click', (e) => {
     if (!filterPopup.classList.contains('hidden') && !filterPopup.contains(e.target) && e.target !== filterMenuBtn) {
         filterPopup.classList.add('hidden');
+        setGalleryDimmed(false);
+        filterMenuBtn.classList.remove('nav-active');
     }
 });
 
@@ -1379,13 +1404,25 @@ function addRefreshButton() {
 }
 function onRefreshClick() {
     _silentRefresh = true;
+    const oldIds = mediaItems.map(m => m.id).join(',');
+    const oldFolders = folders.map(f => f.id + f.name + (f.parentId || '')).join(',');
     galleryView.classList.add('refreshing');
     galleryGrid.style.minHeight = galleryGrid.offsetHeight + 'px';
+    const wrap = document.getElementById('refresh-wrap');
+    if (wrap) {
+        const btn = wrap.querySelector('.btn-refresh');
+        if (btn) btn.replaceWith(Object.assign(document.createElement('div'), { className: 'spinner' }));
+    }
     const minDelay = new Promise(r => setTimeout(r, 1000));
-    Promise.all([loadMedia(), minDelay]).finally(() => {
+    Promise.all([loadMedia(), minDelay]).finally(async () => {
         _silentRefresh = false;
         galleryGrid.style.minHeight = '';
         galleryView.classList.remove('refreshing');
+        const newIds = mediaItems.map(m => m.id).join(',');
+        const newFolders = folders.map(f => f.id + f.name + (f.parentId || '')).join(',');
+        if (newIds !== oldIds || newFolders !== oldFolders) {
+            await renderGalleryItems();
+        }
         addRefreshButton();
     });
 }
@@ -1395,7 +1432,7 @@ async function loadMedia() {
         galleryLoading.classList.remove('hidden');
         galleryGrid.innerHTML = '';
     }
-    galleryEmpty.classList.add('hidden');
+    if (!_silentRefresh) galleryEmpty.classList.add('hidden');
     pagination.classList.add('hidden');
 
     const [sort, order] = sortSelect.value.split('-');
@@ -1433,7 +1470,7 @@ async function loadMedia() {
         // Load folder tree and render
         await loadFolderTree();
         renderFolders();
-        await renderGalleryItems();
+        if (!_silentRefresh) await renderGalleryItems();
 
         if (totalItems > PAGE_SIZE) {
             pagination.classList.remove('hidden');
@@ -1446,7 +1483,7 @@ async function loadMedia() {
         console.error('Failed to load media:', e);
     }
 
-    galleryLoading.classList.add('hidden');
+    if (!_silentRefresh) galleryLoading.classList.add('hidden');
 }
 
 // Silent background poll — only adds new items, no spinner, no grid reset
@@ -1578,7 +1615,10 @@ function openItemContextMenu(item, parentEl, anchorBtn) {
         menu.appendChild(btn);
     }
 
-    parentEl.appendChild(menu);
+    document.body.appendChild(menu);
+    const btnRect = anchorBtn.getBoundingClientRect();
+    menu.style.top = (btnRect.bottom + 4) + 'px';
+    menu.style.right = (window.innerWidth - btnRect.right) + 'px';
     parentEl.classList.add('menu-active');
 
     const closeMenu = (ev) => {
@@ -1829,28 +1869,7 @@ function moveCurrentItem() {
 
 // --- Delete folder confirmation ---
 function showDeleteFolderConfirm(message, onConfirm) {
-    // Reuse modal overlay pattern
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-    overlay.innerHTML = `
-        <div class="modal-card">
-            <h3>Delete Folder</h3>
-            <p style="font-size:14px;color:var(--text-dim);white-space:pre-line;margin-bottom:20px">${escapeHtml(message)}</p>
-            <div style="display:flex;gap:8px">
-                <button class="btn btn-danger" style="flex:1;padding:12px" id="confirm-delete-folder">Delete</button>
-                <button class="btn btn-ghost" style="flex:1;padding:12px" id="cancel-delete-folder">Cancel</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(overlay);
-
-    overlay.querySelector('#confirm-delete-folder').addEventListener('click', () => {
-        overlay.remove();
-        onConfirm();
-    });
-    overlay.querySelector('#cancel-delete-folder').addEventListener('click', () => {
-        overlay.remove();
-    });
+    showConfirmModal('Delete folder', message, onConfirm);
 }
 
 // --- Drag and drop ---
@@ -2013,7 +2032,7 @@ const dropUploadStatus = document.getElementById('drop-upload-status');
 
 async function handleDropUpload(files, targetFolderId) {
     dropUploadStatus.innerHTML = '';
-    dropUploadStatus.classList.remove('hidden');
+    let hasErrors = false;
 
     for (const file of files) {
         const row = document.createElement('div');
@@ -2030,11 +2049,16 @@ async function handleDropUpload(files, targetFolderId) {
         row.appendChild(statusSpan);
         dropUploadStatus.appendChild(row);
 
-        // Add a placeholder tile to the gallery
+        // Add a placeholder tile to the gallery (before refresh button)
         const placeholder = document.createElement('div');
         placeholder.className = 'gallery-item';
         placeholder.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span style="font-size:12px;color:var(--text-dim)">' + escapeHtml(file.name) + '</span></div>';
-        galleryGrid.appendChild(placeholder);
+        const refreshWrap = document.getElementById('refresh-wrap');
+        if (refreshWrap && refreshWrap.parentNode === galleryGrid) {
+            galleryGrid.insertBefore(placeholder, refreshWrap);
+        } else {
+            galleryGrid.appendChild(placeholder);
+        }
 
         try {
             const dummyEl = createUploadItem(file.name);
@@ -2049,17 +2073,24 @@ async function handleDropUpload(files, targetFolderId) {
             placeholder.remove();
             statusSpan.textContent = 'Error';
             statusSpan.className = 'status error';
+            hasErrors = true;
         }
     }
 
-    // Fade out toast after 2 seconds, then refresh gallery
-    setTimeout(() => {
-        dropUploadStatus.style.opacity = '0';
+    if (hasErrors) {
+        // Only show toast for failed uploads
+        dropUploadStatus.querySelectorAll('.drop-upload-item').forEach(row => {
+            if (!row.querySelector('.status.error')) row.remove();
+        });
+        dropUploadStatus.classList.remove('hidden');
         setTimeout(() => {
-            dropUploadStatus.classList.add('hidden');
-            dropUploadStatus.style.opacity = '';
-        }, 500);
-    }, 2000);
+            dropUploadStatus.style.opacity = '0';
+            setTimeout(() => {
+                dropUploadStatus.classList.add('hidden');
+                dropUploadStatus.style.opacity = '';
+            }, 500);
+        }, 3000);
+    }
     loadMedia();
 }
 
@@ -2541,13 +2572,14 @@ async function deleteCurrentItem() {
 }
 
 async function deleteItem(item) {
-    if (!confirm('Delete this item? This cannot be undone.')) return;
-    try {
-        await api(`/api/media/${item.id}`, { method: 'DELETE' });
-        loadMedia();
-    } catch (e) {
-        alert('Delete failed: ' + e.message);
-    }
+    showConfirmModal('Delete file', 'Delete this item? This cannot be undone.', async () => {
+        try {
+            await api(`/api/media/${item.id}`, { method: 'DELETE' });
+            loadMedia();
+        } catch (e) {
+            showConfirmModal('Error', 'Delete failed: ' + e.message, () => {}, { buttonLabel: 'OK', buttonClass: 'btn-primary' });
+        }
+    });
 }
 
 async function downloadCurrentItem() {
@@ -2614,7 +2646,7 @@ async function downloadFolder(folder) {
     // Gather all media items in this folder tree
     const items = mediaItems.filter(m => allFolderIds.has(m.folderId));
     if (items.length === 0) {
-        alert('This folder is empty.');
+        showConfirmModal('Download folder', 'This folder is empty.', () => {}, { buttonLabel: 'OK', buttonClass: 'btn-primary' });
         return;
     }
 
@@ -2769,17 +2801,95 @@ function crc32(data) {
 }
 
 
+const renameModal = document.getElementById('rename-modal');
+const renameInput = document.getElementById('rename-input');
+const renameError = document.getElementById('rename-error');
+const renameConfirmBtn = document.getElementById('rename-confirm');
+const renameCancelBtn = document.getElementById('rename-cancel');
+const renameTitle = document.getElementById('rename-title');
+
+function showRenameModal(title, currentName, onConfirm, opts = {}) {
+    renameTitle.textContent = title;
+    renameInput.value = currentName;
+    renameInput.placeholder = opts.placeholder || 'New name';
+    renameConfirmBtn.textContent = opts.buttonLabel || 'Rename';
+    renameError.classList.add('hidden');
+    renameModal.classList.remove('hidden');
+    renameInput.focus();
+    if (currentName) renameInput.select();
+
+    const cleanup = () => {
+        renameModal.classList.add('hidden');
+        renameConfirmBtn.removeEventListener('click', handleConfirm);
+        renameCancelBtn.removeEventListener('click', handleCancel);
+        renameInput.removeEventListener('keydown', handleKey);
+        renameModal.removeEventListener('click', handleOverlay);
+    };
+
+    const handleConfirm = () => {
+        const newName = renameInput.value.trim();
+        if (!newName || newName === currentName) { cleanup(); return; }
+        const err = onConfirm(newName);
+        if (err) {
+            renameError.textContent = err;
+            renameError.classList.remove('hidden');
+        } else {
+            cleanup();
+        }
+    };
+
+    const handleCancel = () => cleanup();
+    const handleKey = (e) => { if (e.key === 'Enter') handleConfirm(); else if (e.key === 'Escape') cleanup(); };
+    const handleOverlay = (e) => { if (e.target === renameModal) cleanup(); };
+
+    renameConfirmBtn.addEventListener('click', handleConfirm);
+    renameCancelBtn.addEventListener('click', handleCancel);
+    renameInput.addEventListener('keydown', handleKey);
+    renameModal.addEventListener('click', handleOverlay);
+}
+
+const confirmModal = document.getElementById('confirm-modal');
+const confirmTitle = document.getElementById('confirm-title');
+const confirmMessage = document.getElementById('confirm-message');
+const confirmOkBtn = document.getElementById('confirm-ok');
+const confirmCancelBtn = document.getElementById('confirm-cancel');
+
+function showConfirmModal(title, message, onConfirm, opts = {}) {
+    confirmTitle.textContent = title;
+    confirmMessage.textContent = message;
+    confirmOkBtn.textContent = opts.buttonLabel || 'Delete';
+    confirmOkBtn.className = 'btn ' + (opts.buttonClass || 'btn-danger');
+    confirmModal.classList.remove('hidden');
+
+    const cleanup = () => {
+        confirmModal.classList.add('hidden');
+        confirmOkBtn.removeEventListener('click', handleOk);
+        confirmCancelBtn.removeEventListener('click', handleCancel);
+        document.removeEventListener('keydown', handleKey);
+        confirmModal.removeEventListener('click', handleOverlay);
+    };
+
+    const handleOk = () => { cleanup(); onConfirm(); };
+    const handleCancel = () => cleanup();
+    const handleKey = (e) => { if (e.key === 'Escape') cleanup(); };
+    const handleOverlay = (e) => { if (e.target === confirmModal) cleanup(); };
+
+    confirmOkBtn.addEventListener('click', handleOk);
+    confirmCancelBtn.addEventListener('click', handleCancel);
+    document.addEventListener('keydown', handleKey);
+    confirmModal.addEventListener('click', handleOverlay);
+}
+
 function renameItem(item) {
-    const newName = prompt('New name:', item.name);
-    if (!newName || !newName.trim() || newName.trim() === item.name) return;
-    if (fileNameExistsInFolder(newName.trim(), item.folderId || null)) {
-        alert('A file with that name already exists in this folder.');
-        return;
-    }
-    item.name = newName.trim();
-    // Re-encrypt and save metadata
-    updateItemMetadata(item);
-    renderGalleryItems();
+    showRenameModal('Rename file', item.name, (newName) => {
+        if (fileNameExistsInFolder(newName, item.folderId || null)) {
+            return 'A file with that name already exists in this folder.';
+        }
+        item.name = newName;
+        updateItemMetadata(item);
+        renderGalleryItems();
+        return null;
+    });
 }
 
 async function updateItemMetadata(item) {
