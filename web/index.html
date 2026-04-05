@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-18FNWXsq+T7MRdyZFM/z0JJAEBsETpI1y5wE4glzS4a2nBLv5+857LrrE8lgpEXv" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-4KTRgxtM11XhHMDaWVP0fu+3YgeRqIEaVciU1u31uEtxeimtD+cfw+0grT7ylE6k" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
         <header id="header" class="hidden">
             <div class="header-left">
-                <h1 class="logo">Darkreel</h1>
+                <h1 class="logo">&#127871; Darkreel</h1>
             </div>
             <div class="header-center"></div>
             <div class="header-right">
@@ -34,7 +34,7 @@
             <!-- Auth view -->
             <div id="auth-view" class="view hidden">
                 <div class="auth-card">
-                    <h2 class="auth-title">Darkreel</h2>
+                    <h2 class="auth-title">&#127871; Darkreel</h2>
 
                     <form id="auth-form">
                         <input type="text" id="auth-username" placeholder="Username" required minlength="3" autocomplete="username">
@@ -48,7 +48,7 @@
                     </form>
                     <form id="register-form" class="hidden">
                         <input type="text" id="reg-username" placeholder="Username" required minlength="3" autocomplete="username">
-                        <p id="reg-username-reqs" class="password-reqs hidden">Username must be at least <span data-req="ulen">3 characters</span>, at most <span data-req="umax">64 characters</span>, and may only contain <span data-req="ualpha">letters and numbers</span>.</p>
+                        <p id="reg-username-reqs" class="password-reqs hidden">Username must be at least <span data-req="ulen">3 characters</span>, at most <span data-req="umax">64 characters</span>, and may only contain <span class="met">letters and numbers</span>.</p>
                         <input type="password" id="reg-password" placeholder="Password" required autocomplete="new-password">
                         <p id="reg-password-reqs" class="password-reqs hidden">Password must be at least <span data-req="length">16 characters</span>, and must contain a <span data-req="letter">letter</span>, a <span data-req="number">number</span>, and a <span data-req="symbol">symbol</span>.</p>
                         <input type="password" id="reg-password-confirm" placeholder="Confirm Password" required autocomplete="new-password">
@@ -152,15 +152,17 @@
             <div id="admin-view" class="view hidden">
                 <div class="admin-panel">
                     <div class="admin-header">
-                        <button id="admin-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back">&#8592;</button>
-                        <h2>Admin</h2>
+                        <h2><button id="admin-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back">&#8592;</button>Admin</h2>
                     </div>
                     <div class="admin-create">
                         <h3>Create User</h3>
                         <form id="admin-create-form">
-                            <input type="text" id="admin-new-username" placeholder="Username" required minlength="3" autocomplete="off">
-                            <input type="password" id="admin-new-password" placeholder="Password (16+ chars)" required minlength="16" autocomplete="off">
-                            <input type="password" id="admin-new-password-confirm" placeholder="Confirm Password" required minlength="16" autocomplete="off">
+                            <input type="text" id="admin-new-username" placeholder="Username" required autocomplete="off">
+                            <p id="admin-username-reqs" class="password-reqs hidden">Username must be at least <span data-req="ulen">3 characters</span>, at most <span data-req="umax">64 characters</span>, and may only contain <span class="met">letters and numbers</span>.</p>
+                            <input type="password" id="admin-new-password" placeholder="Password" required autocomplete="off">
+                            <p id="admin-password-reqs" class="password-reqs hidden">Password must be at least <span data-req="length">16 characters</span>, and must contain a <span data-req="letter">letter</span>, a <span data-req="number">number</span>, and a <span data-req="symbol">symbol</span>.</p>
+                            <input type="password" id="admin-new-password-confirm" placeholder="Confirm Password" required autocomplete="off">
+                            <p id="admin-confirm-hint" class="password-reqs hidden" style="color: var(--danger, #ef4444);">Passwords must match.</p>
                             <label class="admin-checkbox"><input type="checkbox" id="admin-new-is-admin"> Admin</label>
                             <button type="submit" class="btn btn-primary">Create User</button>
                         </form>
@@ -185,8 +187,7 @@
             <div id="settings-view" class="view hidden">
                 <div class="admin-panel">
                     <div class="admin-header">
-                        <button id="settings-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back">&#8592;</button>
-                        <h2>Settings</h2>
+                        <h2><button id="settings-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back">&#8592;</button>Settings</h2>
                     </div>
                     <div class="admin-create">
                         <h3>Change Password</h3>
@@ -288,6 +289,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-ERnWjpfZFdw1O+QB5F1c99U6Xfl3L89RRZyWs3WPLF8ZqLP/U8UTYfUADFTBgMjc" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-dd5EIdnHa+71rtHZl3oHRWBpDXSjvoLJjf4YOathfCp6nA0Xofk2ZfxvNONVS6ge" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-sT8YlByiPdPqbLx39V2odr2p6t0Vjk2mWA1tNYDCjTVL2unDjPikjtLX16lDQWN7" crossorigin="anonymous"></script>
 </body>
 </html>

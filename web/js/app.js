@@ -171,7 +171,7 @@ registerBtn.addEventListener('click', () => {
     checkUsernameReqs();
     checkPasswordReqs();
     const u = regUsernameInput.value;
-    const uMet = u.length >= 3 && u.length <= 64 && /^[a-zA-Z0-9]+$/.test(u);
+    const uMet = u.length >= 3 && u.length <= 64;
     if (!uMet && u.length > 0) regUsernameReqs.classList.remove('hidden');
     const pw = regPasswordInput.value;
     const pwMet = pw.length >= 16 && /[a-zA-Z]/.test(pw) && /\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw);
@@ -228,7 +228,6 @@ function checkUsernameReqs() {
     const checks = {
         ulen: u.length >= 3,
         umax: u.length <= 64,
-        ualpha: u.length > 0 && /^[a-zA-Z0-9]+$/.test(u),
     };
     const allMet = Object.values(checks).every(Boolean);
 
@@ -250,12 +249,12 @@ function checkUsernameReqs() {
 regUsernameInput.addEventListener('input', () => { filterUsername({ target: regUsernameInput }); checkUsernameReqs(); });
 regUsernameInput.addEventListener('focus', () => {
     const u = regUsernameInput.value;
-    const allMet = u.length >= 3 && u.length <= 64 && /^[a-zA-Z0-9]+$/.test(u);
+    const allMet = u.length >= 3 && u.length <= 64;
     if (!allMet) regUsernameReqs.classList.remove('hidden');
 });
 regUsernameInput.addEventListener('blur', () => {
     const u = regUsernameInput.value;
-    const allMet = u.length >= 3 && u.length <= 64 && /^[a-zA-Z0-9]+$/.test(u);
+    const allMet = u.length >= 3 && u.length <= 64;
     if (allMet) regUsernameReqs.classList.add('hidden');
 });
 
@@ -290,7 +289,7 @@ function checkPasswordReqs() {
 
     const passwordsMatch = pw === confirm && confirm.length > 0;
     const u = regUsernameInput.value;
-    const usernameOk = u.length >= 3 && /^[a-zA-Z0-9]+$/.test(u);
+    const usernameOk = u.length >= 3 && u.length <= 64;
     regSubmitBtn.disabled = !(allMet && passwordsMatch && usernameOk);
 }
 
@@ -583,6 +582,118 @@ document.getElementById('admin-back-btn').addEventListener('click', () => {
     galleryView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'gallery');
     updateNavActive('gallery');
+    renderBreadcrumb();
+});
+
+// Admin create user validation
+const adminUsername = document.getElementById('admin-new-username');
+const adminPassword = document.getElementById('admin-new-password');
+const adminPwConfirm = document.getElementById('admin-new-password-confirm');
+const adminUsernameReqs = document.getElementById('admin-username-reqs');
+const adminPwReqs = document.getElementById('admin-password-reqs');
+const adminConfirmHint = document.getElementById('admin-confirm-hint');
+const adminCreateBtn = adminCreateForm.querySelector('button[type="submit"]');
+adminCreateBtn.disabled = true;
+adminPwConfirm.disabled = true;
+
+function checkAdminUsernameReqs() {
+    const u = adminUsername.value;
+    const checks = {
+        ulen: u.length >= 3,
+        umax: u.length <= 64,
+    };
+    const allMet = Object.values(checks).every(Boolean);
+    for (const [key, met] of Object.entries(checks)) {
+        const el = adminUsernameReqs.querySelector(`[data-req="${key}"]`);
+        if (el) el.classList.toggle('met', met);
+    }
+    if (allMet) {
+        adminUsernameReqs.classList.add('hidden');
+    } else if (document.activeElement === adminUsername) {
+        adminUsernameReqs.classList.remove('hidden');
+    }
+    checkAdminCreateBtn();
+}
+
+function checkAdminPwReqs() {
+    const pw = adminPassword.value;
+    const confirm = adminPwConfirm.value;
+    const checks = {
+        length: pw.length >= 16,
+        letter: /[a-zA-Z]/.test(pw),
+        number: /\d/.test(pw),
+        symbol: /[^a-zA-Z0-9]/.test(pw),
+    };
+    const allMet = Object.values(checks).every(Boolean);
+    for (const [key, met] of Object.entries(checks)) {
+        const el = adminPwReqs.querySelector(`[data-req="${key}"]`);
+        if (el) el.classList.toggle('met', met);
+    }
+    if (allMet) {
+        adminPwReqs.classList.add('hidden');
+    } else if (document.activeElement === adminPassword) {
+        adminPwReqs.classList.remove('hidden');
+    }
+    adminPwConfirm.disabled = !allMet;
+    if (!allMet) {
+        adminPwConfirm.value = '';
+        adminConfirmHint.classList.add('hidden');
+    }
+    checkAdminCreateBtn();
+}
+
+function checkAdminConfirm() {
+    const pw = adminPassword.value;
+    const confirm = adminPwConfirm.value;
+    const matches = pw === confirm && confirm.length > 0;
+    if (matches) {
+        adminConfirmHint.classList.add('hidden');
+    } else if (document.activeElement === adminPwConfirm) {
+        adminConfirmHint.classList.remove('hidden');
+    }
+    checkAdminCreateBtn();
+}
+
+function checkAdminCreateBtn() {
+    const u = adminUsername.value;
+    const uMet = u.length >= 3 && u.length <= 64;
+    const pw = adminPassword.value;
+    const pwMet = pw.length >= 16 && /[a-zA-Z]/.test(pw) && /\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw);
+    const confirm = adminPwConfirm.value;
+    const matches = pw === confirm && confirm.length > 0;
+    adminCreateBtn.disabled = !(uMet && pwMet && matches);
+}
+
+adminUsername.addEventListener('input', () => { filterUsername({ target: adminUsername }); checkAdminUsernameReqs(); });
+adminUsername.addEventListener('focus', () => {
+    const u = adminUsername.value;
+    const allMet = u.length >= 3 && u.length <= 64;
+    if (!allMet) adminUsernameReqs.classList.remove('hidden');
+});
+adminUsername.addEventListener('blur', () => {
+    const u = adminUsername.value;
+    const allMet = u.length >= 3 && u.length <= 64;
+    if (allMet) adminUsernameReqs.classList.add('hidden');
+});
+adminPassword.addEventListener('input', checkAdminPwReqs);
+adminPassword.addEventListener('focus', () => {
+    const pw = adminPassword.value;
+    const allMet = pw.length >= 16 && /[a-zA-Z]/.test(pw) && /\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw);
+    if (!allMet) adminPwReqs.classList.remove('hidden');
+});
+adminPassword.addEventListener('blur', () => {
+    const pw = adminPassword.value;
+    const allMet = pw.length >= 16 && /[a-zA-Z]/.test(pw) && /\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw);
+    if (allMet) adminPwReqs.classList.add('hidden');
+});
+adminPwConfirm.addEventListener('input', checkAdminConfirm);
+adminPwConfirm.addEventListener('focus', () => {
+    const matches = adminPassword.value === adminPwConfirm.value && adminPwConfirm.value.length > 0;
+    if (!matches) adminConfirmHint.classList.remove('hidden');
+});
+adminPwConfirm.addEventListener('blur', () => {
+    const matches = adminPassword.value === adminPwConfirm.value && adminPwConfirm.value.length > 0;
+    if (matches) adminConfirmHint.classList.add('hidden');
 });
 
 adminCreateForm.addEventListener('submit', async (e) => {
@@ -606,6 +717,11 @@ adminCreateForm.addEventListener('submit', async (e) => {
         adminCreateSuccess.innerHTML = 'User "' + escapeHtml(res.username) + '" created.<br>Recovery code:<br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:8px;margin-top:4px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + escapeHtml(res.recovery_code) + '</code>';
         adminCreateSuccess.classList.remove('hidden');
         adminCreateForm.reset();
+        adminPwConfirm.disabled = true;
+        adminCreateBtn.disabled = true;
+        adminUsernameReqs.classList.add('hidden');
+        adminPwReqs.classList.add('hidden');
+        adminConfirmHint.classList.add('hidden');
         loadAdminUsers();
     } catch (err) {
         adminCreateError.textContent = err.message || 'Failed to create user';
@@ -674,12 +790,25 @@ function updateNavActive(view) {
 const settingsView = document.getElementById('settings-view');
 const settingsBtn = document.getElementById('settings-btn');
 
+function resetSettingsForm() {
+    document.getElementById('settings-change-pw-form').reset();
+    settingsNewPwConfirm.disabled = true;
+    settingsChangePwBtn.disabled = true;
+    settingsPwReqs.classList.add('hidden');
+    settingsConfirmHint.classList.add('hidden');
+    document.getElementById('settings-pw-error').classList.add('hidden');
+    document.getElementById('settings-pw-success').classList.add('hidden');
+    document.getElementById('settings-delete-form').reset();
+    document.getElementById('settings-delete-error').classList.add('hidden');
+}
+
 settingsBtn.addEventListener('click', () => {
     galleryView.classList.add('hidden');
     adminView.classList.add('hidden');
     settingsView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'settings');
     updateNavActive('settings');
+    resetSettingsForm();
 });
 
 document.getElementById('settings-back-btn').addEventListener('click', () => {
@@ -687,6 +816,7 @@ document.getElementById('settings-back-btn').addEventListener('click', () => {
     galleryView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'gallery');
     updateNavActive('gallery');
+    renderBreadcrumb();
 });
 
 // Settings password validation
@@ -828,18 +958,18 @@ document.getElementById('settings-delete-form').addEventListener('submit', async
     const errEl = document.getElementById('settings-delete-error');
     errEl.classList.add('hidden');
 
-    if (!confirm('Are you sure you want to delete your account? All your encrypted media will be permanently destroyed.')) return;
-
     const password = document.getElementById('settings-delete-pw').value;
 
-    try {
-        await api('/api/auth/account', { method: 'DELETE', json: { password } });
-        sessionStorage.clear();
-        showAuth();
-    } catch (err) {
-        errEl.textContent = err.message || 'Failed to delete account';
-        errEl.classList.remove('hidden');
-    }
+    showConfirmModal('Delete account', 'Are you sure you want to delete your account? All of your encrypted media will be permanently destroyed.', async () => {
+        try {
+            await api('/api/auth/account', { method: 'DELETE', json: { password } });
+            sessionStorage.clear();
+            showAuth();
+        } catch (err) {
+            errEl.textContent = err.message || 'Failed to delete account';
+            errEl.classList.remove('hidden');
+        }
+    });
 });
 
 const headerMenuBtn = document.getElementById('header-menu-btn');
@@ -900,6 +1030,7 @@ document.getElementById('settings-btn-mobile').addEventListener('click', () => {
     settingsView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'settings');
     updateNavActive('settings');
+    resetSettingsForm();
 });
 
 document.getElementById('admin-btn-mobile').addEventListener('click', () => {
@@ -954,7 +1085,7 @@ function showAuth() {
 
 let pollTimer = null;
 
-function showGallery() {
+async function showGallery() {
     authView.classList.add('hidden');
     header.classList.remove('hidden');
     // Show admin button if user is admin
@@ -978,7 +1109,7 @@ function showGallery() {
     } else {
         galleryView.classList.remove('hidden');
         updateNavActive('gallery');
-        loadMedia();
+        await loadMedia();
     }
     // Poll for new media every 10 seconds
     if (pollTimer) clearInterval(pollTimer);

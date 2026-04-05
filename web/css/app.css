@@ -99,6 +99,7 @@ header {
     align-items: center;
     justify-content: center;
     min-height: 100vh;
+    padding: 0 24px;
 }
 .auth-card {
     background: var(--bg-card);
@@ -356,11 +357,13 @@ header {
 
 /* Admin */
 .admin-panel { max-width: 600px; margin: 0 auto; padding: 24px; }
-.admin-header { position: relative; display: flex; align-items: center; justify-content: center; margin-bottom: 24px; }
-.admin-header h2 { font-size: 20px; font-weight: 600; }
+.admin-header { display: flex; align-items: center; justify-content: center; margin-bottom: 24px; }
+.admin-header h2 { font-size: 20px; font-weight: 600; position: relative; }
 .btn-back-circle {
     position: absolute;
-    left: 0;
+    right: calc(100% + 8px);
+    top: 50%;
+    transform: translateY(-50%);
     width: 36px;
     height: 36px;
     border-radius: 50%;
@@ -379,8 +382,8 @@ header {
     color: var(--text); font-size: 15px;
 }
 .admin-create input:focus { outline: none; border-color: var(--accent); }
-.admin-checkbox { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-dim); margin-bottom: 12px; cursor: pointer; }
-.admin-checkbox input[type="checkbox"] { accent-color: var(--accent); }
+.admin-checkbox { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-dim); margin-bottom: 12px; cursor: pointer; white-space: nowrap; align-self: flex-start; }
+.admin-checkbox input[type="checkbox"] { accent-color: var(--accent); position: relative; top: 6px; }
 .admin-user-card {
     display: flex; justify-content: space-between; align-items: center;
     padding: 12px 16px; margin-bottom: 8px;

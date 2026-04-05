@@ -316,7 +316,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !crypto.VerifyPassword(req.OldPassword, user.AuthSalt, user.PasswordHash) {
-		http.Error(w, "current password is incorrect", http.StatusBadRequest)
+		http.Error(w, "Current password is incorrect.", http.StatusBadRequest)
 		return
 	}
 
