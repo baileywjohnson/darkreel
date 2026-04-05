@@ -24,9 +24,10 @@ jobs:
 
           # Create hash and sign it with Ed25519
           sha256sum darkreel > darkreel.sha256
+          awk '{print $1}' darkreel.sha256 | tr -d '\n' > darkreel.hash
           echo "$SIGNING_KEY" > signing.key
-          openssl pkeyutl -sign -inkey signing.key -rawin -in <(awk '{print $1}' darkreel.sha256 | tr -d '\n') -out darkreel.sig
-          rm -f signing.key
+          openssl pkeyutl -sign -inkey signing.key -rawin -in darkreel.hash -out darkreel.sig
+          rm -f signing.key darkreel.hash
 
           echo "Binary hash:"
           cat darkreel.sha256

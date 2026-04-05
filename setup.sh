@@ -89,11 +89,16 @@ done
 echo ""
 read -rp "Create a personal SSH user? Enter username (or leave empty to skip): " SSH_USER
 
+AUTO_UPDATE="n"
+echo ""
+read -rp "Enable auto-updates from tagged releases? (daily check, checksum verified) [y/N]: " AUTO_UPDATE
+
 echo ""
 info "Domain:     $DOMAIN"
 info "Admin user: $ADMIN_USER"
 info "Data dir:   $DATA_DIR"
 [ -n "$SSH_USER" ] && info "SSH user:   $SSH_USER"
+[ "$AUTO_UPDATE" = "y" ] || [ "$AUTO_UPDATE" = "Y" ] && info "Auto-update: enabled"
 echo ""
 
 # ============================================================
@@ -301,6 +306,18 @@ cat > /etc/cron.d/darkreel-backup <<EOF
 EOF
 info "Daily database backup configured (3 AM, 7-day retention)"
 
+# --- Auto-updates ---
+if [ "$AUTO_UPDATE" = "y" ] || [ "$AUTO_UPDATE" = "Y" ]; then
+  # Copy update script to a stable location
+  if [ -f "${REPO_DIR}/update.sh" ]; then
+    cp "${REPO_DIR}/update.sh" "${INSTALL_DIR}/darkreel-update"
+    chmod +x "${INSTALL_DIR}/darkreel-update"
+    "${INSTALL_DIR}/darkreel-update" --install
+  else
+    warn "update.sh not found in repo — skipping auto-update setup"
+  fi
+fi
+
 # --- Start services ---
 systemctl daemon-reload
 systemctl enable --now darkreel
@@ -352,6 +369,7 @@ if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
   echo "    - Hardened systemd service"
   echo "    - Daily database backups (${DATA_DIR}/backups/)"
   echo "    - Deploy user for CI/CD (limited sudo)"
+  [ "$AUTO_UPDATE" = "y" ] || [ "$AUTO_UPDATE" = "Y" ] && echo "    - Auto-updates from tagged releases (daily at 4 AM)"
   [ -n "$SSH_USER" ] && echo "    - SSH user '$SSH_USER' with sudo access"
   [ -n "$SSH_USER" ] && echo "    - Root SSH login disabled"
   echo ""
