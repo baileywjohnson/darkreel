@@ -268,6 +268,15 @@ ${DOMAIN} {
 EOF
 info "Caddy configured for $DOMAIN (automatic HTTPS via Let's Encrypt)"
 
+# --- Write environment file (restricted permissions) ---
+cat > /etc/darkreel/env <<EOF
+DARKREEL_ADMIN_USERNAME=${ADMIN_USER}
+DARKREEL_ADMIN_PASSWORD=${ADMIN_PASS}
+EOF
+chmod 600 /etc/darkreel/env
+chown darkreel:darkreel /etc/darkreel/env
+info "Environment file written to /etc/darkreel/env (mode 600)"
+
 # --- Create systemd service ---
 cat > /etc/systemd/system/darkreel.service <<EOF
 [Unit]
@@ -280,12 +289,9 @@ Type=simple
 User=darkreel
 Group=darkreel
 ExecStart=${INSTALL_DIR}/darkreel -addr 127.0.0.1:8080 -data ${DATA_DIR}
+EnvironmentFile=/etc/darkreel/env
 Restart=always
 RestartSec=5
-
-# First-run bootstrap (ignored after admin account exists)
-Environment=DARKREEL_ADMIN_USERNAME=${ADMIN_USER}
-Environment=DARKREEL_ADMIN_PASSWORD=${ADMIN_PASS}
 
 # Hardening
 NoNewPrivileges=true
