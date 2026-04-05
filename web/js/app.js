@@ -689,6 +689,83 @@ document.getElementById('settings-back-btn').addEventListener('click', () => {
     updateNavActive('gallery');
 });
 
+// Settings password validation
+const settingsOldPw = document.getElementById('settings-old-pw');
+const settingsNewPw = document.getElementById('settings-new-pw');
+const settingsNewPwConfirm = document.getElementById('settings-new-pw-confirm');
+const settingsPwReqs = document.getElementById('settings-pw-reqs');
+const settingsConfirmHint = document.getElementById('settings-confirm-hint');
+const settingsChangePwBtn = document.getElementById('settings-change-pw-form').querySelector('button[type="submit"]');
+settingsChangePwBtn.disabled = true;
+settingsNewPwConfirm.disabled = true;
+
+function checkSettingsPwReqs() {
+    const pw = settingsNewPw.value;
+    const confirm = settingsNewPwConfirm.value;
+    const checks = {
+        length: pw.length >= 16,
+        letter: /[a-zA-Z]/.test(pw),
+        number: /\d/.test(pw),
+        symbol: /[^a-zA-Z0-9]/.test(pw),
+    };
+    const allMet = Object.values(checks).every(Boolean);
+
+    for (const [key, met] of Object.entries(checks)) {
+        const el = settingsPwReqs.querySelector(`[data-req="${key}"]`);
+        if (el) el.classList.toggle('met', met);
+    }
+
+    if (allMet) {
+        settingsPwReqs.classList.add('hidden');
+    } else if (document.activeElement === settingsNewPw) {
+        settingsPwReqs.classList.remove('hidden');
+    }
+
+    settingsNewPwConfirm.disabled = !allMet;
+    if (!allMet) {
+        settingsNewPwConfirm.value = '';
+        settingsConfirmHint.classList.add('hidden');
+    }
+
+    const passwordsMatch = pw === confirm && confirm.length > 0;
+    const oldPwOk = settingsOldPw.value.length > 0;
+    settingsChangePwBtn.disabled = !(allMet && passwordsMatch && oldPwOk);
+}
+
+function checkSettingsConfirm() {
+    const pw = settingsNewPw.value;
+    const confirm = settingsNewPwConfirm.value;
+    const matches = pw === confirm && confirm.length > 0;
+    if (matches) {
+        settingsConfirmHint.classList.add('hidden');
+    } else if (document.activeElement === settingsNewPwConfirm) {
+        settingsConfirmHint.classList.remove('hidden');
+    }
+    checkSettingsPwReqs();
+}
+
+settingsNewPw.addEventListener('input', checkSettingsPwReqs);
+settingsNewPw.addEventListener('focus', () => {
+    const pw = settingsNewPw.value;
+    const allMet = pw.length >= 16 && /[a-zA-Z]/.test(pw) && /\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw);
+    if (!allMet) settingsPwReqs.classList.remove('hidden');
+});
+settingsNewPw.addEventListener('blur', () => {
+    const pw = settingsNewPw.value;
+    const allMet = pw.length >= 16 && /[a-zA-Z]/.test(pw) && /\d/.test(pw) && /[^a-zA-Z0-9]/.test(pw);
+    if (allMet) settingsPwReqs.classList.add('hidden');
+});
+settingsNewPwConfirm.addEventListener('input', checkSettingsConfirm);
+settingsNewPwConfirm.addEventListener('focus', () => {
+    const matches = settingsNewPw.value === settingsNewPwConfirm.value && settingsNewPwConfirm.value.length > 0;
+    if (!matches) settingsConfirmHint.classList.remove('hidden');
+});
+settingsNewPwConfirm.addEventListener('blur', () => {
+    const matches = settingsNewPw.value === settingsNewPwConfirm.value && settingsNewPwConfirm.value.length > 0;
+    if (matches) settingsConfirmHint.classList.add('hidden');
+});
+settingsOldPw.addEventListener('input', checkSettingsPwReqs);
+
 document.getElementById('settings-change-pw-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const errEl = document.getElementById('settings-pw-error');
@@ -736,6 +813,10 @@ document.getElementById('settings-change-pw-form').addEventListener('submit', as
         succEl.textContent = 'Password changed successfully.';
         succEl.classList.remove('hidden');
         document.getElementById('settings-change-pw-form').reset();
+        settingsNewPwConfirm.disabled = true;
+        settingsChangePwBtn.disabled = true;
+        settingsPwReqs.classList.add('hidden');
+        settingsConfirmHint.classList.add('hidden');
     } catch (err) {
         errEl.textContent = err.message || 'Failed to change password';
         errEl.classList.remove('hidden');
@@ -828,6 +909,7 @@ document.getElementById('admin-btn-mobile').addEventListener('click', () => {
     adminView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'admin');
     updateNavActive('admin');
+    loadAdminUsers();
 });
 
 function showAuth() {
@@ -847,6 +929,7 @@ function showAuth() {
     authFormEl.reset();
     recoveryForm.reset();
     registerFormEl.reset();
+    loginBtn.textContent = 'Login';
     checkLoginFields();
     // Reset visibility of fields (in case hidden after success)
     recoveryForm.querySelectorAll('input, .auth-buttons, .btn-link').forEach(el => el.style.display = '');

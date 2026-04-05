@@ -192,8 +192,10 @@
                         <h3>Change Password</h3>
                         <form id="settings-change-pw-form">
                             <input type="password" id="settings-old-pw" placeholder="Current Password" required autocomplete="current-password">
-                            <input type="password" id="settings-new-pw" placeholder="New Password (16+ chars)" required minlength="16" autocomplete="new-password">
-                            <input type="password" id="settings-new-pw-confirm" placeholder="Confirm New Password" required minlength="16" autocomplete="new-password">
+                            <input type="password" id="settings-new-pw" placeholder="New Password" required autocomplete="new-password">
+                            <p id="settings-pw-reqs" class="password-reqs hidden">Password must be at least <span data-req="length">16 characters</span>, and must contain a <span data-req="letter">letter</span>, a <span data-req="number">number</span>, and a <span data-req="symbol">symbol</span>.</p>
+                            <input type="password" id="settings-new-pw-confirm" placeholder="Confirm New Password" required autocomplete="new-password">
+                            <p id="settings-confirm-hint" class="password-reqs hidden" style="color: var(--danger, #ef4444);">Passwords must match.</p>
                             <button type="submit" class="btn btn-primary">Change Password</button>
                         </form>
                         <p id="settings-pw-error" class="error hidden"></p>
@@ -286,6 +288,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-ERnWjpfZFdw1O+QB5F1c99U6Xfl3L89RRZyWs3WPLF8ZqLP/U8UTYfUADFTBgMjc" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-OQ1oYXfWDVjRbAKrcIM8zo6kSvzPH16H2zuE0xg9LZ9QYQ2n0jGyBU78GH0TM0ro" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-dd5EIdnHa+71rtHZl3oHRWBpDXSjvoLJjf4YOathfCp6nA0Xofk2ZfxvNONVS6ge" crossorigin="anonymous"></script>
 </body>
 </html>
