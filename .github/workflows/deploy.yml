@@ -21,8 +21,9 @@ jobs:
             cd ~/darkreel &&
             git pull &&
             bash build.sh &&
+            sudo systemctl stop darkreel &&
             sudo cp darkreel /usr/local/bin/darkreel &&
-            sudo systemctl restart darkreel &&
+            sudo systemctl start darkreel &&
             sleep 2 &&
             curl -sf http://127.0.0.1:8080/health || echo "WARNING: health check failed"
           '
