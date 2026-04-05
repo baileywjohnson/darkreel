@@ -15,6 +15,22 @@ End-to-end encrypted video and photo storage with streaming playback. The server
 - **Single binary** -- One Go binary with an embedded web UI. No external dependencies, no runtime requirements.
 - **Self-hosted** -- Your data stays on your hardware.
 
+## Why Darkreel
+
+Most encrypted storage tools encrypt your files but stop there. Darkreel goes further:
+
+- **Size fingerprinting resistance** -- Every encrypted chunk is padded to exactly 1,048,604 bytes with random fill. An observer with full disk access sees uniform blobs — they can't determine original file sizes, distinguish a 500 KB photo from a 900 KB one, or correlate files across backups by size.
+
+- **Secure deletion, not just unlinking** -- When you delete a file, the data is overwritten 3 times with random bytes, fsynced to disk, then unlinked. On spinning disks, deleted data is actually destroyed. Most tools just call `delete()` and trust the filesystem to eventually reclaim the space.
+
+- **Timestamp coarsening** -- Upload timestamps are stored as year + week number only (e.g., "2026-W14"). Most tools store full-precision timestamps, which can reveal usage patterns, time zones, and activity windows. Darkreel deliberately discards this information.
+
+- **14 MB of RAM** -- Darkreel is a single Go binary with an embedded web UI and SQLite. No Docker, no PostgreSQL, no Redis, no S3, no external services. It runs comfortably on a $6/month VPS. Most self-hosted media tools need 1-6 GB of RAM across multiple containers.
+
+- **Hardened deployment in one command** -- The setup script doesn't just install Darkreel. It configures the firewall, fail2ban, SSH hardening, automatic TLS, automatic OS security updates, and daily database backups. Most tools ship a `docker-compose.yml` and leave server hardening as an exercise for the reader.
+
+- **Encrypted video streaming** -- Videos are streamed chunk-by-chunk via MediaSource Extensions. Your browser fetches encrypted chunks on demand, decrypts them in a Web Worker, and pipes plaintext to `<video>`. Seeking works. No full download, no server-side decryption.
+
 ## Quick start (VPS)
 
 The setup script is designed for a **fresh Ubuntu/Debian VPS** (e.g., a $6/month DigitalOcean droplet, Hetzner VPS, or similar). It handles everything from system hardening to TLS certificates in a single command.
