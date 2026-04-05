@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Darkreel — E2E Encrypted Media Storage</title>
+    <meta name="description" content="Self-hosted, end-to-end encrypted video and photo storage with streaming playback. Zero-knowledge architecture.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+        :root {
+            --bg: #09090b;
+            --surface: #111114;
+            --surface-2: #18181c;
+            --border: #222228;
+            --text: #ececf1;
+            --text-2: #a0a0b0;
+            --text-3: #5a5a6e;
+            --purple: #8b7cf6;
+            --purple-dim: rgba(139, 124, 246, 0.08);
+            --green: #22c55e;
+            --amber: #f59e0b;
+            --red: #ef4444;
+            --mono: 'JetBrains Mono', monospace;
+            --sans: 'Inter', -apple-system, system-ui, sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: var(--sans);
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.65;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        ::selection { background: rgba(139, 124, 246, 0.3); }
+
+        a { color: var(--purple); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        code, .mono {
+            font-family: var(--mono);
+            font-size: 0.88em;
+        }
+
+        /* --- Nav --- */
+        nav {
+            position: fixed; top: 0; width: 100%; z-index: 100;
+            background: rgba(9, 9, 11, 0.8);
+            backdrop-filter: blur(16px) saturate(180%);
+            border-bottom: 1px solid var(--border);
+        }
+        .nav-inner {
+            max-width: 980px; margin: 0 auto; padding: 0 1.5rem;
+            height: 56px; display: flex; align-items: center; justify-content: space-between;
+        }
+        .logo { font-weight: 700; font-size: 1.1rem; color: var(--text); text-decoration: none; }
+        .nav-links { display: flex; gap: 1.5rem; align-items: center; }
+        .nav-links a { color: var(--text-2); font-size: 0.85rem; font-weight: 500; text-decoration: none; }
+        .nav-links a:hover { color: var(--text); }
+        .nav-gh {
+            display: inline-flex; align-items: center; gap: 0.4rem;
+            border: 1px solid var(--border); padding: 0.35rem 0.9rem; border-radius: 7px;
+            font-size: 0.82rem; color: var(--text) !important; transition: border-color 0.15s;
+        }
+        .nav-gh:hover { border-color: var(--text-3); text-decoration: none; }
+        .nav-gh svg { width: 16px; height: 16px; fill: var(--text); }
+
+        /* --- Layout --- */
+        .container { max-width: 980px; margin: 0 auto; padding: 0 1.5rem; }
+
+        /* --- Hero --- */
+        .hero {
+            padding: 11rem 1.5rem 7rem;
+            text-align: center;
+            position: relative;
+        }
+        .hero::before {
+            content: '';
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background:
+                radial-gradient(ellipse 600px 400px at 50% 200px, rgba(139, 124, 246, 0.06), transparent),
+                radial-gradient(ellipse 400px 300px at 30% 300px, rgba(34, 197, 94, 0.03), transparent);
+            pointer-events: none;
+        }
+        .hero h1 {
+            font-size: clamp(2.5rem, 6vw, 4rem);
+            font-weight: 800;
+            letter-spacing: -0.035em;
+            line-height: 1.05;
+            margin-bottom: 1.5rem;
+        }
+        .hero h1 .dim { color: var(--text-3); }
+        .hero p {
+            font-size: 1.15rem;
+            color: var(--text-2);
+            max-width: 540px;
+            margin: 0 auto 2.5rem;
+        }
+        .hero-cta {
+            display: inline-flex; align-items: center; gap: 0.5rem;
+            background: var(--purple); color: #fff;
+            padding: 0.7rem 1.8rem; border-radius: 8px;
+            font-weight: 600; font-size: 0.95rem;
+            transition: opacity 0.15s; text-decoration: none;
+        }
+        .hero-cta:hover { opacity: 0.9; text-decoration: none; }
+        .hero-sub {
+            margin-top: 1rem;
+            font-size: 0.85rem;
+            color: var(--text-3);
+        }
+        .hero-sub code {
+            background: var(--surface);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            color: var(--text-2);
+        }
+
+        /* --- Divider --- */
+        hr { border: none; border-top: 1px solid var(--border); margin: 0; }
+
+        /* --- Section --- */
+        .section { padding: 5rem 0; }
+        .section-head {
+            margin-bottom: 3rem;
+        }
+        .section-head h2 {
+            font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.5rem;
+        }
+        .section-head p { color: var(--text-2); font-size: 0.95rem; max-width: 520px; }
+
+        /* --- Pitch: two-col text --- */
+        .pitch {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            padding: 5rem 0;
+        }
+        .pitch h2 {
+            font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em;
+            position: sticky; top: 6rem; align-self: start;
+        }
+        .pitch-points { display: flex; flex-direction: column; gap: 1.75rem; }
+        .pitch-point h3 {
+            font-size: 0.95rem; font-weight: 600; margin-bottom: 0.3rem;
+            display: flex; align-items: center; gap: 0.5rem;
+        }
+        .pitch-point p { font-size: 0.9rem; color: var(--text-2); }
+        .pitch-point .dot {
+            width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+        }
+        .dot-purple { background: var(--purple); }
+        .dot-green { background: var(--green); }
+        .dot-amber { background: var(--amber); }
+
+        /* --- Zero-knowledge split --- */
+        .zk {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2px;
+            background: var(--border);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .zk-col { background: var(--surface); padding: 2rem; }
+        .zk-col h3 {
+            font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
+            color: var(--text-3); margin-bottom: 1.25rem; font-weight: 600;
+        }
+        .zk-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0.5rem 0;
+            font-size: 0.88rem;
+        }
+        .zk-item + .zk-item { border-top: 1px solid var(--border); }
+        .zk-encrypted { color: var(--green); font-weight: 500; font-size: 0.8rem; }
+        .zk-visible { color: var(--text-3); font-size: 0.8rem; }
+
+        /* --- Terminal block --- */
+        .terminal {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 2rem 0;
+        }
+        .terminal-bar {
+            padding: 0.65rem 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; gap: 0.5rem;
+        }
+        .terminal-dot {
+            width: 10px; height: 10px; border-radius: 50%;
+        }
+        .terminal-dot:nth-child(1) { background: #ef4444; }
+        .terminal-dot:nth-child(2) { background: #f59e0b; }
+        .terminal-dot:nth-child(3) { background: #22c55e; }
+        .terminal-title {
+            flex: 1; text-align: center;
+            font-size: 0.75rem; color: var(--text-3); font-family: var(--mono);
+        }
+        .terminal-body {
+            padding: 1.25rem 1.5rem;
+            font-family: var(--mono);
+            font-size: 0.85rem;
+            line-height: 2;
+            overflow-x: auto;
+        }
+        .t-prompt { color: var(--green); }
+        .t-cmd { color: var(--text); }
+        .t-arg { color: var(--purple); }
+        .t-comment { color: var(--text-3); }
+        .t-output { color: var(--text-2); }
+
+        /* --- Crypto specs --- */
+        .specs {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2px;
+            background: var(--border);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 2rem;
+        }
+        .spec {
+            background: var(--surface);
+            padding: 1.25rem 1.5rem;
+        }
+        .spec-label {
+            font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--text-3); margin-bottom: 0.5rem; font-weight: 600;
+        }
+        .spec-value {
+            font-family: var(--mono);
+            font-size: 0.85rem;
+            color: var(--text);
+            line-height: 1.4;
+        }
+
+        /* --- Steps --- */
+        .steps { display: flex; flex-direction: column; gap: 3rem; margin-top: 2rem; }
+        .step { display: flex; gap: 1.5rem; }
+        .step-line {
+            display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+            padding-top: 0.15rem;
+        }
+        .step-num {
+            width: 32px; height: 32px;
+            border: 1.5px solid var(--border);
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 0.8rem; font-weight: 600; color: var(--text-2);
+            flex-shrink: 0;
+        }
+        .step-connector {
+            width: 1px; flex: 1; background: var(--border);
+        }
+        .step:last-child .step-connector { display: none; }
+        .step-body h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.35rem; }
+        .step-body p { font-size: 0.9rem; color: var(--text-2); }
+
+        /* --- Hardening list --- */
+        .hardening {
+            columns: 2;
+            column-gap: 1.5rem;
+            margin-top: 2rem;
+        }
+        .h-item {
+            break-inside: avoid;
+            padding: 0.6rem 0;
+            display: flex;
+            gap: 0.65rem;
+            font-size: 0.9rem;
+        }
+        .h-check { color: var(--green); flex-shrink: 0; font-weight: 700; font-size: 0.85rem; margin-top: 0.1rem; }
+        .h-item span { color: var(--text-2); }
+        .h-item strong { color: var(--text); font-weight: 600; }
+
+        /* --- Requirements --- */
+        .req-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2px;
+            background: var(--border);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 2rem;
+        }
+        .req-col { background: var(--surface); padding: 1.5rem; }
+        .req-col h3 {
+            font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--text-3); margin-bottom: 1rem; font-weight: 600;
+        }
+        .req-line {
+            display: flex; justify-content: space-between;
+            font-size: 0.88rem;
+            padding: 0.35rem 0;
+        }
+        .req-line + .req-line { border-top: 1px solid var(--border); }
+        .req-line span:last-child { color: var(--text-2); font-family: var(--mono); font-size: 0.82rem; }
+
+        /* --- Ecosystem --- */
+        .eco-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.25rem;
+            margin-top: 2rem;
+        }
+        .eco-card {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.5rem;
+            transition: border-color 0.15s;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+        .eco-card:hover { border-color: var(--text-3); text-decoration: none; }
+        .eco-card h3 {
+            font-size: 0.95rem; font-weight: 600; margin-bottom: 0.35rem;
+            font-family: var(--mono);
+        }
+        .eco-card p { font-size: 0.85rem; color: var(--text-2); }
+
+        /* --- Footer --- */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 3rem 0;
+            text-align: center;
+        }
+        .footer-links {
+            display: flex; gap: 1.5rem; justify-content: center;
+            margin-bottom: 1rem;
+        }
+        .footer-links a { color: var(--text-3); font-size: 0.82rem; text-decoration: none; }
+        .footer-links a:hover { color: var(--text-2); }
+        .footer-copy { color: var(--text-3); font-size: 0.8rem; }
+
+        /* --- Responsive --- */
+        @media (max-width: 768px) {
+            .hero { padding: 8rem 1.5rem 5rem; }
+            .pitch { grid-template-columns: 1fr; gap: 2rem; }
+            .pitch h2 { position: static; }
+            .zk { grid-template-columns: 1fr; }
+            .specs { grid-template-columns: 1fr; }
+            .req-row { grid-template-columns: 1fr; }
+            .eco-grid { grid-template-columns: 1fr; }
+            .hardening { columns: 1; }
+            .nav-links a:not(.nav-gh) { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<nav>
+    <div class="nav-inner">
+        <a href="#" class="logo">🍿 Darkreel</a>
+        <div class="nav-links">
+            <a href="#how">How it works</a>
+            <a href="#quickstart">Quick start</a>
+            <a href="#security">Security</a>
+            <a href="https://github.com/baileywjohnson/darkreel" class="nav-gh">
+                <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                Source
+            </a>
+        </div>
+    </div>
+</nav>
+
+<!-- Hero -->
+<div class="hero">
+    <h1>Encrypted media storage<br><span class="dim">that stays out of your way.</span></h1>
+    <p>Self-hosted video and photo storage with E2E encryption and streaming playback. One binary. Zero knowledge. Open source.</p>
+    <a href="#quickstart" class="hero-cta">Deploy in 5 minutes</a>
+    <div class="hero-sub">or <code>git clone</code> and <code>go build</code></div>
+</div>
+
+<div class="container">
+<hr>
+
+<!-- How it works -->
+<div class="pitch" id="how">
+    <h2>Everything encrypted.<br>Nothing phoned home.</h2>
+    <div class="pitch-points">
+        <div class="pitch-point">
+            <h3><span class="dot dot-purple"></span> Client-side encryption</h3>
+            <p>Your browser encrypts every file with AES-256-GCM before it touches the server. Each file gets its own random key, wrapped with your master key, derived from your password via Argon2id. The server only ever stores ciphertext.</p>
+        </div>
+        <div class="pitch-point">
+            <h3><span class="dot dot-green"></span> Streaming without decrypting server-side</h3>
+            <p>Files are split into 1 MB encrypted chunks. Your browser fetches chunks on demand, decrypts them in a Web Worker, and pipes the plaintext to &lt;video&gt; or &lt;img&gt; via MediaSource Extensions. Seeking works. No full download needed.</p>
+        </div>
+        <div class="pitch-point">
+            <h3><span class="dot dot-amber"></span> Metadata is encrypted too</h3>
+            <p>File names, MIME types, sizes, dimensions, durations — all encrypted into a single blob. The server stores it opaquely. Folder structures are also encrypted. Upload timestamps are coarsened to year + week to minimize leakage.</p>
+        </div>
+        <div class="pitch-point">
+            <h3><span class="dot dot-purple"></span> Chunk padding defeats fingerprinting</h3>
+            <p>Every chunk is padded to exactly 1,048,604 bytes with random fill. An observer sees uniform-size blobs on disk — they can't determine original file sizes even with full disk access.</p>
+        </div>
+        <div class="pitch-point">
+            <h3><span class="dot dot-green"></span> Secure deletion, not just unlinking</h3>
+            <p>Deleted files are overwritten 3 times with random data, fsynced, then unlinked. On spinning disks this provides strong assurance. On SSDs it's best-effort due to wear leveling — an inherent hardware limitation.</p>
+        </div>
+    </div>
+</div>
+
+<hr>
+
+<!-- Zero knowledge -->
+<div class="section" id="privacy">
+    <div class="section-head">
+        <h2>What the server sees</h2>
+        <p>Darkreel is designed so the server is useless to anyone who doesn't have your password.</p>
+    </div>
+
+    <div class="zk">
+        <div class="zk-col">
+            <h3>Server cannot see</h3>
+            <div class="zk-item"><span>File content</span> <span class="zk-encrypted">encrypted</span></div>
+            <div class="zk-item"><span>File name, type</span> <span class="zk-encrypted">encrypted</span></div>
+            <div class="zk-item"><span>File size, dimensions</span> <span class="zk-encrypted">encrypted + padded</span></div>
+            <div class="zk-item"><span>Thumbnails</span> <span class="zk-encrypted">encrypted</span></div>
+            <div class="zk-item"><span>Folder structure</span> <span class="zk-encrypted">encrypted</span></div>
+            <div class="zk-item"><span>Passwords</span> <span class="zk-encrypted">never stored</span></div>
+            <div class="zk-item"><span>Master key</span> <span class="zk-encrypted">never stored</span></div>
+        </div>
+        <div class="zk-col">
+            <h3>Server can see</h3>
+            <div class="zk-item"><span>Number of files</span> <span class="zk-visible">row count</span></div>
+            <div class="zk-item"><span>Approx. storage used</span> <span class="zk-visible">disk usage</span></div>
+            <div class="zk-item"><span>Upload time</span> <span class="zk-visible">year + week only</span></div>
+            <div class="zk-item"><span>Usernames</span> <span class="zk-visible">for auth</span></div>
+        </div>
+    </div>
+
+    <div class="specs">
+        <div class="spec">
+            <div class="spec-label">Password hashing</div>
+            <div class="spec-value">Argon2id<br>3 iter, 64 MB, 4 threads</div>
+        </div>
+        <div class="spec">
+            <div class="spec-label">File encryption</div>
+            <div class="spec-value">AES-256-GCM<br>1 MB chunks, index as AAD</div>
+        </div>
+        <div class="spec">
+            <div class="spec-label">Key wrapping</div>
+            <div class="spec-value">AES-256-GCM<br>random nonce per op</div>
+        </div>
+        <div class="spec">
+            <div class="spec-label">Session key</div>
+            <div class="spec-value">PBKDF2-SHA256<br>600,000 iterations</div>
+        </div>
+        <div class="spec">
+            <div class="spec-label">Chunk storage</div>
+            <div class="spec-value">Fixed 1,048,604 B<br>random-padded</div>
+        </div>
+        <div class="spec">
+            <div class="spec-label">Secure deletion</div>
+            <div class="spec-value">3-pass overwrite<br>fsync, then unlink</div>
+        </div>
+    </div>
+</div>
+
+<hr>
+
+<!-- Quick start -->
+<div class="section" id="quickstart">
+    <div class="section-head">
+        <h2>Get running on a VPS</h2>
+        <p>One script, one binary, automatic HTTPS. No Docker, no Node.js, no external databases.</p>
+    </div>
+
+    <div class="steps">
+        <div class="step">
+            <div class="step-line"><div class="step-num">1</div><div class="step-connector"></div></div>
+            <div class="step-body">
+                <h3>Get a server</h3>
+                <p>Any Linux VPS. A $6/month DigitalOcean droplet or ~$4/month Hetzner VPS is more than enough. Point a domain at its IP.</p>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-line"><div class="step-num">2</div><div class="step-connector"></div></div>
+            <div class="step-body">
+                <h3>Run setup</h3>
+                <p>SSH in and run three commands. The script handles system updates, firewall, fail2ban, SSH hardening, Go, Caddy (automatic TLS), systemd service, and daily database backups.</p>
+                <div class="terminal">
+                    <div class="terminal-bar">
+                        <div class="terminal-dot"></div>
+                        <div class="terminal-dot"></div>
+                        <div class="terminal-dot"></div>
+                        <div class="terminal-title">root@vps ~</div>
+                    </div>
+                    <div class="terminal-body">
+<span class="t-prompt">$</span> <span class="t-cmd">git clone</span> <span class="t-arg">https://github.com/baileywjohnson/darkreel.git</span>
+<span class="t-prompt">$</span> <span class="t-cmd">cd</span> <span class="t-arg">darkreel</span>
+<span class="t-prompt">$</span> <span class="t-cmd">sudo</span> <span class="t-arg">./setup.sh</span>
+<span class="t-output">
+[+] Domain: media.example.com
+[+] DNS check passed: media.example.com -> 137.184.86.254
+[+] System updated
+[+] UFW firewall enabled (SSH, HTTP, HTTPS only)
+[+] fail2ban enabled
+[+] Caddy configured (automatic HTTPS via Let's Encrypt)
+[+] Daily database backup configured (3 AM, 7-day retention)
+
+<span style="color: var(--green); font-weight: 700;">Darkreel is running!</span>
+</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-line"><div class="step-num">3</div><div class="step-connector"></div></div>
+            <div class="step-body">
+                <h3>Save your recovery code</h3>
+                <p>The script displays a 256-bit recovery code. Save it offline. It's the only way to recover your data if you forget your password. No one — including the server admin — can decrypt your files without it.</p>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-line"><div class="step-num">4</div></div>
+            <div class="step-body">
+                <h3>Upload</h3>
+                <p>Open your domain, log in, and start uploading. Photos and videos are encrypted in your browser before they ever reach the server.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="req-row" style="margin-top: 3.5rem;">
+        <div class="req-col">
+            <h3>Minimum</h3>
+            <div class="req-line"><span>CPU</span> <span>1 vCPU</span></div>
+            <div class="req-line"><span>RAM</span> <span>512 MB</span></div>
+            <div class="req-line"><span>Disk</span> <span>10 GB</span></div>
+            <div class="req-line"><span>OS</span> <span>Linux amd64/arm64</span></div>
+        </div>
+        <div class="req-col">
+            <h3>Recommended</h3>
+            <div class="req-line"><span>CPU</span> <span>2+ vCPU</span></div>
+            <div class="req-line"><span>RAM</span> <span>1+ GB</span></div>
+            <div class="req-line"><span>Disk</span> <span>as needed</span></div>
+            <div class="req-line"><span>OS</span> <span>Ubuntu 22.04+</span></div>
+        </div>
+        <div class="req-col">
+            <h3>Estimated cost</h3>
+            <div class="req-line"><span>DigitalOcean</span> <span>$6/mo</span></div>
+            <div class="req-line"><span>Hetzner</span> <span>~$4/mo</span></div>
+            <div class="req-line"><span>Domain</span> <span>~$10/yr</span></div>
+            <div class="req-line"><span>TLS</span> <span>free</span></div>
+        </div>
+    </div>
+</div>
+
+<hr>
+
+<!-- Security -->
+<div class="section" id="security">
+    <div class="section-head">
+        <h2>Hardened by default</h2>
+        <p>The setup script doesn't just install Darkreel — it locks down the entire server.</p>
+    </div>
+
+    <div class="hardening">
+        <div class="h-item"><span class="h-check">+</span> <span><strong>Automatic TLS</strong> — Caddy + Let's Encrypt, zero config</span></div>
+        <div class="h-item"><span class="h-check">+</span> <span><strong>Firewall</strong> — UFW: SSH, 80, 443 only</span></div>
+        <div class="h-item"><span class="h-check">+</span> <span><strong>fail2ban</strong> — auto-bans brute force SSH</span></div>
+        <div class="h-item"><span class="h-check">+</span> <span><strong>Rate limiting</strong> — 5 auth attempts/min per IP</span></div>
+        <div class="h-item"><span class="h-check">+</span> <span><strong>Auto OS updates</strong> — unattended-upgrades</span></div>
+        <div class="h-item"><span class="h-check">+</span> <span><strong>Process sandbox</strong> — NoNewPrivileges, ProtectSystem</span></div>
+        <div class="h-item"><span class="h-check">+</span> <span><strong>SSH hardened</strong> — no root login, key-only auth</span></div>
+        <div class="h-item"><span class="h-check">+</span> <span><strong>Session validation</strong> — logout is immediate</span></div>
+        <div class="h-item"><span class="h-check">+</span> <span><strong>Daily backups</strong> — SQLite snapshots, 7-day retention</span></div>
+        <div class="h-item"><span class="h-check">+</span> <span><strong>Auto-updates</strong> — optional, checksum-verified releases</span></div>
+        <div class="h-item"><span class="h-check">+</span> <span><strong>SRI hashes</strong> — frontend tamper protection</span></div>
+        <div class="h-item"><span class="h-check">+</span> <span><strong>Security headers</strong> — CSP, HSTS, X-Frame-Options</span></div>
+    </div>
+</div>
+
+<hr>
+
+<!-- Other features -->
+<div class="section">
+    <div class="section-head">
+        <h2>Also</h2>
+    </div>
+    <div class="hardening" style="margin-top: 0;">
+        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>Multi-user</strong> — isolated encrypted libraries, admin panel</span></div>
+        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>Encrypted folders</strong> — only you see the structure</span></div>
+        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>Recovery codes</strong> — 256-bit, shown once, your last resort</span></div>
+        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>Single binary</strong> — Go + embedded frontend, no runtime deps</span></div>
+        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>SQLite</strong> — no Postgres, no Redis, no external services</span></div>
+        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>Upload to 50 GB</strong> — chunked, no size surprises</span></div>
+    </div>
+</div>
+
+<hr>
+
+<!-- Ecosystem -->
+<div class="section">
+    <div class="section-head">
+        <h2>Part of a toolkit</h2>
+    </div>
+    <div class="eco-grid">
+        <a href="https://github.com/baileywjohnson/darkreel-cli" class="eco-card">
+            <h3>darkreel-cli</h3>
+            <p>Command-line upload tool. Client-side encryption, batch uploads, thumbnail generation. Use it to script uploads or integrate with other tools.</p>
+        </a>
+        <a href="https://github.com/baileywjohnson/ppvda" class="eco-card">
+            <h3>ppvda</h3>
+            <p>Privacy-focused video downloader. Extracts videos from web pages via headless Chromium, downloads through Mullvad VPN, encrypts and uploads to Darkreel.</p>
+        </a>
+    </div>
+</div>
+
+</div>
+
+<footer>
+    <div class="container">
+        <div class="footer-links">
+            <a href="https://github.com/baileywjohnson/darkreel">GitHub</a>
+            <a href="https://github.com/baileywjohnson/darkreel/issues">Issues</a>
+            <a href="https://github.com/baileywjohnson/darkreel/blob/main/LICENSE">MIT License</a>
+        </div>
+        <div class="footer-copy">Darkreel — open source, end-to-end encrypted media storage.</div>
+    </div>
+</footer>
+
+</body>
+</html>
