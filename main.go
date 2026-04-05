@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/baileywjohnson/darkreel/internal/auth"
@@ -52,9 +53,17 @@ func main() {
 		log.Printf("Admin user %q created", adminUser)
 		fmt.Fprintf(os.Stderr, "\n========================================\n")
 		fmt.Fprintf(os.Stderr, "  RECOVERY CODE — save this now!\n")
-		fmt.Fprintf(os.Stderr, "  It cannot be shown again.\n\n")
 		fmt.Fprintf(os.Stderr, "  %s\n", recoveryCode)
 		fmt.Fprintf(os.Stderr, "========================================\n\n")
+
+		// Write recovery code to a file so it isn't lost if stderr is missed
+		rcPath := filepath.Join(*dataDir, "RECOVERY_CODE")
+		if err := os.WriteFile(rcPath, []byte(recoveryCode+"\n"), 0600); err != nil {
+			log.Printf("Warning: could not write recovery code file: %v", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "  Recovery code also saved to: %s\n", rcPath)
+			fmt.Fprintf(os.Stderr, "  DELETE THIS FILE after saving the code elsewhere.\n\n")
+		}
 	}
 
 	// Clean up orphaned data directories not referenced in DB

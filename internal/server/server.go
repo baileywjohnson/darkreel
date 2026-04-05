@@ -53,6 +53,17 @@ func (s *Server) routes() chi.Router {
 	}
 	registration := &regState{allowed: s.AllowRegistration}
 
+	// Health check (no auth, no rate limit)
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.DB.Ping(); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "database unavailable"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
 	// Public config endpoint
 	persistSession := s.PersistSession
 	r.Get("/api/config", func(w http.ResponseWriter, r *http.Request) {

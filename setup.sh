@@ -189,9 +189,14 @@ systemctl enable --now darkreel
 systemctl restart caddy
 
 info "Waiting for Darkreel to start..."
-sleep 2
+for i in $(seq 1 15); do
+  if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
 
-if systemctl is-active --quiet darkreel; then
+if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
   echo ""
   echo -e "${GREEN}${BOLD}Darkreel is running!${NC}"
   echo ""
@@ -199,12 +204,27 @@ if systemctl is-active --quiet darkreel; then
   echo -e "  ${BOLD}Username:${NC}  ${ADMIN_USER}"
   echo -e "  ${BOLD}Data dir:${NC}  ${DATA_DIR}"
   echo ""
-  echo -e "  ${YELLOW}IMPORTANT:${NC} Check the logs for your recovery code:"
-  echo -e "  ${BOLD}sudo journalctl -u darkreel --no-pager | grep -i recovery${NC}"
-  echo ""
-  echo -e "  Save the recovery code somewhere safe — it's the only way to"
-  echo -e "  regain access if you forget your password."
-  echo ""
+
+  # Show recovery code from the file Darkreel writes on first run
+  RC_FILE="${DATA_DIR}/RECOVERY_CODE"
+  if [ -f "$RC_FILE" ]; then
+    RC=$(cat "$RC_FILE")
+    echo -e "  ${YELLOW}${BOLD}RECOVERY CODE:${NC}"
+    echo -e "  ${BOLD}${RC}${NC}"
+    echo ""
+    echo -e "  ${YELLOW}Save this code somewhere safe — it is the only way to regain${NC}"
+    echo -e "  ${YELLOW}access to your encrypted data if you forget your password.${NC}"
+    echo ""
+    echo -e "  The code is in ${RC_FILE}"
+    echo -e "  ${BOLD}Delete that file after you've saved the code:${NC}"
+    echo -e "  sudo rm ${RC_FILE}"
+    echo ""
+  else
+    echo -e "  ${YELLOW}IMPORTANT:${NC} Check the logs for your recovery code:"
+    echo -e "  ${BOLD}sudo journalctl -u darkreel --no-pager | grep -i recovery${NC}"
+    echo ""
+  fi
+
   echo "  Useful commands:"
   echo "    sudo systemctl status darkreel    # check status"
   echo "    sudo journalctl -fu darkreel      # follow logs"

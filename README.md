@@ -30,8 +30,10 @@ The script installs Go, builds Darkreel, sets up a systemd service, and configur
 When it's done:
 
 1. Open `https://your-domain.com` and log in
-2. Run `sudo journalctl -u darkreel | grep -i recovery` to get your recovery code
-3. **Save the recovery code offline** -- it's the only way to recover your data if you forget your password
+2. The setup script will display your **recovery code** -- save it somewhere safe
+3. Delete the recovery code file: `sudo rm /var/lib/darkreel/RECOVERY_CODE`
+
+The recovery code is the only way to regain access to your encrypted data if you forget your password. No one -- including the server admin -- can recover it without this code.
 
 ## Quick start (manual)
 
@@ -50,7 +52,7 @@ bash build.sh
 DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 ```
 
-The server starts at `http://localhost:8080`. On first run it creates an admin account and prints a recovery code to stderr. Save the recovery code somewhere safe.
+The server starts at `http://localhost:8080`. On first run it creates an admin account, prints a recovery code to stderr, and writes it to `data/RECOVERY_CODE`. Save the recovery code somewhere safe and delete the file.
 
 ### Run with systemd
 
@@ -202,7 +204,7 @@ If you lose both your password and recovery code, your data is permanently inacc
 
 ## API
 
-All endpoints except `/api/config` require a JWT (obtained via login). JWTs contain only user ID, session ID, and admin flag.
+All endpoints except `/health` and `/api/config` require a JWT (obtained via login). JWTs contain only user ID, session ID, and admin flag.
 
 ### Auth
 
@@ -244,6 +246,12 @@ All endpoints except `/api/config` require a JWT (obtained via login). JWTs cont
 | POST | `/api/admin/users` | Create user |
 | DELETE | `/api/admin/users/:id` | Delete user and all their media |
 | POST | `/api/admin/registration` | Toggle registration on/off |
+
+### Other
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check (no auth) -- returns `{"status":"ok"}` |
 
 ## Data directory
 
@@ -291,6 +299,101 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
+```
+
+## Backups
+
+**The database is critical.** Every encrypted file key lives in `darkreel.db`. If you lose the database, every file on disk becomes permanently undecryptable -- even with the correct password.
+
+### What to back up
+
+| What | Path | Why |
+|------|------|-----|
+| Database | `data/darkreel.db` | Contains encrypted file keys, user accounts, metadata |
+| Encrypted media | `data/{userID}/` | The actual encrypted chunks (useless without the DB) |
+
+Both are required for a full restore. The database without the media means you have keys but no files. The media without the database means you have encrypted blobs with no way to decrypt them.
+
+### SQLite backup with cron
+
+SQLite's `.backup` command creates a consistent snapshot even while the server is running (WAL mode handles this safely). Do not simply `cp` the database file while the server is running -- it may be in an inconsistent state.
+
+```bash
+# /etc/cron.d/darkreel-backup
+# Daily backup at 3 AM, keep 7 days
+0 3 * * * root sqlite3 /var/lib/darkreel/darkreel.db ".backup '/var/lib/darkreel/backups/darkreel-$(date +\%Y\%m\%d).db'" && find /var/lib/darkreel/backups -name "darkreel-*.db" -mtime +7 -delete
+```
+
+Set up the backup directory:
+
+```bash
+sudo mkdir -p /var/lib/darkreel/backups
+sudo chown darkreel:darkreel /var/lib/darkreel/backups
+```
+
+### Full backup (database + media)
+
+For a complete backup including all encrypted media:
+
+```bash
+# Stop the server for a fully consistent snapshot
+sudo systemctl stop darkreel
+tar czf darkreel-backup-$(date +%Y%m%d).tar.gz /var/lib/darkreel/
+sudo systemctl start darkreel
+```
+
+Or for zero-downtime, back up the database via SQLite's `.backup` command and rsync the media directory:
+
+```bash
+sqlite3 /var/lib/darkreel/darkreel.db ".backup /tmp/darkreel-backup.db"
+rsync -a /var/lib/darkreel/ /path/to/backup/ --exclude='backups'
+cp /tmp/darkreel-backup.db /path/to/backup/darkreel.db
+rm /tmp/darkreel-backup.db
+```
+
+### Restoring from backup
+
+```bash
+sudo systemctl stop darkreel
+# Replace the data directory with the backup
+sudo cp /path/to/backup/darkreel.db /var/lib/darkreel/darkreel.db
+sudo rsync -a /path/to/backup/ /var/lib/darkreel/ --exclude='backups'
+sudo chown -R darkreel:darkreel /var/lib/darkreel
+sudo systemctl start darkreel
+```
+
+### Off-site backup
+
+The backup files are encrypted at rest (file keys are encrypted in the database, media is encrypted on disk) so they are safe to store on remote services. An attacker with access to a backup cannot decrypt your media without a user's password.
+
+## Upgrading
+
+Database migrations run automatically on startup -- Darkreel uses `CREATE TABLE IF NOT EXISTS` and will add new columns/tables as needed in future versions. No manual migration steps required.
+
+### With the setup script
+
+```bash
+cd /opt/darkreel  # or wherever you cloned it
+git pull
+bash build.sh
+sudo cp darkreel /usr/local/bin/darkreel
+sudo systemctl restart darkreel
+```
+
+### Manual
+
+```bash
+cd /path/to/darkreel
+git pull
+bash build.sh
+sudo systemctl restart darkreel
+```
+
+Check that it's healthy after upgrading:
+
+```bash
+curl -sf http://localhost:8080/health
+# {"status":"ok"}
 ```
 
 ## Related projects
