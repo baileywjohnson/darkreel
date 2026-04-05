@@ -992,21 +992,36 @@ function getFolderPath(folderId) {
 
 function renderBreadcrumb() {
     const path = getFolderPath(currentFolderId);
-    let html = '<span class="breadcrumb-sep">/</span>';
+
+    // Full breadcrumb (desktop)
+    let fullHtml = '<span class="breadcrumb-sep">/</span>';
     if (!currentFolderId && path.length === 0) {
-        html += '<span class="breadcrumb-current">All Media</span>';
+        fullHtml += '<span class="breadcrumb-current">All Media</span>';
     } else {
-        html += '<span class="breadcrumb-item" data-folder-id="">All Media</span>';
+        fullHtml += '<span class="breadcrumb-item" data-folder-id="">All Media</span>';
     }
     for (const folder of path) {
-        html += '<span class="breadcrumb-sep">/</span>';
+        fullHtml += '<span class="breadcrumb-sep">/</span>';
         if (folder.id === currentFolderId) {
-            html += `<span class="breadcrumb-current">${escapeHtml(folder.name)}</span>`;
+            fullHtml += `<span class="breadcrumb-current">${escapeHtml(folder.name)}</span>`;
         } else {
-            html += `<span class="breadcrumb-item" data-folder-id="${folder.id}">${escapeHtml(folder.name)}</span>`;
+            fullHtml += `<span class="breadcrumb-item" data-folder-id="${folder.id}">${escapeHtml(folder.name)}</span>`;
         }
     }
-    breadcrumb.innerHTML = html;
+
+    // Compact breadcrumb (mobile) — / .. / CurrentFolder
+    let compactHtml = '<span class="breadcrumb-sep">/</span>';
+    if (!currentFolderId) {
+        compactHtml += '<span class="breadcrumb-current">All Media</span>';
+    } else {
+        const parentId = path.length >= 2 ? path[path.length - 2].id : '';
+        compactHtml += `<span class="breadcrumb-item" data-folder-id="${parentId}">..</span>`;
+        compactHtml += '<span class="breadcrumb-sep">/</span>';
+        const current = path[path.length - 1];
+        compactHtml += `<span class="breadcrumb-current">${escapeHtml(current.name)}</span>`;
+    }
+
+    breadcrumb.innerHTML = `<span class="breadcrumb-full">${fullHtml}</span><span class="breadcrumb-compact">${compactHtml}</span>`;
     breadcrumb.querySelectorAll('.breadcrumb-item').forEach(el => {
         el.addEventListener('click', () => {
             currentFolderId = el.dataset.folderId || null;
@@ -1131,8 +1146,10 @@ function createFolderElements() {
         menuBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             // Close any existing context menu
+            document.querySelectorAll('.menu-active').forEach(el2 => el2.classList.remove('menu-active'));
             document.querySelectorAll('.folder-context-menu').forEach(m => m.remove());
 
+            el.classList.add('menu-active');
             const menu = document.createElement('div');
             menu.className = 'folder-context-menu';
 
@@ -1226,6 +1243,7 @@ function createFolderElements() {
             const closeMenu = (ev) => {
                 if (!menu.contains(ev.target)) {
                     menu.remove();
+                    el.classList.remove('menu-active');
                     document.removeEventListener('click', closeMenu);
                 }
             };
