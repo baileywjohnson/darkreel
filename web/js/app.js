@@ -2455,36 +2455,11 @@ async function playVideo(item, fileKey) {
         viewerTitle.textContent = item.name || 'Video';
 
         const mime = item.mime_type || 'video/mp4';
-
-        // Try MediaSource for better buffering control, fall back to blob URL
-        if (window.MediaSource && MediaSource.isTypeSupported(mime)) {
-            const ms = new MediaSource();
-            if (_viewerBlobUrl) URL.revokeObjectURL(_viewerBlobUrl);
-            _viewerBlobUrl = URL.createObjectURL(ms);
-            viewerVideo.src = _viewerBlobUrl;
-            viewerVideo._mediaSource = ms;
-
-            await new Promise((resolve, reject) => {
-                ms.addEventListener('sourceopen', async () => {
-                    try {
-                        const sb = ms.addSourceBuffer(mime);
-                        sb.appendBuffer(merged);
-                        await waitForBuffer(sb);
-                        ms.endOfStream();
-                        resolve();
-                    } catch (e) {
-                        reject(e);
-                    }
-                }, { once: true });
-            });
-            viewerVideo.play().catch(() => {});
-        } else {
-            const blob = new Blob([merged], { type: mime });
-            if (_viewerBlobUrl) URL.revokeObjectURL(_viewerBlobUrl);
-            _viewerBlobUrl = URL.createObjectURL(blob);
-            viewerVideo.src = _viewerBlobUrl;
-            viewerVideo.play().catch(() => {});
-        }
+        const blob = new Blob([merged], { type: mime });
+        if (_viewerBlobUrl) URL.revokeObjectURL(_viewerBlobUrl);
+        _viewerBlobUrl = URL.createObjectURL(blob);
+        viewerVideo.src = _viewerBlobUrl;
+        viewerVideo.play().catch(() => {});
     } catch (e) {
         viewerTitle.textContent = 'Playback failed: ' + e.message;
     }
@@ -2627,13 +2602,6 @@ function adjustContainerOffsets(box, delta) {
         }
         pos += size;
     }
-}
-
-function waitForBuffer(sb) {
-    return new Promise(resolve => {
-        if (!sb.updating) { resolve(); return; }
-        sb.addEventListener('updateend', resolve, { once: true });
-    });
 }
 
 function applyRotation(deg) {
