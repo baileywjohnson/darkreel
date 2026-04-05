@@ -1,0 +1,29 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          SSH_KEY: ${{ secrets.VPS_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key deploy@"$VPS_HOST" '
+            export PATH="/usr/local/go/bin:$PATH"
+            cd ~/darkreel &&
+            git pull &&
+            bash build.sh &&
+            sudo cp darkreel /usr/local/bin/darkreel &&
+            sudo systemctl restart darkreel &&
+            sleep 2 &&
+            curl -sf http://127.0.0.1:8080/health || echo "WARNING: health check failed"
+          '
+          rm -f ~/.ssh/deploy_key
