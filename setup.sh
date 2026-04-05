@@ -172,6 +172,8 @@ if ! id -u deploy &>/dev/null; then
 else
   info "Deploy user already exists"
 fi
+chown -R deploy:deploy /home/deploy
+chmod 755 /home/deploy
 
 # --- Install signing public key (for CI/CD binary verification) ---
 mkdir -p /etc/darkreel

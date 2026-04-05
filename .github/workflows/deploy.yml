@@ -50,10 +50,10 @@ jobs:
             set -e
 
             # Verify the signature against the hash using the public key
-            HASH=$(awk "{print \$1}" darkreel.sha256 | tr -d "\n")
-            echo -n "$HASH" | openssl pkeyutl -verify -pubin \
+            awk "{print \$1}" darkreel.sha256 | tr -d "\n" > darkreel.hash
+            openssl pkeyutl -verify -pubin \
               -inkey /etc/darkreel/signing.pub \
-              -rawin -sigfile darkreel.sig
+              -rawin -in darkreel.hash -sigfile darkreel.sig
 
             # Verify the binary matches the hash
             sha256sum -c darkreel.sha256
@@ -65,6 +65,6 @@ jobs:
             sleep 2
             curl -sf http://127.0.0.1:8080/health || echo "WARNING: health check failed"
 
-            rm -f darkreel darkreel.sha256 darkreel.sig
+            rm -f darkreel darkreel.sha256 darkreel.sig darkreel.hash
           '
           rm -f ~/.ssh/deploy_key
