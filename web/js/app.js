@@ -194,20 +194,23 @@ function filterPassword(e) {
     const el = e.target;
     el.value = el.value.replace(/\s/g, '');
 }
+let _lastFocusedInput = null;
 function cursorToEnd(e) {
     const el = e.target;
+    if (_lastFocusedInput === el) return;
+    _lastFocusedInput = el;
     setTimeout(() => el.setSelectionRange(el.value.length, el.value.length), 0);
 }
 document.querySelectorAll('#auth-username, #reg-username, #admin-new-username, #recovery-username').forEach(el => {
     el.addEventListener('input', filterUsername);
     el.addEventListener('focus', cursorToEnd);
-    el.addEventListener('click', cursorToEnd);
+    el.addEventListener('blur', () => { if (_lastFocusedInput === el) _lastFocusedInput = null; });
 });
 document.querySelectorAll('#auth-password, #reg-password, #reg-password-confirm, #recovery-new-password, #recovery-confirm-password, #settings-current-pw, #settings-new-pw, #settings-new-pw-confirm, #admin-new-password, #admin-new-password-confirm, #delete-confirm-pw').forEach(el => {
     if (!el) return;
     el.addEventListener('input', filterPassword);
     el.addEventListener('focus', cursorToEnd);
-    el.addEventListener('click', cursorToEnd);
+    el.addEventListener('blur', () => { if (_lastFocusedInput === el) _lastFocusedInput = null; });
 });
 
 const regUsernameInput = document.getElementById('reg-username');
@@ -766,6 +769,10 @@ function setGalleryDimmed(dimmed) {
     galleryGrid.classList.toggle('filter-dimmed', dimmed);
     galleryEmpty.classList.toggle('filter-dimmed', dimmed);
     document.getElementById('refresh-wrap')?.classList.toggle('filter-dimmed', dimmed);
+}
+
+function setFullDimmed(dimmed) {
+    setGalleryDimmed(dimmed);
     document.getElementById('folder-bar').classList.toggle('filter-dimmed', dimmed);
 }
 
@@ -773,23 +780,24 @@ headerMenuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     filterPopup.classList.add('hidden');
     filterMenuBtn.classList.remove('nav-active');
+    setGalleryDimmed(false);
     headerMenuPopup.classList.toggle('hidden');
     const open = !headerMenuPopup.classList.contains('hidden');
     headerMenuBtn.classList.toggle('nav-active', open);
-    setGalleryDimmed(open);
+    setFullDimmed(open);
 });
 document.addEventListener('click', (e) => {
     if (!headerMenuPopup.classList.contains('hidden') && !headerMenuPopup.contains(e.target) && e.target !== headerMenuBtn) {
         headerMenuPopup.classList.add('hidden');
         headerMenuBtn.classList.remove('nav-active');
-        setGalleryDimmed(false);
+        setFullDimmed(false);
     }
 });
 
 function closeHeaderMenu() {
     headerMenuPopup.classList.add('hidden');
     headerMenuBtn.classList.remove('nav-active');
-    setGalleryDimmed(false);
+    setFullDimmed(false);
 }
 
 async function doLogout() {
@@ -1354,12 +1362,20 @@ document.addEventListener('click', () => {
 
 const filterPopup = document.getElementById('filter-popup');
 const filterMenuBtn = document.getElementById('filter-menu-btn');
+// Move popup to body so it's not clipped by any parent stacking context
+document.body.appendChild(filterPopup);
 
 filterMenuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     closeHeaderMenu();
     filterPopup.classList.toggle('hidden');
     const open = !filterPopup.classList.contains('hidden');
+    if (open) {
+        const rect = filterMenuBtn.getBoundingClientRect();
+        filterPopup.style.top = (rect.bottom + 18) + 'px';
+        filterPopup.style.left = (rect.left + rect.width / 2) + 'px';
+        filterPopup.style.transform = 'translateX(-50%)';
+    }
     setGalleryDimmed(open);
     filterMenuBtn.classList.toggle('nav-active', open);
 });
