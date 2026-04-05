@@ -15,14 +15,6 @@ type MediaItem struct {
 }
 
 func InsertMedia(db *sql.DB, m *MediaItem) error {
-	if m.CreatedAt != "" {
-		_, err := db.Exec(
-			`INSERT INTO media (id, user_id, chunk_count, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			m.ID, m.UserID, m.ChunkCount, m.FileKeyEnc, m.ThumbKeyEnc, m.HashNonce, m.MetadataEnc, m.MetadataNonce, m.CreatedAt,
-		)
-		return err
-	}
 	_, err := db.Exec(
 		`INSERT INTO media (id, user_id, chunk_count, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,

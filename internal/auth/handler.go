@@ -354,7 +354,20 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newPasswordHash := crypto.HashPassword(req.NewPassword, newAuthSalt)
-	if err := db.UpdateUserAuth(h.DB, user.ID, newPasswordHash, newAuthSalt, newKdfSalt, newEncryptedMK); err != nil {
+
+	tx, err := h.DB.Begin()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	if err := db.UpdateUserAuthTx(tx, user.ID, newPasswordHash, newAuthSalt, newKdfSalt, newEncryptedMK); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -493,12 +506,6 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range newKdfKey { newKdfKey[i] = 0 }
 
-	// Update password + encrypted master key in DB
-	if err := db.UpdateUserAuth(h.DB, user.ID, newPasswordHash, newAuthSalt, newKdfSalt, newEncryptedMK); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
 	// Re-encrypt recovery MK with new recovery code
 	newRecoveryCode, err := crypto.GenerateRecoveryCode()
 	if err != nil {
@@ -510,7 +517,27 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	db.UpdateUserRecoveryMK(h.DB, user.ID, newRecoveryMK)
+
+	// Update auth and recovery MK atomically
+	tx, err := h.DB.Begin()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	if err := db.UpdateUserAuthTx(tx, user.ID, newPasswordHash, newAuthSalt, newKdfSalt, newEncryptedMK); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := db.UpdateUserRecoveryMKTx(tx, user.ID, newRecoveryMK); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	// Invalidate all existing sessions for this user
 	Sessions.DeleteAllForUser(user.ID)

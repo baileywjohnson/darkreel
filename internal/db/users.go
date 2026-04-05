@@ -57,8 +57,21 @@ func UpdateUserRecoveryMK(db *sql.DB, userID string, recoveryMK []byte) error {
 	return err
 }
 
+func UpdateUserRecoveryMKTx(tx *sql.Tx, userID string, recoveryMK []byte) error {
+	_, err := tx.Exec(`UPDATE users SET recovery_mk = ? WHERE id = ?`, recoveryMK, userID)
+	return err
+}
+
 func UpdateUserAuth(db *sql.DB, userID, passwordHash string, authSalt, kdfSalt, encryptedMK []byte) error {
 	_, err := db.Exec(
+		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ?, encrypted_mk = ? WHERE id = ?`,
+		passwordHash, authSalt, kdfSalt, encryptedMK, userID,
+	)
+	return err
+}
+
+func UpdateUserAuthTx(tx *sql.Tx, userID, passwordHash string, authSalt, kdfSalt, encryptedMK []byte) error {
+	_, err := tx.Exec(
 		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ?, encrypted_mk = ? WHERE id = ?`,
 		passwordHash, authSalt, kdfSalt, encryptedMK, userID,
 	)

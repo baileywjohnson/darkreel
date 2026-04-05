@@ -35,7 +35,6 @@ func (s *Server) Run() error {
 func (s *Server) routes() chi.Router {
 	r := chi.NewRouter()
 
-	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
 	r.Use(securityHeaders)

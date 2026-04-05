@@ -37,6 +37,11 @@ func Middleware(next http.Handler) http.Handler {
 			return
 		}
 
+		if _, ok := Sessions.Get(claims.SessionID); !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
 		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

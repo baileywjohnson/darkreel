@@ -33,8 +33,7 @@ func ModifyHash(data []byte, mimeType string, nonce []byte) ([]byte, error) {
 	case strings.Contains(lower, "webm") || strings.Contains(lower, "matroska"):
 		return modifyWebM(data, nonce)
 	default:
-		// For unknown types, append a trailing comment-style marker
-		return appendMarker(data, nonce), nil
+		return nil, fmt.Errorf("unsupported format for hash modification: %s", mimeType)
 	}
 }
 
@@ -151,17 +150,70 @@ func modifyMP4(data []byte, nonce []byte) ([]byte, error) {
 	return result, nil
 }
 
-// modifyWebM appends a Void element with the nonce at the end of the header.
+// modifyWebM inserts a Void EBML element after the EBML header.
+// Void element ID: 0xEC, followed by VINT-encoded size and data.
 func modifyWebM(data []byte, nonce []byte) ([]byte, error) {
-	// Simple approach: append nonce as trailing data after a void EBML element
-	// Void element ID: 0xEC, followed by size and data
-	return appendMarker(data, nonce), nil
+	if len(data) < 4 || !(data[0] == 0x1A && data[1] == 0x45 && data[2] == 0xDF && data[3] == 0xA3) {
+		return nil, fmt.Errorf("not a valid WebM/Matroska file")
+	}
+
+	// Build a Void element: ID (0xEC) + VINT size + nonce data
+	// Use two-byte VINT encoding for sizes up to 2^14-2
+	size := len(nonce)
+	var voidElem []byte
+	if size < 127 {
+		voidElem = make([]byte, 2+size)
+		voidElem[0] = 0xEC
+		voidElem[1] = byte(size) | 0x80 // VINT: 1-byte form
+		copy(voidElem[2:], nonce)
+	} else {
+		voidElem = make([]byte, 3+size)
+		voidElem[0] = 0xEC
+		voidElem[1] = 0x40 | byte(size>>8) // VINT: 2-byte form
+		voidElem[2] = byte(size)
+		copy(voidElem[3:], nonce)
+	}
+
+	// Find end of EBML header element to insert Void element after it
+	pos := 4 // skip EBML element ID
+	if pos >= len(data) {
+		return nil, fmt.Errorf("truncated WebM header")
+	}
+	// Read VINT size of EBML header
+	headerSize, vintLen := readEBMLVint(data[pos:])
+	if vintLen == 0 {
+		return nil, fmt.Errorf("invalid EBML header size")
+	}
+	pos += vintLen + int(headerSize)
+
+	result := make([]byte, 0, len(data)+len(voidElem))
+	result = append(result, data[:pos]...)
+	result = append(result, voidElem...)
+	result = append(result, data[pos:]...)
+	return result, nil
 }
 
-func appendMarker(data []byte, nonce []byte) []byte {
-	marker := append([]byte("DARKREEL:"), nonce...)
-	result := make([]byte, len(data)+len(marker))
-	copy(result, data)
-	copy(result[len(data):], marker)
-	return result
+// readEBMLVint reads a variable-length integer used in EBML/WebM.
+// Returns the value and the number of bytes consumed.
+func readEBMLVint(data []byte) (uint64, int) {
+	if len(data) == 0 {
+		return 0, 0
+	}
+	leading := data[0]
+	var width int
+	for i := 0; i < 8; i++ {
+		if leading&(0x80>>uint(i)) != 0 {
+			width = i + 1
+			break
+		}
+	}
+	if width == 0 || width > len(data) {
+		return 0, 0
+	}
+	val := uint64(data[0]) & (0xFF >> uint(width))
+	for i := 1; i < width; i++ {
+		val = val<<8 | uint64(data[i])
+	}
+	return val, width
 }
+
