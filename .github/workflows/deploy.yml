@@ -8,6 +8,29 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build and sign
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: |
+          go build -trimpath -ldflags="-s -w" -o darkreel .
+
+          # Create hash and sign it with Ed25519
+          sha256sum darkreel > darkreel.sha256
+          echo "$SIGNING_KEY" > signing.key
+          openssl pkeyutl -sign -inkey signing.key -rawin -in <(awk '{print $1}' darkreel.sha256 | tr -d '\n') -out darkreel.sig
+          rm -f signing.key
+
+          echo "Binary hash:"
+          cat darkreel.sha256
+
       - name: Deploy to VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -16,15 +39,31 @@ jobs:
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key deploy@"$VPS_HOST" '
-            export PATH="/usr/local/go/bin:$PATH"
-            cd ~/darkreel &&
-            git pull &&
-            bash build.sh &&
-            sudo systemctl stop darkreel &&
-            sudo cp darkreel /usr/local/bin/darkreel &&
-            sudo systemctl start darkreel &&
-            sleep 2 &&
+          SSH_OPTS="-o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key"
+
+          # Copy binary, hash, and signature to VPS
+          scp $SSH_OPTS darkreel darkreel.sha256 darkreel.sig deploy@"$VPS_HOST":~/
+
+          # Verify signature, verify hash, then deploy
+          ssh $SSH_OPTS deploy@"$VPS_HOST" '
+            set -e
+
+            # Verify the signature against the hash using the public key
+            HASH=$(awk "{print \$1}" darkreel.sha256 | tr -d "\n")
+            echo -n "$HASH" | openssl pkeyutl -verify -pubin \
+              -inkey /etc/darkreel/signing.pub \
+              -rawin -sigfile darkreel.sig
+
+            # Verify the binary matches the hash
+            sha256sum -c darkreel.sha256
+
+            # Deploy
+            sudo systemctl stop darkreel
+            sudo cp /home/deploy/darkreel /usr/local/bin/darkreel
+            sudo systemctl start darkreel
+            sleep 2
             curl -sf http://127.0.0.1:8080/health || echo "WARNING: health check failed"
+
+            rm -f darkreel darkreel.sha256 darkreel.sig
           '
           rm -f ~/.ssh/deploy_key

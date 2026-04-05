@@ -17,7 +17,14 @@ End-to-end encrypted video and photo storage with streaming playback. The server
 
 ## Quick start (VPS)
 
-Point a domain's DNS A record at your server, then:
+The setup script is designed for a **fresh Ubuntu/Debian VPS** (e.g., a $6/month DigitalOcean droplet, Hetzner VPS, or similar). It handles everything from system hardening to TLS certificates in a single command.
+
+### Prerequisites
+
+1. A fresh Ubuntu 22.04+ or Debian 12+ VPS with root SSH access
+2. A domain or subdomain with a DNS A record pointing to the server's IP address
+
+### Run the setup
 
 ```bash
 git clone https://github.com/baileywjohnson/darkreel.git
@@ -25,15 +32,39 @@ cd darkreel
 sudo ./setup.sh
 ```
 
-The script installs Go, builds Darkreel, sets up a systemd service, and configures Caddy for automatic HTTPS. You'll be prompted for your domain, admin username, and password. Takes about 2 minutes on a fresh Ubuntu/Debian VPS.
+The script will prompt you for:
 
-When it's done:
+- **Domain name** -- verified against the server's IP before proceeding
+- **Darkreel admin username and password** -- for the web UI
+- **Personal SSH username** -- creates a non-root user for you to SSH in as (optional but recommended)
+
+### What the script does
+
+| Step | What | Why |
+|------|------|-----|
+| System updates | `apt upgrade`, installs `unattended-upgrades` | Patches known vulnerabilities, keeps them patched automatically |
+| Firewall | UFW configured for SSH, HTTP, HTTPS only | Blocks all other inbound traffic |
+| fail2ban | Installed and enabled | Auto-bans IPs after failed SSH attempts |
+| SSH hardening | Creates personal user, disables root login | Limits attack surface if an SSH key is compromised |
+| Deploy user | `deploy` user with limited sudo | For CI/CD -- can only copy the binary and restart the service |
+| Go | Installs Go if not present | Required to build from source |
+| Caddy | Installed and configured | Automatic HTTPS via Let's Encrypt, reverse proxies to Darkreel |
+| Darkreel | Built, installed to `/usr/local/bin/` | The application itself |
+| systemd service | Hardened service (NoNewPrivileges, ProtectSystem, PrivateTmp) | Runs as dedicated `darkreel` user, restricted filesystem access |
+| Database backups | Daily cron job at 3 AM, 7-day retention | SQLite `.backup` for consistent snapshots while the server runs |
+
+### When it's done
 
 1. Open `https://your-domain.com` and log in
 2. The setup script will display your **recovery code** -- save it somewhere safe
 3. Delete the recovery code file: `sudo rm /var/lib/darkreel/RECOVERY_CODE`
+4. SSH in as your personal user going forward: `ssh yourname@your-server-ip`
 
 The recovery code is the only way to regain access to your encrypted data if you forget your password. No one -- including the server admin -- can recover it without this code.
+
+### Running it again
+
+The script is safe to re-run. It will skip steps that are already done (existing users, installed packages, etc.), pull the latest code, rebuild, and restart the service.
 
 ## Quick start (manual)
 
