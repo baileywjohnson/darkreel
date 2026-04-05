@@ -1,4 +1,4 @@
-# Darkreel
+# 🍿 Darkreel
 
 End-to-end encrypted video and photo storage with streaming playback. The server never sees your content -- all encryption and decryption happens in your browser.
 
