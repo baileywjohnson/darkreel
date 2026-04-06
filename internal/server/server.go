@@ -167,12 +167,8 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-		// IMPORTANT: COEP + COOP enable SharedArrayBuffer, which is required by ffmpeg WASM
-		// for client-side video remuxing to fMP4 (streaming playback). Removing these headers
-		// will silently break video streaming — uploads will fall back to non-fragmented chunks
-		// that require full-file download+decrypt before playback.
-		// Note: require-corp blocks all external resources that don't send CORP headers,
-		// so fonts/scripts must be self-hosted (see web/fonts/, web/js/vendor/).
+		// COEP + COOP enable SharedArrayBuffer (not currently needed since mp4box.js
+		// replaced ffmpeg WASM, but kept for future use and defense-in-depth).
 		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:")

@@ -6,95 +6,142 @@ import {
     bufferToBase64, base64ToBuffer, formatSize
 } from './crypto.js';
 
-// ─── FFmpeg WASM (lazy-loaded for video remuxing) ───
+// ─── MP4 → fMP4 remuxing (using mp4box.js, ~144KB, no WASM) ───
 //
-// IMPORTANT: ffmpeg WASM requires SharedArrayBuffer, which requires cross-origin
-// isolation headers (COEP + COOP) set in server.go's securityHeaders().
-// If those headers are removed or changed, SharedArrayBuffer becomes unavailable,
-// ffmpeg silently fails to load, and videos get uploaded without fMP4 remuxing —
-// meaning they'll never stream and always fall back to full-file decrypt.
+// Remuxes regular MP4 to fragmented MP4 for MSE streaming playback.
+// Uses mp4box.js for ISO BMFF parsing and segmentation — no ffmpeg,
+// no SharedArrayBuffer, no WASM, works on all browsers instantly.
 //
-// The loading chain is:
-//   1. classes.js creates a module Worker from ./worker.js (same-origin, type: "module")
-//   2. worker.js tries importScripts(coreURL) — fails in module worker, catches
-//   3. Falls back to import(coreURL) — loads ffmpeg-core.js as ESM
-//   4. ffmpeg-core.js has "export default createFFmpegCore" (required for this path)
-//   5. worker.js initializes the WASM core with SharedArrayBuffer
-//
-// DO NOT:
-//   - Remove COEP/COOP headers from server.go (breaks SharedArrayBuffer)
-//   - Load external resources without crossorigin attrs (blocked by require-corp)
-//   - Use blob URLs for the worker (opaque origin breaks import() of same-origin URLs)
-//   - Switch ffmpeg-core.js to a UMD build without "export default" (breaks ESM import)
-//
-let _ffmpegInstance = null;
-let _ffmpegLoading = null;
+let _mp4boxLoaded = false;
 
-async function loadFFmpeg() {
-    if (_ffmpegInstance) return _ffmpegInstance;
-    if (_ffmpegLoading) return _ffmpegLoading;
-    _ffmpegLoading = (async () => {
-        try {
-            if (typeof SharedArrayBuffer === 'undefined') {
-                console.error('FFmpeg WASM: SharedArrayBuffer not available. Cross-origin isolation headers may be missing.');
-                return null;
-            }
-            const { FFmpeg } = await import('/js/vendor/ffmpeg/index.js');
-            const ff = new FFmpeg();
-            const loadTimeout = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('FFmpeg load timeout (120s)')), 120000)
-            );
-            await Promise.race([
-                ff.load({
-                    coreURL: new URL('/js/vendor/ffmpeg/ffmpeg-core.js', location.origin).href,
-                    wasmURL: new URL('/js/vendor/ffmpeg/ffmpeg-core.wasm', location.origin).href,
-                }),
-                loadTimeout,
-            ]);
-            _ffmpegInstance = ff;
-            return ff;
-        } catch (e) {
-            console.error('FFmpeg WASM failed to load:', e);
-            _ffmpegLoading = null;
-            return null;
-        }
-    })();
-    return _ffmpegLoading;
+async function loadMP4Box() {
+    if (_mp4boxLoaded) return true;
+    if (typeof MP4Box !== 'undefined') { _mp4boxLoaded = true; return true; }
+    try {
+        await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = '/js/vendor/mp4box.min.js';
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.appendChild(script);
+        });
+        _mp4boxLoaded = true;
+        return true;
+    } catch (e) {
+        console.error('Failed to load mp4box.js:', e);
+        return false;
+    }
 }
 
-async function remuxToFMP4(data, filename) {
-    const ff = await loadFFmpeg();
-    if (!ff) return null;
+async function remuxToFMP4(data) {
+    if (!await loadMP4Box()) return null;
     try {
-        const ext = filename.split('.').pop()?.toLowerCase() || 'mp4';
-        const inName = `input.${ext}`;
-        await ff.writeFile(inName, data);
-        const exitCode = await ff.exec([
-            '-y', '-i', inName,
-            '-c', 'copy',
-            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-            '-f', 'mp4',
-            'output.mp4',
-        ]);
-        if (exitCode !== 0) {
-            try { await ff.deleteFile(inName); } catch {}
-            return null;
-        }
-        const result = await ff.readFile('output.mp4');
-        await ff.deleteFile(inName);
-        await ff.deleteFile('output.mp4');
-        return new Uint8Array(result);
+        const result = await new Promise((resolve, reject) => {
+            const mp4box = MP4Box.createFile();
+            const segments = [];
+            let initSegment = null;
+            let codecStrings = [];
+            let pendingTracks = 0;
+
+            mp4box.onReady = (info) => {
+                // Extract codec strings from track info
+                for (const track of info.tracks) {
+                    if (track.codec) codecStrings.push(track.codec);
+                }
+
+                // Set up segmentation: use rapAlignement to split at keyframes
+                for (const track of info.tracks) {
+                    // Target ~2-4 second segments; audio tracks have many more
+                    // samples per second than video, so scale accordingly
+                    const samples = track.type === 'audio' ? 200 : 60;
+                    mp4box.setSegmentOptions(track.id, null, {
+                        rapAlignement: true,
+                        nbSamples: samples,
+                    });
+                    pendingTracks++;
+                }
+                const initSegs = mp4box.initializeSegmentation();
+                // initializeSegmentation returns one init segment covering all tracks
+                if (initSegs.length > 0) {
+                    initSegment = new Uint8Array(initSegs[0].buffer);
+                }
+
+                mp4box.start();
+            };
+
+            mp4box.onSegment = (id, user, buffer, sampleNum, isLast) => {
+                segments.push(new Uint8Array(buffer));
+                if (isLast) {
+                    pendingTracks--;
+                    if (pendingTracks <= 0) {
+                        finalize();
+                    }
+                }
+            };
+
+            function finalize() {
+                if (!initSegment || segments.length === 0) {
+                    reject(new Error('No segments produced'));
+                    return;
+                }
+                // Concatenate all media segments into one buffer, then split into
+                // ~1MB chunks at moof boundaries for balanced seeking granularity
+                const mediaLen = segments.reduce((s, seg) => s + seg.length, 0);
+                const mediaBuf = new Uint8Array(mediaLen);
+                let off = 0;
+                for (const seg of segments) { mediaBuf.set(seg, off); off += seg.length; }
+
+                // Split at moof boundaries, merging small moofs into ~1MB chunks
+                const TARGET_CHUNK = 1024 * 1024; // ~1MB per chunk
+                const moofs = splitFMP4Segments(mediaBuf);
+                // moofs[0] would be init if present, but mediaBuf has no init — all are media segments
+                const chunks = [initSegment];
+                let current = [];
+                let currentSize = 0;
+                for (const moof of moofs) {
+                    current.push(moof);
+                    currentSize += moof.length;
+                    if (currentSize >= TARGET_CHUNK) {
+                        const merged = new Uint8Array(currentSize);
+                        let p = 0;
+                        for (const m of current) { merged.set(m, p); p += m.length; }
+                        chunks.push(merged);
+                        current = [];
+                        currentSize = 0;
+                    }
+                }
+                if (current.length > 0) {
+                    const merged = new Uint8Array(currentSize);
+                    let p = 0;
+                    for (const m of current) { merged.set(m, p); p += m.length; }
+                    chunks.push(merged);
+                }
+
+                resolve({ segments: chunks, codecs: codecStrings.join(',') });
+            }
+
+            mp4box.onError = (e) => reject(e);
+
+            // Feed the data to mp4box
+            const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+            ab.fileStart = 0;
+            mp4box.appendBuffer(ab);
+            mp4box.flush();
+
+            // Safety timeout — if onSegment isLast never fires
+            setTimeout(() => {
+                if (segments.length > 0 && initSegment) {
+                    finalize();
+                } else {
+                    reject(new Error('Remux timeout'));
+                }
+            }, 30000);
+        });
+        return result;
     } catch (e) {
         console.warn('fMP4 remux failed:', e);
         return null;
     }
-}
-
-// Preload FFmpeg after page is idle so it's ready for video uploads
-if (typeof requestIdleCallback !== 'undefined') {
-    requestIdleCallback(() => loadFFmpeg(), { timeout: 10000 });
-} else {
-    setTimeout(() => loadFFmpeg(), 3000);
 }
 
 // ─── State ───
@@ -2533,20 +2580,31 @@ async function handleDropUpload(files, targetFolderId) {
         document.getElementById('refresh-wrap')?.remove();
 
         // Add a placeholder tile to the gallery if we're in the target folder
+        pendingUploads.get(uploadId).el = null;
         if ((targetFolderId || null) === (currentFolderId || null)) {
             const placeholder = document.createElement('div');
             placeholder.className = 'gallery-item';
             placeholder.dataset.pendingUpload = uploadId;
-            placeholder.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span style="font-size:12px;color:var(--text-dim)">' + escapeHtml(file.name) + '</span></div>';
+            placeholder.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span class="upload-tile-status" style="font-size:12px;color:var(--text-dim)">' + escapeHtml(file.name) + '</span></div>';
             galleryGrid.appendChild(placeholder);
         }
         addRefreshButton();
 
         try {
+            // Create a proxy upload item that mirrors status to the visible tile
             const dummyEl = createUploadItem(file.name);
             dummyEl.style.display = 'none';
             document.body.appendChild(dummyEl);
+            // Observe status changes on the hidden element and mirror to visible tile
+            const observer = new MutationObserver(() => {
+                const status = dummyEl.querySelector('.status')?.textContent;
+                if (!status) return;
+                const tile = document.querySelector(`[data-pending-upload="${uploadId}"] .upload-tile-status`);
+                if (tile) tile.textContent = status;
+            });
+            observer.observe(dummyEl, { childList: true, subtree: true, characterData: true });
             await uploadFile(file, dummyEl, targetFolderId);
+            observer.disconnect();
             dummyEl.remove();
             statusSpan.textContent = 'Done';
             statusSpan.className = 'status done';
@@ -2555,10 +2613,11 @@ async function handleDropUpload(files, targetFolderId) {
             statusSpan.textContent = 'Error';
             statusSpan.className = 'status error';
             hasErrors = true;
+        } finally {
+            pendingUploads.delete(uploadId);
+            const ph = document.querySelector(`[data-pending-upload="${uploadId}"]`);
+            if (ph) ph.remove();
         }
-        pendingUploads.delete(uploadId);
-        const ph = document.querySelector(`[data-pending-upload="${uploadId}"]`);
-        if (ph) ph.remove();
     }
 
     if (hasErrors) {
@@ -2839,21 +2898,22 @@ async function playVideoMSE(item, fileKey) {
         return dec;
     }
 
-    async function appendData(data) {
+    async function appendData(data, gen) {
         if (ms.readyState === 'closed') return;
-        // Reopen if endOfStream was called
         if (ms.readyState === 'ended') {
             try { ms.duration = item.duration; } catch { return; }
         }
         await waitForUpdate();
-        if (aborted) return;
+        if (aborted || (gen !== undefined && gen !== fetchGeneration)) return;
         for (let attempt = 0; attempt < 5; attempt++) {
             try {
                 sb.appendBuffer(data);
                 await waitForUpdate();
                 return;
             } catch (e) {
-                if (e.name === 'QuotaExceededError') {
+                if (e.name === 'InvalidStateError') {
+                    return; // SourceBuffer was aborted — bail
+                } else if (e.name === 'QuotaExceededError') {
                     try {
                         if (sb.buffered.length > 0) {
                             const start = sb.buffered.start(0);
@@ -2909,7 +2969,7 @@ async function playVideoMSE(item, fileKey) {
             if (aborted || generation !== fetchGeneration) return;
 
             viewerTitle.textContent = item.name || 'Video';
-            await appendData(dec);
+            await appendData(dec, generation);
             if (aborted || generation !== fetchGeneration) return;
 
             // Throttle: wait if we're far ahead of playback or ManagedMediaSource paused streaming
@@ -2943,10 +3003,27 @@ async function playVideoMSE(item, fileKey) {
     // Handle seeking to unbuffered regions
     let seekTimeout = null;
 
+    // Helper: wait for sb.updating to become false, with a timeout
+    function waitForSB(ms_timeout = 3000) {
+        return new Promise(resolve => {
+            if (!sb.updating) { resolve(true); return; }
+            const timer = setTimeout(() => {
+                sb.removeEventListener('updateend', handler);
+                resolve(false);
+            }, ms_timeout);
+            function handler() { clearTimeout(timer); resolve(true); }
+            sb.addEventListener('updateend', handler, { once: true });
+        });
+    }
+
+    // Seek to unbuffered regions: cancel current stream, reset parser, re-init, stream from target.
+    // NOTE: We intentionally do NOT call sb.remove() — it's an expensive async operation that
+    // can take seconds for large buffers and is the primary cause of seek hangs. Existing buffered
+    // data is preserved (MSE handles non-contiguous ranges), and QuotaExceededError is handled
+    // in appendData by evicting old data as needed.
     viewerVideo.addEventListener('seeking', () => {
         if (aborted) return;
 
-        // Debounce: wait 150ms for the user to stop scrubbing
         if (seekTimeout) clearTimeout(seekTimeout);
         seekTimeout = setTimeout(() => {
             seekTimeout = null;
@@ -2958,22 +3035,33 @@ async function playVideoMSE(item, fileKey) {
             // Cancel current fetch pipeline
             fetchGeneration++;
             const gen = fetchGeneration;
-            // Start 2 chunks before estimate to account for imprecision
             const targetChunk = Math.max(1, timeToChunk(seekTime) - 2);
 
             (async () => {
                 try {
-                    // Reopen MediaSource if ended (setting duration transitions ended→open)
+                    // Reopen MediaSource if ended
                     if (ms.readyState === 'ended') {
                         try { ms.duration = item.duration; } catch {}
                     }
 
-                    // Wait for any pending SourceBuffer operation to finish naturally
-                    await waitForUpdate();
+                    // Abort resets the SourceBuffer parser and cancels any pending append/remove.
+                    // After abort(), sb.updating is synchronously set to false.
+                    try { sb.abort(); } catch {}
+                    // Yield to let any queued updateend events fire
+                    await new Promise(r => setTimeout(r, 0));
                     if (aborted || gen !== fetchGeneration) return;
 
-                    // Stream from near the seek position — no buffer clear needed,
-                    // fMP4 segments have absolute timestamps so MSE places them correctly
+                    // Restore duration (abort may reset MediaSource state)
+                    if (item.duration && isFinite(item.duration)) {
+                        try { ms.duration = item.duration; } catch {}
+                    }
+
+                    // Re-append init segment (required because abort resets the parser)
+                    const initData = await fetchChunk(0);
+                    if (aborted || gen !== fetchGeneration) return;
+                    await appendData(initData, gen);
+                    if (aborted || gen !== fetchGeneration) return;
+
                     await streamFrom(targetChunk, gen);
                 } catch (e) {
                     console.error('Seek error:', e);
@@ -3833,14 +3921,17 @@ async function uploadFile(file, itemEl, targetFolderId) {
     let fragmented = false;
 
     // Remux videos to fMP4 for streaming playback
+    let detectedCodecs = null;
+    let fmp4Segments = null;
     if (mediaType === 'video') {
-        setUploadStatus(itemEl, _ffmpegInstance ? 'Preparing for streaming...' : 'Loading video engine...');
-        const fmp4Data = await remuxToFMP4(fileData, file.name);
-        if (fmp4Data) {
-            fileData = fmp4Data;
+        setUploadStatus(itemEl, 'Preparing for streaming...');
+        const fmp4Result = await remuxToFMP4(fileData);
+        if (fmp4Result) {
+            fmp4Segments = fmp4Result.segments;
+            detectedCodecs = fmp4Result.codecs;
             fragmented = true;
         } else {
-            console.warn('Video will be uploaded without streaming support (ffmpeg remux failed)');
+            console.warn('Video will be uploaded without streaming support (remux failed)');
         }
     }
 
@@ -3867,10 +3958,10 @@ async function uploadFile(file, itemEl, targetFolderId) {
     // Encrypt thumbnail
     const encThumb = await encryptChunk(thumbData, thumbKey, 0);
 
-    // Split into segments: fMP4 at moof boundaries, otherwise fixed chunks
+    // Split into segments: use pre-split fMP4 segments or fixed-size chunks
     let segments;
-    if (fragmented) {
-        segments = splitFMP4Segments(modifiedData);
+    if (fragmented && fmp4Segments) {
+        segments = fmp4Segments;
     } else {
         segments = [];
         for (let start = 0; start < modifiedData.length; start += CHUNK_SIZE) {
@@ -3899,6 +3990,7 @@ async function uploadFile(file, itemEl, targetFolderId) {
         chunk_count: chunkCount,
     };
     if (fragmented) metaPlain.fragmented = true;
+    if (detectedCodecs) metaPlain.codecs = detectedCodecs;
     if (targetFolderId) metaPlain.folderId = targetFolderId;
 
     // Get video dimensions/duration
