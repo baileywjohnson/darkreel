@@ -255,6 +255,12 @@ async function remuxToFMP4(data) {
     }
 }
 
+function escapeHTML(str) {
+    const el = document.createElement('span');
+    el.textContent = str;
+    return el.innerHTML;
+}
+
 // ─── State ───
 let token = null;
 let userId = null;
@@ -1697,23 +1703,32 @@ function createFolderElements() {
                 }
 
                 showDeleteFolderConfirm(msg, async () => {
-                    // Delete all media in the folder and sub-folders
-                    for (const item of affectedMedia) {
-                        try {
-                            await api(`/api/media/${item.id}`, { method: 'DELETE' });
-                        } catch {}
-                    }
-                    mediaItems = mediaItems.filter(m => !allFolderIds.has(m.folderId));
-
-                    // Remove folder and all descendants
-                    folders = folders.filter(x => !allFolderIds.has(x.id));
-                    await saveFolderTree();
-
-                    // If we were inside the deleted folder, go to parent
+                    // Optimistic: remove folder + descendants from UI immediately
                     if (allFolderIds.has(currentFolderId)) {
                         currentFolderId = f.parentId;
                     }
+                    const removedFolders = folders.filter(x => allFolderIds.has(x.id));
+                    const removedMedia = [...affectedMedia];
+                    folders = folders.filter(x => !allFolderIds.has(x.id));
+                    mediaItems = mediaItems.filter(m => !allFolderIds.has(m.folderId));
+                    for (const m of removedMedia) pendingDeletes.add(m.id);
                     renderGalleryItems();
+
+                    // Delete in background
+                    try {
+                        for (const item of removedMedia) {
+                            try { await api(`/api/media/${item.id}`, { method: 'DELETE' }); } catch {}
+                            pendingDeletes.delete(item.id);
+                        }
+                        await saveFolderTree();
+                    } catch (e) {
+                        // Restore on failure
+                        folders.push(...removedFolders);
+                        mediaItems.push(...removedMedia);
+                        for (const m of removedMedia) pendingDeletes.delete(m.id);
+                        renderGalleryItems();
+                        showConfirmModal('Error', 'Delete failed: ' + e.message, () => {}, { buttonLabel: 'OK', buttonClass: 'btn-primary' });
+                    }
                 });
             });
 
@@ -2120,13 +2135,26 @@ async function createGalleryItem(item) {
 
     const nameEl = document.createElement('span');
     nameEl.className = 'item-name';
-
-    // Name is already decrypted from metadata blob
     nameEl.textContent = item.name || 'Encrypted';
 
     div.appendChild(img);
     div.appendChild(badge);
     div.appendChild(menuBtn);
+
+    // Duration badge for videos
+    if (item.media_type === 'video' && item.duration && isFinite(item.duration)) {
+        const durBadge = document.createElement('span');
+        durBadge.className = 'duration-badge';
+        const s = Math.round(item.duration);
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        durBadge.textContent = h > 0
+            ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+            : `${m}:${String(sec).padStart(2, '0')}`;
+        div.appendChild(durBadge);
+    }
+
     div.appendChild(nameEl);
     div.addEventListener('click', (e) => {
         if (e.target.closest('.item-menu-btn') || e.target.closest('.folder-context-menu')) return;
@@ -3207,7 +3235,7 @@ async function playVideoMSE(item, fileKey) {
         if (aborted) return;
 
         // Start: fetch init segment, then stream from chunk 1
-        viewerTitle.textContent = `Buffering...`;
+        viewerTitle.innerHTML = `${escapeHTML(item.name || 'Video')} <span class="viewer-spinner"></span>`;
         await ensureInit();
         if (aborted) return;
 
@@ -3220,7 +3248,7 @@ async function playVideoMSE(item, fileKey) {
 }
 
 async function playVideoBlob(item, fileKey, mime) {
-    viewerTitle.textContent = `Decrypting... 0/${item.chunk_count}`;
+    viewerTitle.innerHTML = `${escapeHTML(item.name || 'Video')} <span class="viewer-spinner"></span>`;
 
     let aborted = false;
     viewerVideo._abortStreaming = () => { aborted = true; };
@@ -3242,7 +3270,6 @@ async function playVideoBlob(item, fileKey, mime) {
                 const encData = new Uint8Array(await res.arrayBuffer());
                 decrypted[idx] = await workerDecrypt('decryptChunk', encData, fileKey, idx);
                 done++;
-                viewerTitle.textContent = `Decrypting... ${done}/${item.chunk_count}`;
             }
         }
 
