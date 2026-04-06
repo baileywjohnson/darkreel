@@ -6,6 +6,72 @@ import {
     bufferToBase64, base64ToBuffer, formatSize
 } from './crypto.js';
 
+// ─── FFmpeg WASM (lazy-loaded for video remuxing) ───
+let _ffmpegInstance = null;
+let _ffmpegLoading = null;
+
+async function loadFFmpeg() {
+    if (_ffmpegInstance) return _ffmpegInstance;
+    if (_ffmpegLoading) return _ffmpegLoading;
+    _ffmpegLoading = (async () => {
+        try {
+            const { FFmpeg } = await import('/js/vendor/ffmpeg/index.js');
+            const ff = new FFmpeg();
+            const workerBlob = new Blob(
+                [await (await fetch('/js/vendor/ffmpeg/worker.js')).text()],
+                { type: 'text/javascript' }
+            );
+            await ff.load({
+                coreURL: new URL('/js/vendor/ffmpeg/ffmpeg-core.js', location.origin).href,
+                wasmURL: new URL('/js/vendor/ffmpeg/ffmpeg-core.wasm', location.origin).href,
+                workerURL: URL.createObjectURL(workerBlob),
+            });
+            _ffmpegInstance = ff;
+            return ff;
+        } catch (e) {
+            console.warn('FFmpeg WASM failed to load:', e);
+            _ffmpegLoading = null;
+            return null;
+        }
+    })();
+    return _ffmpegLoading;
+}
+
+async function remuxToFMP4(data, filename) {
+    const ff = await loadFFmpeg();
+    if (!ff) return null;
+    try {
+        const ext = filename.split('.').pop()?.toLowerCase() || 'mp4';
+        const inName = `input.${ext}`;
+        await ff.writeFile(inName, data);
+        const exitCode = await ff.exec([
+            '-y', '-i', inName,
+            '-c', 'copy',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-f', 'mp4',
+            'output.mp4',
+        ]);
+        if (exitCode !== 0) {
+            try { await ff.deleteFile(inName); } catch {}
+            return null;
+        }
+        const result = await ff.readFile('output.mp4');
+        await ff.deleteFile(inName);
+        await ff.deleteFile('output.mp4');
+        return new Uint8Array(result);
+    } catch (e) {
+        console.warn('fMP4 remux failed:', e);
+        return null;
+    }
+}
+
+// Preload FFmpeg after page is idle so it's ready for video uploads
+if (typeof requestIdleCallback !== 'undefined') {
+    requestIdleCallback(() => loadFFmpeg(), { timeout: 10000 });
+} else {
+    setTimeout(() => loadFFmpeg(), 3000);
+}
+
 // ─── State ───
 let token = null;
 let userId = null;
@@ -1948,6 +2014,10 @@ function navigateViewer(dir) {
     if (newIndex < 0 || newIndex >= viewerList.length) return;
     viewerIndex = newIndex;
     // Clean up current playback before switching
+    if (viewerVideo._abortStreaming) {
+        viewerVideo._abortStreaming();
+        viewerVideo._abortStreaming = null;
+    }
     viewerVideo.pause();
     viewerVideo.removeAttribute('src');
     viewerVideo.load();
@@ -2397,6 +2467,10 @@ function closeViewer() {
         URL.revokeObjectURL(_viewerBlobUrl);
         _viewerBlobUrl = null;
     }
+    if (viewerVideo._abortStreaming) {
+        viewerVideo._abortStreaming();
+        viewerVideo._abortStreaming = null;
+    }
     if (viewerVideo._mediaSource) {
         try { viewerVideo._mediaSource.endOfStream(); } catch {}
         viewerVideo._mediaSource = null;
@@ -2432,36 +2506,163 @@ async function showImage(item, fileKey) {
 
 async function playVideo(item, fileKey) {
     viewerVideo.classList.remove('hidden');
-    viewerTitle.textContent = `Decrypting... 0/${item.chunk_count} chunks`;
+    const mime = item.mime_type || 'video/mp4';
+
+    if (item.fragmented) {
+        await playVideoMSE(item, fileKey);
+    } else {
+        await playVideoBlob(item, fileKey, mime);
+    }
+}
+
+async function playVideoMSE(item, fileKey) {
+    const codecString = item.codecs || 'avc1.64001f,mp4a.40.2';
+    const mseType = `video/mp4; codecs="${codecString}"`;
+
+    if (!MediaSource.isTypeSupported(mseType)) {
+        return playVideoBlob(item, fileKey, item.mime_type || 'video/mp4');
+    }
+
+    const ms = new MediaSource();
+    viewerVideo._mediaSource = ms;
+    viewerVideo.src = URL.createObjectURL(ms);
+
+    const sb = await new Promise((resolve, reject) => {
+        ms.addEventListener('sourceopen', () => {
+            try { resolve(ms.addSourceBuffer(mseType)); }
+            catch (e) { reject(e); }
+        }, { once: true });
+    }).catch(() => null);
+
+    if (!sb) {
+        viewerVideo._mediaSource = null;
+        return playVideoBlob(item, fileKey, item.mime_type || 'video/mp4');
+    }
+
+    const PARALLEL = Math.min(4, item.chunk_count);
+    let nextFetch = 0;
+    let nextAppend = 0;
+    let started = false;
+    let chunksDecrypted = 0;
+    const decrypted = new Array(item.chunk_count);
+    let aborted = false;
+
+    viewerTitle.textContent = `Buffering... 0/${item.chunk_count}`;
+    viewerVideo._abortStreaming = () => { aborted = true; };
+
+    function appendNext() {
+        if (aborted || sb.updating || nextAppend >= item.chunk_count) return;
+        if (!decrypted[nextAppend]) return;
+
+        const chunk = decrypted[nextAppend];
+        decrypted[nextAppend] = null;
+        nextAppend++;
+
+        try {
+            sb.appendBuffer(chunk);
+        } catch (e) {
+            if (e.name === 'QuotaExceededError' && viewerVideo.currentTime > 1) {
+                try { sb.remove(0, viewerVideo.currentTime - 0.5); } catch {}
+            }
+        }
+    }
+
+    sb.addEventListener('updateend', () => {
+        if (aborted) return;
+        if (!started && nextAppend >= 1) {
+            started = true;
+            viewerTitle.textContent = item.name || 'Video';
+            viewerVideo.play().catch(() => {});
+        }
+        if (nextAppend >= item.chunk_count && chunksDecrypted >= item.chunk_count) {
+            try { if (ms.readyState === 'open') ms.endOfStream(); } catch {}
+            return;
+        }
+        appendNext();
+    });
+
+    async function fetchAndDecrypt(index) {
+        if (aborted) return;
+        const res = await fetch(`/api/media/${item.id}/chunk/${index}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
+        const encData = new Uint8Array(await res.arrayBuffer());
+        const dec = await workerDecrypt('decryptChunk', encData, fileKey, index);
+        if (aborted) return;
+        decrypted[index] = dec;
+        chunksDecrypted++;
+        viewerTitle.textContent = started ? (item.name || 'Video') : `Buffering... ${chunksDecrypted}/${item.chunk_count}`;
+        appendNext();
+    }
 
     try {
-        const chunks = [];
-        for (let i = 0; i < item.chunk_count; i++) {
-            viewerTitle.textContent = `Decrypting... ${i + 1}/${item.chunk_count} chunks`;
-            const res = await fetch(`/api/media/${item.id}/chunk/${i}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error(`Chunk ${i} fetch failed: ${res.status}`);
-            const encData = new Uint8Array(await res.arrayBuffer());
-            const dec = await workerDecrypt('decryptChunk', encData, fileKey, i);
-            chunks.push(dec);
+        const workers = [];
+        for (let w = 0; w < PARALLEL; w++) {
+            workers.push((async () => {
+                while (!aborted) {
+                    const idx = nextFetch++;
+                    if (idx >= item.chunk_count) break;
+                    await fetchAndDecrypt(idx);
+                }
+            })());
         }
-        verifyChunkCount(item, chunks.length);
-        const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+        await Promise.all(workers);
+        if (!aborted) verifyChunkCount(item, chunksDecrypted);
+    } catch (e) {
+        if (!aborted) viewerTitle.textContent = 'Playback failed: ' + e.message;
+    }
+}
+
+async function playVideoBlob(item, fileKey, mime) {
+    viewerTitle.textContent = `Decrypting... 0/${item.chunk_count}`;
+
+    let aborted = false;
+    viewerVideo._abortStreaming = () => { aborted = true; };
+
+    try {
+        const PARALLEL = Math.min(4, item.chunk_count);
+        const decrypted = new Array(item.chunk_count);
+        let nextFetch = 0;
+        let done = 0;
+
+        async function fetchWorker() {
+            while (!aborted) {
+                const idx = nextFetch++;
+                if (idx >= item.chunk_count) break;
+                const res = await fetch(`/api/media/${item.id}/chunk/${idx}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!res.ok) throw new Error(`Chunk ${idx} fetch failed: ${res.status}`);
+                const encData = new Uint8Array(await res.arrayBuffer());
+                decrypted[idx] = await workerDecrypt('decryptChunk', encData, fileKey, idx);
+                done++;
+                viewerTitle.textContent = `Decrypting... ${done}/${item.chunk_count}`;
+            }
+        }
+
+        const workers = [];
+        for (let w = 0; w < PARALLEL; w++) workers.push(fetchWorker());
+        await Promise.all(workers);
+
+        if (aborted) return;
+
+        verifyChunkCount(item, done);
+        const totalLen = decrypted.reduce((s, c) => s + c.length, 0);
         const merged = new Uint8Array(totalLen);
         let offset = 0;
-        for (const c of chunks) { merged.set(c, offset); offset += c.length; }
+        for (const c of decrypted) { merged.set(c, offset); offset += c.length; }
 
         viewerTitle.textContent = item.name || 'Video';
 
-        const mime = item.mime_type || 'video/mp4';
-        const blob = new Blob([merged], { type: mime });
+        const finalData = (mime === 'video/mp4') ? fastStartMP4(merged) : merged;
+        const blob = new Blob([finalData], { type: mime });
         if (_viewerBlobUrl) URL.revokeObjectURL(_viewerBlobUrl);
         _viewerBlobUrl = URL.createObjectURL(blob);
         viewerVideo.src = _viewerBlobUrl;
         viewerVideo.play().catch(() => {});
     } catch (e) {
-        viewerTitle.textContent = 'Playback failed: ' + e.message;
+        if (!aborted) viewerTitle.textContent = 'Playback failed: ' + e.message;
     }
 }
 
@@ -3209,7 +3410,20 @@ async function uploadFile(file, itemEl, targetFolderId) {
     const uploadName = uniqueFileName(file.name, targetFolderId);
 
     setUploadStatus(itemEl, 'Reading...');
-    const fileData = new Uint8Array(await file.arrayBuffer());
+    let fileData = new Uint8Array(await file.arrayBuffer());
+
+    const mediaType = file.type.startsWith('video/') ? 'video' : 'image';
+    let fragmented = false;
+
+    // Remux videos to fMP4 for streaming playback
+    if (mediaType === 'video') {
+        setUploadStatus(itemEl, 'Preparing for streaming...');
+        const fmp4Data = await remuxToFMP4(fileData, file.name);
+        if (fmp4Data) {
+            fileData = fmp4Data;
+            fragmented = true;
+        }
+    }
 
     setUploadStatus(itemEl, 'Generating thumbnail...');
     let thumbData;
@@ -3226,7 +3440,6 @@ async function uploadFile(file, itemEl, targetFolderId) {
     const hashNonce = generateHashNonce();
 
     // Hash modification (skip for videos to preserve container integrity)
-    const mediaType = file.type.startsWith('video/') ? 'video' : 'image';
     const modifiedData = mediaType === 'video' ? fileData : modifyHash(fileData, file.type, hashNonce);
 
     // Encrypt thumbnail
@@ -3251,10 +3464,11 @@ async function uploadFile(file, itemEl, targetFolderId) {
     const metaPlain = {
         name: uploadName,
         media_type: mediaType,
-        mime_type: file.type || 'application/octet-stream',
+        mime_type: fragmented ? 'video/mp4' : (file.type || 'application/octet-stream'),
         size: file.size,
         chunk_count: chunkCount,
     };
+    if (fragmented) metaPlain.fragmented = true;
     if (targetFolderId) metaPlain.folderId = targetFolderId;
 
     // Get video dimensions/duration
