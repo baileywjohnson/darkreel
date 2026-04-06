@@ -549,8 +549,17 @@ header {
 .viewer-title-group { display: flex; align-items: center; gap: 6px; }
 .viewer-header span { font-size: 14px; color: var(--text-dim); }
 .btn-icon { background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 4px; border-radius: 4px; display: inline-flex; align-items: center; }
-.btn-icon:hover { color: var(--text); background: var(--surface-hover); }
-.viewer-actions { display: flex; gap: 8px; }
+.btn-icon:hover { color: var(--text); background: rgba(255,255,255,0.08); }
+.viewer-actions-desktop { display: flex; gap: 8px; }
+.viewer-actions-desktop .btn-danger { margin-right: 30px; }
+.viewer-right { display: flex; align-items: center; gap: 8px; }
+.viewer-more-wrap { position: relative; }
+.viewer-more-btn { display: none; }
+.viewer-more-menu { position: absolute; top: 100%; right: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 0; min-width: 140px; z-index: 10; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+.viewer-more-menu button { display: block; width: 100%; text-align: left; padding: 8px 16px; background: none; border: none; color: var(--text); font-size: 14px; cursor: pointer; }
+.viewer-more-menu button:hover { background: rgba(255,255,255,0.08); }
+.viewer-more-menu button.danger { color: var(--danger); }
+.viewer-more-menu button.danger:hover { background: rgba(239,68,68,0.1); }
 .viewer-content {
     position: relative;
     flex: 1;
@@ -674,4 +683,6 @@ header {
     .gallery-item .item-menu-btn { opacity: 1; }
     .breadcrumb-full { display: none !important; }
     .breadcrumb-compact { display: contents !important; }
+    .viewer-actions-desktop { display: none !important; }
+    .viewer-more-btn { display: inline-flex !important; }
 }

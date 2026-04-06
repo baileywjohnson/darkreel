@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-/8Dg3T1CmblfnuuXfGOW8HyALWTruwvNcmCOlt5m4pB2fjnVAvunGJC0YYlLBPSP" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-jOOgcQW+Ety3kvCPiH3kYn3qaKkwiu88m2S7n+mt1N6ycjSDI4dk/iYAp8iVsPt5" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -260,12 +260,31 @@
                             </svg>
                         </button>
                     </div>
-                    <div class="viewer-actions">
+                    <div class="viewer-actions-desktop">
                         <button id="viewer-move" class="btn btn-ghost">Move</button>
                         <button id="viewer-rotate" class="btn btn-ghost">Rotate</button>
                         <button id="viewer-download" class="btn btn-ghost">Download</button>
                         <button id="viewer-delete" class="btn btn-danger">Delete</button>
-                        <button id="viewer-close" class="btn btn-ghost">Close</button>
+                    </div>
+                    <div class="viewer-right">
+                        <div class="viewer-more-wrap">
+                            <button id="viewer-more" class="btn btn-icon viewer-more-btn" aria-label="More" title="More">
+                                <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+                                    <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
+                                </svg>
+                            </button>
+                            <div id="viewer-more-menu" class="viewer-more-menu hidden">
+                                <button data-action="move">Move</button>
+                                <button data-action="rotate">Rotate</button>
+                                <button data-action="download">Download</button>
+                                <button data-action="delete" class="danger">Delete</button>
+                            </div>
+                        </div>
+                        <button id="viewer-close" class="btn btn-icon" aria-label="Close" title="Close">
+                            <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                                <path d="M4 4l8 8M12 4l-8 8"/>
+                            </svg>
+                        </button>
                     </div>
                 </div>
                 <div class="viewer-content">
@@ -297,6 +316,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-ERnWjpfZFdw1O+QB5F1c99U6Xfl3L89RRZyWs3WPLF8ZqLP/U8UTYfUADFTBgMjc" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-lZ11ZBQxeoa4nZ4jsuxvYq3xTojuO3VvGSDuB2jKPFAdFUecDCDn1bQCSelpnek4" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-EAAi7lsIDLq2NOoi7JxJY4rRA4IOoDT8vUCbG9qOdT9jjfJqVfVmbCX+BX+p4dd3" crossorigin="anonymous"></script>
 </body>
 </html>

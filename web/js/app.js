@@ -2007,6 +2007,25 @@ document.getElementById('viewer-rename').addEventListener('click', () => {
 viewerPrev.addEventListener('click', (e) => { e.stopPropagation(); navigateViewer(-1); });
 viewerNext.addEventListener('click', (e) => { e.stopPropagation(); navigateViewer(1); });
 
+// Mobile three-dots menu
+const viewerMoreBtn = document.getElementById('viewer-more');
+const viewerMoreMenu = document.getElementById('viewer-more-menu');
+viewerMoreBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    viewerMoreMenu.classList.toggle('hidden');
+});
+viewerMoreMenu.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    viewerMoreMenu.classList.add('hidden');
+    const action = btn.dataset.action;
+    if (action === 'move') moveCurrentItem();
+    else if (action === 'rotate') rotateCurrentItem();
+    else if (action === 'download') downloadCurrentItem();
+    else if (action === 'delete') deleteCurrentItem();
+});
+document.addEventListener('click', () => viewerMoreMenu.classList.add('hidden'));
+
 // Keyboard navigation
 document.addEventListener('keydown', (e) => {
     if (viewer.classList.contains('hidden')) return;
