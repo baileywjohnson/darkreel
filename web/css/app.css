@@ -546,7 +546,10 @@ header {
     padding: 12px 24px;
     border-bottom: 1px solid var(--border);
 }
+.viewer-title-group { display: flex; align-items: center; gap: 6px; }
 .viewer-header span { font-size: 14px; color: var(--text-dim); }
+.btn-icon { background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 4px; border-radius: 4px; display: inline-flex; align-items: center; }
+.btn-icon:hover { color: var(--text); background: var(--surface-hover); }
 .viewer-actions { display: flex; gap: 8px; }
 .viewer-content {
     position: relative;

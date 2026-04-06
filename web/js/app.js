@@ -2000,6 +2000,10 @@ document.getElementById('viewer-delete').addEventListener('click', deleteCurrent
 document.getElementById('viewer-download').addEventListener('click', downloadCurrentItem);
 document.getElementById('viewer-move').addEventListener('click', moveCurrentItem);
 document.getElementById('viewer-rotate').addEventListener('click', rotateCurrentItem);
+document.getElementById('viewer-rename').addEventListener('click', () => {
+    if (!currentViewerItem) return;
+    renameItem(currentViewerItem);
+});
 viewerPrev.addEventListener('click', (e) => { e.stopPropagation(); navigateViewer(-1); });
 viewerNext.addEventListener('click', (e) => { e.stopPropagation(); navigateViewer(1); });
 
@@ -3540,6 +3544,7 @@ function renameItem(item) {
         item.name = newName;
         updateItemMetadata(item);
         renderGalleryItems();
+        if (currentViewerItem === item) viewerTitle.textContent = newName;
         return null;
     });
 }

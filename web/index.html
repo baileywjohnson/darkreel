@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-4KTRgxtM11XhHMDaWVP0fu+3YgeRqIEaVciU1u31uEtxeimtD+cfw+0grT7ylE6k" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-5Erw0Fd1mjBzAGYhwn6DRXV8cpET5ssPzt380zes4nOREybHe9tzu7IjOSEDnIP0" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -252,7 +252,14 @@
             <!-- Viewer overlay -->
             <div id="viewer" class="viewer hidden">
                 <div class="viewer-header">
-                    <span id="viewer-title"></span>
+                    <div class="viewer-title-group">
+                        <span id="viewer-title"></span>
+                        <button id="viewer-rename" class="btn btn-icon" aria-label="Rename" title="Rename">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z"/>
+                            </svg>
+                        </button>
+                    </div>
                     <div class="viewer-actions">
                         <button id="viewer-move" class="btn btn-ghost">Move</button>
                         <button id="viewer-rotate" class="btn btn-ghost">Rotate</button>
@@ -290,6 +297,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-ERnWjpfZFdw1O+QB5F1c99U6Xfl3L89RRZyWs3WPLF8ZqLP/U8UTYfUADFTBgMjc" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-hin96Nx8njBlQHGBaGdAEV5zybnA3DQkgZ9LsPq3CD6smY1C5Bojo10dg/Wh8gxn" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-lZ11ZBQxeoa4nZ4jsuxvYq3xTojuO3VvGSDuB2jKPFAdFUecDCDn1bQCSelpnek4" crossorigin="anonymous"></script>
 </body>
 </html>
