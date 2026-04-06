@@ -54,10 +54,13 @@ header {
     padding: 12px 24px;
     border-bottom: 1px solid var(--border);
     background: var(--bg-card);
-    position: sticky;
+    position: fixed;
     top: 0;
+    left: 0;
+    right: 0;
     z-index: 100;
 }
+#app > main { padding-top: 56px; }
 .logo { font-size: 20px; font-weight: 700; color: var(--accent); cursor: pointer; }
 .nav-active { color: var(--text); background: var(--bg-hover); }
 .header-right { display: flex; gap: 8px; align-items: center; }
