@@ -132,12 +132,12 @@ header {
     width: 100%;
     z-index: 100;
 }
-main { padding-top: 0; }
+main { padding-top: 0; position: relative; z-index: 1; }
 .logo { font-size: 20px; font-weight: 700; color: var(--accent); cursor: pointer; display: flex; align-items: center; gap: 6px; }
 .logo-icon { flex-shrink: 0; }
 .nav-active { color: var(--text); background: var(--bg-hover); }
 .header-right { display: flex; gap: 8px; align-items: center; }
-.header-mobile-only { display: none; }
+.header-mobile-only { display: none !important; }
 .header-menu-wrap button#header-menu-btn { width: 36px; height: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .header-menu-wrap { position: relative; }
 .header-menu-popup {
