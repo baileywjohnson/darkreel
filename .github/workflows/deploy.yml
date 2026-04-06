@@ -22,6 +22,9 @@ jobs:
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
         run: |
+          # Update SRI hashes before building so the embedded index.html matches the JS/CSS
+          bash build.sh
+          # Rebuild with release flags (build.sh uses default flags)
           go build -trimpath -ldflags="-s -w" -o darkreel .
 
           # Create hash and sign it with Ed25519
