@@ -2560,7 +2560,7 @@ async function playVideoMSE(item, fileKey) {
     const codecString = item.codecs || 'avc1.64001f,mp4a.40.2';
     const mseType = `video/mp4; codecs="${codecString}"`;
 
-    if (!MediaSource.isTypeSupported(mseType)) {
+    if (typeof MediaSource === 'undefined' || !MediaSource.isTypeSupported(mseType)) {
         return playVideoBlob(item, fileKey, item.mime_type || 'video/mp4');
     }
 
@@ -2580,126 +2580,114 @@ async function playVideoMSE(item, fileKey) {
         return playVideoBlob(item, fileKey, item.mime_type || 'video/mp4');
     }
 
-    const PARALLEL = Math.min(4, item.chunk_count);
-    let nextFetch = 0;
-    let nextAppend = 0;
-    let started = false;
-    let chunksDecrypted = 0;
-    let allFetched = false;
-    const decrypted = new Array(item.chunk_count);
     let aborted = false;
-    let remainder = new Uint8Array(0); // leftover bytes from incomplete boxes
-    let appendPending = false;
-
+    let started = false;
+    let remainder = new Uint8Array(0);
     viewerTitle.textContent = `Buffering... 0/${item.chunk_count}`;
     viewerVideo._abortStreaming = () => { aborted = true; };
 
-    // Queue of Uint8Arrays ready to append (each is one or more complete MP4 boxes)
-    const appendQueue = [];
-
-    function feedBuffer() {
-        // Merge one contiguous chunk into remainder, extract complete boxes, queue them
-        if (nextAppend < item.chunk_count && decrypted[nextAppend]) {
-            const chunk = decrypted[nextAppend];
-            decrypted[nextAppend] = null;
-            nextAppend++;
-
-            const merged = new Uint8Array(remainder.length + chunk.length);
-            merged.set(remainder);
-            merged.set(chunk, remainder.length);
-
-            const isLast = allFetched && nextAppend >= item.chunk_count;
-            if (isLast) {
-                // Last data — append everything, no need to parse boxes
-                appendQueue.push(merged);
-                remainder = new Uint8Array(0);
-            } else {
-                const { boxes, remainder: leftover } = extractCompleteBoxes(merged);
-                remainder = leftover;
-                if (boxes.length > 0) appendQueue.push(boxes);
-            }
-        }
+    // Waits until the SourceBuffer finishes its current update
+    function waitForUpdate() {
+        if (!sb.updating) return Promise.resolve();
+        return new Promise(r => sb.addEventListener('updateend', r, { once: true }));
     }
 
-    function tryAppend() {
-        if (aborted || sb.updating) return;
+    // Appends data to SourceBuffer, handling quota by evicting played segments
+    async function safeAppend(data) {
+        while (!aborted) {
+            await waitForUpdate();
+            if (aborted) return;
 
-        // Evict played data if buffer is getting large (>40 MB buffered)
-        try {
-            if (sb.buffered.length > 0 && viewerVideo.currentTime > 5) {
-                const bufferedEnd = sb.buffered.end(sb.buffered.length - 1);
-                const bufferedStart = sb.buffered.start(0);
-                if (bufferedEnd - bufferedStart > 40) {
-                    sb.remove(bufferedStart, viewerVideo.currentTime - 2);
-                    return; // updateend will call tryAppend again
+            // Evict played content if buffer is large
+            try {
+                if (sb.buffered.length > 0 && viewerVideo.currentTime > 5) {
+                    const bufferedDuration = sb.buffered.end(sb.buffered.length - 1) - sb.buffered.start(0);
+                    if (bufferedDuration > 60) {
+                        sb.remove(sb.buffered.start(0), viewerVideo.currentTime - 5);
+                        await waitForUpdate();
+                        if (aborted) return;
+                    }
+                }
+            } catch {}
+
+            try {
+                sb.appendBuffer(data);
+                await waitForUpdate();
+                if (!started && sb.buffered.length > 0) {
+                    started = true;
+                    viewerTitle.textContent = item.name || 'Video';
+                    viewerVideo.play().catch(() => {});
+                }
+                return;
+            } catch (e) {
+                if (e.name === 'QuotaExceededError' && viewerVideo.currentTime > 2) {
+                    try {
+                        sb.remove(0, viewerVideo.currentTime - 1);
+                        await waitForUpdate();
+                    } catch {}
+                    // retry the append
+                } else {
+                    throw e;
                 }
             }
-        } catch {}
-
-        // Feed more data into the queue
-        feedBuffer();
-
-        if (appendQueue.length === 0) {
-            // Nothing to append — check if we're done
-            if (allFetched && nextAppend >= item.chunk_count && remainder.length === 0) {
-                try { if (ms.readyState === 'open') ms.endOfStream(); } catch {}
-            }
-            return;
         }
-
-        const data = appendQueue.shift();
-        try {
-            sb.appendBuffer(data);
-        } catch (e) {
-            if (e.name === 'QuotaExceededError' && viewerVideo.currentTime > 2) {
-                // Put data back and evict played segments
-                appendQueue.unshift(data);
-                try { sb.remove(0, viewerVideo.currentTime - 1); } catch {}
-            }
-        }
-    }
-
-    sb.addEventListener('updateend', () => {
-        if (aborted) return;
-        if (!started && sb.buffered.length > 0) {
-            started = true;
-            viewerTitle.textContent = item.name || 'Video';
-            viewerVideo.play().catch(() => {});
-        }
-        tryAppend();
-    });
-
-    async function fetchAndDecrypt(index) {
-        if (aborted) return;
-        const res = await fetch(`/api/media/${item.id}/chunk/${index}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
-        const encData = new Uint8Array(await res.arrayBuffer());
-        const dec = await workerDecrypt('decryptChunk', encData, fileKey, index);
-        if (aborted) return;
-        decrypted[index] = dec;
-        chunksDecrypted++;
-        viewerTitle.textContent = started ? (item.name || 'Video') : `Buffering... ${chunksDecrypted}/${item.chunk_count}`;
-        tryAppend();
     }
 
     try {
-        const workers = [];
-        for (let w = 0; w < PARALLEL; w++) {
-            workers.push((async () => {
-                while (!aborted) {
-                    const idx = nextFetch++;
-                    if (idx >= item.chunk_count) break;
-                    await fetchAndDecrypt(idx);
-                }
+        // Sequential fetch-decrypt-append pipeline with parallel prefetch
+        const PREFETCH = 4;
+        const prefetched = new Map(); // index -> Promise<Uint8Array>
+
+        function startFetch(index) {
+            if (index >= item.chunk_count || prefetched.has(index)) return;
+            prefetched.set(index, (async () => {
+                const res = await fetch(`/api/media/${item.id}/chunk/${index}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
+                const encData = new Uint8Array(await res.arrayBuffer());
+                return workerDecrypt('decryptChunk', encData, fileKey, index);
             })());
         }
-        await Promise.all(workers);
+
+        for (let i = 0; i < item.chunk_count && !aborted; i++) {
+            // Keep prefetch window ahead
+            for (let p = i; p < Math.min(i + PREFETCH, item.chunk_count); p++) {
+                startFetch(p);
+            }
+
+            const dec = await prefetched.get(i);
+            prefetched.delete(i);
+            if (aborted) break;
+
+            viewerTitle.textContent = started ? (item.name || 'Video') : `Buffering... ${i + 1}/${item.chunk_count}`;
+
+            // Merge with remainder from previous chunk
+            let data;
+            if (remainder.length > 0) {
+                data = new Uint8Array(remainder.length + dec.length);
+                data.set(remainder);
+                data.set(dec, remainder.length);
+            } else {
+                data = dec;
+            }
+
+            const isLast = (i === item.chunk_count - 1);
+            if (isLast) {
+                // Last chunk — append everything
+                if (data.length > 0) await safeAppend(data);
+                remainder = new Uint8Array(0);
+            } else {
+                const { boxes, remainder: leftover } = extractCompleteBoxes(data);
+                remainder = leftover;
+                if (boxes.length > 0) await safeAppend(boxes);
+            }
+        }
+
         if (!aborted) {
-            allFetched = true;
-            verifyChunkCount(item, chunksDecrypted);
-            tryAppend(); // flush any remaining data
+            verifyChunkCount(item, item.chunk_count);
+            await waitForUpdate();
+            try { if (ms.readyState === 'open') ms.endOfStream(); } catch {}
         }
     } catch (e) {
         if (!aborted) viewerTitle.textContent = 'Playback failed: ' + e.message;
