@@ -98,6 +98,8 @@ let kdfSalt = null;
 let serverConfig = { persistSession: false, allowRegistration: true };
 let mediaItems = [];
 const pendingDeletes = new Set();
+// Tracks in-progress uploads: Map<id, { name, folderId }>
+const pendingUploads = new Map();
 let currentPage = 1;
 let totalItems = 0;
 const PAGE_SIZE = 50;
@@ -1636,6 +1638,17 @@ async function renderGalleryItems() {
         fragment.appendChild(el);
     }
 
+    // Add placeholders for in-progress uploads in this folder
+    for (const [id, upload] of pendingUploads) {
+        if ((upload.folderId || null) === currentFolderId) {
+            const ph = document.createElement('div');
+            ph.className = 'gallery-item';
+            ph.dataset.pendingUpload = id;
+            ph.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span style="font-size:12px;color:var(--text-dim)">' + escapeHtml(upload.name) + '</span></div>';
+            fragment.appendChild(ph);
+        }
+    }
+
     // Remove old refresh button and swap grid content
     document.getElementById('refresh-wrap')?.remove();
     galleryGrid.innerHTML = '';
@@ -2466,15 +2479,22 @@ async function handleDropUpload(files, targetFolderId) {
         row.appendChild(statusSpan);
         dropUploadStatus.appendChild(row);
 
+        // Track this upload
+        const uploadId = Date.now() + '-' + Math.random().toString(36).slice(2);
+        pendingUploads.set(uploadId, { name: file.name, folderId: targetFolderId });
+
         // Hide empty state and move refresh button out of the way
         galleryEmpty.classList.add('hidden');
         document.getElementById('refresh-wrap')?.remove();
 
-        // Add a placeholder tile to the gallery
-        const placeholder = document.createElement('div');
-        placeholder.className = 'gallery-item';
-        placeholder.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span style="font-size:12px;color:var(--text-dim)">' + escapeHtml(file.name) + '</span></div>';
-        galleryGrid.appendChild(placeholder);
+        // Add a placeholder tile to the gallery if we're in the target folder
+        if ((targetFolderId || null) === currentFolderId) {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'gallery-item';
+            placeholder.dataset.pendingUpload = uploadId;
+            placeholder.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span style="font-size:12px;color:var(--text-dim)">' + escapeHtml(file.name) + '</span></div>';
+            galleryGrid.appendChild(placeholder);
+        }
 
         try {
             const dummyEl = createUploadItem(file.name);
@@ -2486,11 +2506,13 @@ async function handleDropUpload(files, targetFolderId) {
             statusSpan.className = 'status done';
         } catch (e) {
             console.error('Drop upload failed:', e);
-            placeholder.remove();
             statusSpan.textContent = 'Error';
             statusSpan.className = 'status error';
             hasErrors = true;
         }
+        pendingUploads.delete(uploadId);
+        const ph = document.querySelector(`[data-pending-upload="${uploadId}"]`);
+        if (ph) ph.remove();
     }
 
     if (hasErrors) {
