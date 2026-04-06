@@ -97,6 +97,7 @@ let userId = null;
 let kdfSalt = null;
 let serverConfig = { persistSession: false, allowRegistration: true };
 let mediaItems = [];
+const pendingDeletes = new Set();
 let currentPage = 1;
 let totalItems = 0;
 const PAGE_SIZE = 50;
@@ -1831,7 +1832,9 @@ async function loadMedia() {
             } catch (e) {
                 console.warn('Failed to decrypt metadata for', item.id, e);
             }
-            mediaItems.push(item);
+            if (!pendingDeletes.has(item.id)) {
+                mediaItems.push(item);
+            }
         }
 
         // Load folder tree and render
@@ -2368,43 +2371,12 @@ function initTouchDrag(el, getData) {
         if (target) target.classList.add('touch-drag-over');
     }, { passive: false });
 
-    el.addEventListener('touchend', (e) => {
-        if (timer) { clearTimeout(timer); timer = null; return; }
-        if (!_touchDragState) return;
-        e.preventDefault();
-
-        const touch = e.changedTouches[0];
-        const target = findDropTarget(touch.clientX, touch.clientY);
-        document.querySelectorAll('.touch-drag-over').forEach(el => el.classList.remove('touch-drag-over'));
-
-        if (target && _touchDragState) {
-            const data = _touchDragState.data;
-            // Find the target folder ID
-            let targetFolderId = null;
-            const folderItem = target.closest('.folder-item');
-            const breadcrumbItem = target.closest('.breadcrumb-item');
-            if (folderItem && folderItem.dataset.folderId) {
-                targetFolderId = folderItem.dataset.folderId;
-            } else if (breadcrumbItem && breadcrumbItem.dataset.folderId) {
-                targetFolderId = breadcrumbItem.dataset.folderId;
-            } else if (breadcrumbItem && !breadcrumbItem.dataset.folderId) {
-                targetFolderId = null; // root
-            }
-
-            if (data.type === 'item') {
-                moveItemToFolder(data.value, targetFolderId).then(() => renderGalleryItems()).catch(() => {});
-            } else if (data.type === 'folder' && data.value.id !== targetFolderId) {
-                data.value.parentId = targetFolderId;
-                saveFolderTree().then(() => renderGalleryItems());
-            }
-        }
-
-        cleanupTouchDrag();
+    el.addEventListener('touchend', () => {
+        if (timer) { clearTimeout(timer); timer = null; }
     });
 
     el.addEventListener('touchcancel', () => {
         if (timer) { clearTimeout(timer); timer = null; }
-        if (_touchDragState) cleanupTouchDrag();
     });
 }
 
@@ -2433,6 +2405,44 @@ function findDropTarget(x, y) {
     if (breadcrumb) return breadcrumb;
     return null;
 }
+
+// Global touch drag-and-drop end handler (on document so it fires even if
+// the source element was re-rendered during the drag)
+document.addEventListener('touchend', (e) => {
+    if (!_touchDragState) return;
+    e.preventDefault();
+
+    const touch = e.changedTouches[0];
+    const target = findDropTarget(touch.clientX, touch.clientY);
+    document.querySelectorAll('.touch-drag-over').forEach(el => el.classList.remove('touch-drag-over'));
+
+    if (target) {
+        const data = _touchDragState.data;
+        let targetFolderId = null;
+        const folderItem = target.closest('.folder-item');
+        const breadcrumbItem = target.closest('.breadcrumb-item');
+        if (folderItem && folderItem.dataset.folderId) {
+            targetFolderId = folderItem.dataset.folderId;
+        } else if (breadcrumbItem && breadcrumbItem.dataset.folderId) {
+            targetFolderId = breadcrumbItem.dataset.folderId;
+        } else if (breadcrumbItem && !breadcrumbItem.dataset.folderId) {
+            targetFolderId = null;
+        }
+
+        if (data.type === 'item') {
+            moveItemToFolder(data.value, targetFolderId).then(() => renderGalleryItems()).catch(() => {});
+        } else if (data.type === 'folder' && data.value.id !== targetFolderId) {
+            data.value.parentId = targetFolderId;
+            saveFolderTree().then(() => renderGalleryItems());
+        }
+    }
+
+    cleanupTouchDrag();
+});
+
+document.addEventListener('touchcancel', () => {
+    if (_touchDragState) cleanupTouchDrag();
+});
 
 // --- Drop-to-upload (no modal) ---
 const dropUploadStatus = document.getElementById('drop-upload-status');
@@ -3300,9 +3310,13 @@ async function deleteCurrentItem() {
     const item = currentViewerItem;
     showConfirmModal('Delete file', 'Delete this item? This cannot be undone.', () => {
         closeViewer();
+        pendingDeletes.add(item.id);
         mediaItems = mediaItems.filter(m => m.id !== item.id);
         renderGalleryItems();
-        api(`/api/media/${item.id}`, { method: 'DELETE' }).catch(e => {
+        api(`/api/media/${item.id}`, { method: 'DELETE' }).then(() => {
+            pendingDeletes.delete(item.id);
+        }).catch(e => {
+            pendingDeletes.delete(item.id);
             mediaItems.push(item);
             renderGalleryItems();
             showConfirmModal('Error', 'Delete failed: ' + e.message, () => {}, { buttonLabel: 'OK', buttonClass: 'btn-primary' });
@@ -3313,11 +3327,15 @@ async function deleteCurrentItem() {
 async function deleteItem(item) {
     showConfirmModal('Delete file', 'Delete this item? This cannot be undone.', async () => {
         // Optimistic: remove from gallery immediately
+        pendingDeletes.add(item.id);
         mediaItems = mediaItems.filter(m => m.id !== item.id);
         renderGalleryItems();
         // Fire delete in background
-        api(`/api/media/${item.id}`, { method: 'DELETE' }).catch(e => {
+        api(`/api/media/${item.id}`, { method: 'DELETE' }).then(() => {
+            pendingDeletes.delete(item.id);
+        }).catch(e => {
             // Restore on failure
+            pendingDeletes.delete(item.id);
             mediaItems.push(item);
             renderGalleryItems();
             showConfirmModal('Error', 'Delete failed: ' + e.message, () => {}, { buttonLabel: 'OK', buttonClass: 'btn-primary' });
