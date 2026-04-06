@@ -1640,7 +1640,7 @@ async function renderGalleryItems() {
 
     // Add placeholders for in-progress uploads in this folder
     for (const [id, upload] of pendingUploads) {
-        if ((upload.folderId || null) === currentFolderId) {
+        if ((upload.folderId || null) === (currentFolderId || null)) {
             const ph = document.createElement('div');
             ph.className = 'gallery-item';
             ph.dataset.pendingUpload = id;
@@ -2461,6 +2461,7 @@ document.addEventListener('touchcancel', () => {
 const dropUploadStatus = document.getElementById('drop-upload-status');
 
 async function handleDropUpload(files, targetFolderId) {
+    if (targetFolderId === undefined) targetFolderId = currentFolderId;
     dropUploadStatus.innerHTML = '';
     let hasErrors = false;
 
@@ -2488,7 +2489,7 @@ async function handleDropUpload(files, targetFolderId) {
         document.getElementById('refresh-wrap')?.remove();
 
         // Add a placeholder tile to the gallery if we're in the target folder
-        if ((targetFolderId || null) === currentFolderId) {
+        if ((targetFolderId || null) === (currentFolderId || null)) {
             const placeholder = document.createElement('div');
             placeholder.className = 'gallery-item';
             placeholder.dataset.pendingUpload = uploadId;
