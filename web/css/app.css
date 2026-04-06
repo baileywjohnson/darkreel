@@ -152,7 +152,7 @@ header {
     display: flex; justify-content: space-between; align-items: center;
     padding: 8px 0 8px 24px; border-bottom: 1px solid var(--border);
 }
-.breadcrumb { display: flex; align-items: center; gap: 4px; font-size: 14px; margin-left: -25px; max-width: calc(50% - 40px); overflow: hidden; }
+.breadcrumb { display: flex; align-items: center; gap: 4px; font-size: 14px; margin-left: -25px; max-width: calc(50% - 40px); overflow: clip; overflow-clip-margin: 4px; }
 .breadcrumb-full { display: contents; }
 .breadcrumb-compact { display: none; }
 .breadcrumb-item { color: var(--text-dim); cursor: pointer; padding: 4px 6px; border-radius: var(--radius); transition: all 0.15s ease; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; min-width: 0; flex-shrink: 1; }
