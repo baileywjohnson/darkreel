@@ -7,7 +7,7 @@ End-to-end encrypted video and photo storage with streaming playback. The server
 - **End-to-end encrypted** -- AES-256-GCM chunk encryption, keys derived from your password via Argon2id. The server stores only opaque blobs.
 - **Streaming playback** -- Videos are remuxed to fragmented MP4 on upload. Encrypted chunks are fetched in parallel, decrypted in a Web Worker, and streamed to `<video>` via MediaSource Extensions. Playback starts in seconds, not after the full download.
 - **Zero-knowledge metadata** -- File names, types, sizes, dimensions, and durations are encrypted into a single blob. The server cannot read any of it.
-- **Chunk padding** -- Every encrypted chunk is padded to a fixed size with random data, preventing file size fingerprinting.
+- **Chunk padding** -- Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data, preventing file size fingerprinting.
 - **Secure deletion** -- Deleted files are overwritten 3 times with random data before unlinking.
 - **Multi-user** -- Each user has an isolated, encrypted library with their own master key.
 - **Folders** -- Organize your media into folders. The folder structure is encrypted -- only you can see it.
@@ -19,7 +19,7 @@ End-to-end encrypted video and photo storage with streaming playback. The server
 
 Most encrypted storage tools encrypt your files but stop there. Darkreel goes further:
 
-- **Size fingerprinting resistance** -- Every encrypted chunk is padded to exactly 1,048,604 bytes with random fill. An observer with full disk access sees uniform blobs — they can't determine original file sizes, distinguish a 500 KB photo from a 900 KB one, or correlate files across backups by size.
+- **Size fingerprinting resistance** -- Every encrypted chunk is padded to the next bucket boundary (1, 2, 4, 8, or 16 MB) with random fill. An observer with full disk access sees a handful of uniform sizes — they can't determine original file sizes, distinguish a 500 KB photo from a 900 KB one, or correlate files across backups by size.
 
 - **Secure deletion, not just unlinking** -- When you delete a file, the data is overwritten 3 times with random bytes, fsynced to disk, then unlinked. On spinning disks, deleted data is actually destroyed. Most tools just call `delete()` and trust the filesystem to eventually reclaim the space.
 
@@ -163,9 +163,9 @@ Caddy handles TLS automatically via Let's Encrypt. For nginx, see the [nginx exa
 1. Your password derives a **master key** via Argon2id that never leaves your browser
 2. Each file gets a random **file key**, encrypted (wrapped) with your master key and stored on the server
 3. Videos are remuxed to **fragmented MP4** (no re-encoding) so each chunk is independently decodable
-4. Files are split into **1 MB chunks**, each encrypted with AES-256-GCM using the chunk index as additional authenticated data (prevents reordering)
+4. Files are split into **chunks** -- videos at fMP4 segment boundaries (one moof+mdat per chunk), other files at 1 MB -- each encrypted with AES-256-GCM using the chunk index as additional authenticated data (prevents reordering)
 5. All file metadata (name, type, MIME, size, dimensions, duration, codec info) is encrypted into a single blob -- the server stores it opaquely
-6. Every chunk is padded to a fixed size on disk with random fill so the server cannot determine original file sizes
+6. Every chunk is padded to a bucketed size on disk with random fill so the server cannot determine original file sizes
 7. Your browser fetches chunks in parallel, decrypts them in a Web Worker, and streams to `<video>` via MediaSource Extensions — playback starts after the first chunk
 
 ### Key hierarchy
@@ -193,10 +193,10 @@ The master key is also encrypted with a 256-bit recovery code at account creatio
 |-----------|-----------|---------|
 | Password hashing | Argon2id | 3 iterations, 64 MB memory, 4 threads |
 | Master key derivation | Argon2id | Separate salt from auth hash |
-| File encryption | AES-256-GCM | 1 MB chunks, chunk index as AAD |
+| File encryption | AES-256-GCM | Segment-aligned chunks (videos) / 1 MB (other), chunk index as AAD |
 | Key wrapping | AES-256-GCM | Random nonce per operation |
 | Session key (login) | PBKDF2-SHA256 | 600,000 iterations |
-| Chunk storage | Padded | Fixed 1,048,604 bytes per chunk |
+| Chunk storage | Padded | Bucketed to 1/2/4/8/16 MB per chunk |
 | Secure deletion | 3-pass shred | Random overwrite, fsync, then unlink |
 
 ## Privacy and security
@@ -246,8 +246,8 @@ If you lose both your password and recovery code, your data is permanently inacc
 | Limit | Value |
 |-------|-------|
 | Max thumbnail | 2 MB |
-| Max chunk | 2 MB |
-| Max chunks per file | 50,000 (~50 GB) |
+| Max chunk | 20 MB |
+| Max chunks per file | 50,000 |
 | Max total upload | 100 GB |
 
 ## API

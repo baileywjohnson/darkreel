@@ -460,7 +460,7 @@
         </div>
         <div class="pitch-point">
             <h3><span class="dot dot-purple"></span> Chunk padding defeats fingerprinting</h3>
-            <p>Every chunk is padded to exactly 1,048,604 bytes with random fill. An observer sees uniform-size blobs on disk — they can't determine original file sizes even with full disk access.</p>
+            <p>Every chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random fill. An observer sees a handful of uniform sizes on disk — they can't determine original file sizes even with full disk access.</p>
         </div>
         <div class="pitch-point">
             <h3><span class="dot dot-green"></span> Secure deletion, not just unlinking</h3>
@@ -487,7 +487,7 @@
         <div class="diff-row">
             <div class="diff-cell diff-label">File sizes on disk</div>
             <div class="diff-cell diff-typical">Encrypted blobs reveal original sizes — a 4.2 MB blob is a ~4.2 MB file</div>
-            <div class="diff-cell diff-ours"><strong>Every chunk padded to exactly 1,048,604 bytes</strong> with random fill. All blobs look identical on disk.</div>
+            <div class="diff-cell diff-ours"><strong>Every chunk padded to bucketed sizes (1/2/4/8/16 MB)</strong> with random fill. An observer sees a handful of uniform sizes.</div>
         </div>
         <div class="diff-row">
             <div class="diff-cell diff-label">Deletion</div>
@@ -565,7 +565,7 @@
         </div>
         <div class="spec">
             <div class="spec-label">Chunk storage</div>
-            <div class="spec-value">Fixed 1,048,604 B<br>random-padded</div>
+            <div class="spec-value">Bucketed 1/2/4/8/16 MB<br>random-padded</div>
         </div>
         <div class="spec">
             <div class="spec-label">Secure deletion</div>
