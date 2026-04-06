@@ -2561,7 +2561,12 @@ async function playVideo(item, fileKey) {
     const mime = item.mime_type || 'video/mp4';
 
     if (item.fragmented) {
-        await playVideoMSE(item, fileKey);
+        try {
+            await playVideoMSE(item, fileKey);
+        } catch (e) {
+            console.error('MSE playback failed, falling back to blob:', e);
+            await playVideoBlob(item, fileKey, mime);
+        }
     } else {
         await playVideoBlob(item, fileKey, mime);
     }
@@ -2642,11 +2647,11 @@ async function playVideoMSE(item, fileKey) {
         return playVideoBlob(item, fileKey, item.mime_type || 'video/mp4');
     }
 
+    const isManagedMSE = MSE === window.ManagedMediaSource;
     const ms = new MSE();
     viewerVideo._mediaSource = ms;
     viewerVideo.disableRemotePlayback = true;
-    // Use srcObject if available (required for ManagedMediaSource), else createObjectURL
-    if ('srcObject' in viewerVideo && MSE === window.ManagedMediaSource) {
+    if (isManagedMSE) {
         viewerVideo.srcObject = ms;
     } else {
         viewerVideo.src = URL.createObjectURL(ms);
@@ -2656,11 +2661,18 @@ async function playVideoMSE(item, fileKey) {
     viewerVideo.play().catch(() => {});
 
     const sb = await new Promise((resolve, reject) => {
+        if (ms.readyState === 'open') {
+            try { resolve(ms.addSourceBuffer(mseType)); }
+            catch (e) { reject(e); }
+            return;
+        }
+        const timeout = setTimeout(() => reject(new Error('sourceopen timeout')), 5000);
         ms.addEventListener('sourceopen', () => {
+            clearTimeout(timeout);
             try { resolve(ms.addSourceBuffer(mseType)); }
             catch (e) { reject(e); }
         }, { once: true });
-    }).catch(() => null);
+    }).catch((e) => { console.warn('MSE setup failed:', e); return null; });
 
     if (!sb) {
         viewerVideo._mediaSource = null;
@@ -2675,8 +2687,8 @@ async function playVideoMSE(item, fileKey) {
     viewerVideo._abortStreaming = () => { aborted = true; };
 
     // ManagedMediaSource (iOS) uses streaming events to control data flow
-    let streamingAllowed = !(ms instanceof (window.ManagedMediaSource || function(){}));
-    if (!streamingAllowed) {
+    let streamingAllowed = !isManagedMSE;
+    if (isManagedMSE) {
         ms.addEventListener('startstreaming', () => { streamingAllowed = true; });
         ms.addEventListener('endstreaming', () => { streamingAllowed = false; });
     }
@@ -2846,6 +2858,15 @@ async function playVideoMSE(item, fileKey) {
     });
 
     try {
+        // On ManagedMediaSource (iOS), wait for startstreaming before appending
+        if (isManagedMSE && !streamingAllowed) {
+            await new Promise((resolve) => {
+                const check = () => { if (streamingAllowed || aborted) resolve(); else setTimeout(check, 100); };
+                check();
+            });
+        }
+        if (aborted) return;
+
         // Start: fetch init segment, then stream from chunk 1
         viewerTitle.textContent = `Buffering...`;
         await ensureInit();
