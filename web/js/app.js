@@ -7,6 +7,26 @@ import {
 } from './crypto.js';
 
 // ─── FFmpeg WASM (lazy-loaded for video remuxing) ───
+//
+// IMPORTANT: ffmpeg WASM requires SharedArrayBuffer, which requires cross-origin
+// isolation headers (COEP + COOP) set in server.go's securityHeaders().
+// If those headers are removed or changed, SharedArrayBuffer becomes unavailable,
+// ffmpeg silently fails to load, and videos get uploaded without fMP4 remuxing —
+// meaning they'll never stream and always fall back to full-file decrypt.
+//
+// The loading chain is:
+//   1. classes.js creates a module Worker from ./worker.js (same-origin, type: "module")
+//   2. worker.js tries importScripts(coreURL) — fails in module worker, catches
+//   3. Falls back to import(coreURL) — loads ffmpeg-core.js as ESM
+//   4. ffmpeg-core.js has "export default createFFmpegCore" (required for this path)
+//   5. worker.js initializes the WASM core with SharedArrayBuffer
+//
+// DO NOT:
+//   - Remove COEP/COOP headers from server.go (breaks SharedArrayBuffer)
+//   - Load external resources without crossorigin attrs (blocked by require-corp)
+//   - Use blob URLs for the worker (opaque origin breaks import() of same-origin URLs)
+//   - Switch ffmpeg-core.js to a UMD build without "export default" (breaks ESM import)
+//
 let _ffmpegInstance = null;
 let _ffmpegLoading = null;
 
@@ -15,6 +35,10 @@ async function loadFFmpeg() {
     if (_ffmpegLoading) return _ffmpegLoading;
     _ffmpegLoading = (async () => {
         try {
+            if (typeof SharedArrayBuffer === 'undefined') {
+                console.error('FFmpeg WASM: SharedArrayBuffer not available. Cross-origin isolation headers may be missing.');
+                return null;
+            }
             const { FFmpeg } = await import('/js/vendor/ffmpeg/index.js');
             const ff = new FFmpeg();
             await ff.load({
@@ -24,7 +48,7 @@ async function loadFFmpeg() {
             _ffmpegInstance = ff;
             return ff;
         } catch (e) {
-            console.warn('FFmpeg WASM failed to load:', e);
+            console.error('FFmpeg WASM failed to load:', e);
             _ffmpegLoading = null;
             return null;
         }
@@ -3725,6 +3749,9 @@ async function uploadFile(file, itemEl, targetFolderId) {
         if (fmp4Data) {
             fileData = fmp4Data;
             fragmented = true;
+        } else {
+            console.warn('Video will be uploaded without streaming support (ffmpeg remux failed)');
+            setUploadStatus(itemEl, 'Uploading without streaming...');
         }
     }
 

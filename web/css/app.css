@@ -787,7 +787,7 @@ main { padding-top: 0; position: relative; z-index: 1; }
     .folder-bar { padding-left: 16px; padding-right: 8px; }
     .breadcrumb { margin-left: -8px; }
     #gallery-view { padding: 64px 12px 24px; }
-    .admin-panel { padding: 16px; }
+    .admin-panel { padding: 72px 16px 16px; }
     .admin-create, .admin-users { padding: 16px; }
     .viewer-header { padding: 12px 12px; }
     .auth-card { padding: 32px 24px; }
