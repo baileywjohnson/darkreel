@@ -2353,13 +2353,26 @@ function initTouchDrag(el, getData) {
         const target = findDropTarget(touch.clientX, touch.clientY);
         document.querySelectorAll('.touch-drag-over').forEach(el => el.classList.remove('touch-drag-over'));
 
-        if (target) {
-            // Simulate a drop event on the target
-            const dropEvent = new Event('drop', { bubbles: true });
-            dropEvent.preventDefault = () => {};
-            dropEvent.stopPropagation = () => {};
-            dropEvent.dataTransfer = { files: [] };
-            target.dispatchEvent(dropEvent);
+        if (target && _touchDragState) {
+            const data = _touchDragState.data;
+            // Find the target folder ID
+            let targetFolderId = null;
+            const folderItem = target.closest('.folder-item');
+            const breadcrumbItem = target.closest('.breadcrumb-item');
+            if (folderItem && folderItem.dataset.folderId) {
+                targetFolderId = folderItem.dataset.folderId;
+            } else if (breadcrumbItem && breadcrumbItem.dataset.folderId) {
+                targetFolderId = breadcrumbItem.dataset.folderId;
+            } else if (breadcrumbItem && !breadcrumbItem.dataset.folderId) {
+                targetFolderId = null; // root
+            }
+
+            if (data.type === 'item') {
+                moveItemToFolder(data.value, targetFolderId).then(() => renderGalleryItems()).catch(() => {});
+            } else if (data.type === 'folder' && data.value.id !== targetFolderId) {
+                data.value.parentId = targetFolderId;
+                saveFolderTree().then(() => renderGalleryItems());
+            }
         }
 
         cleanupTouchDrag();
