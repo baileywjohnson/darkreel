@@ -33,87 +33,197 @@ async function loadMP4Box() {
     }
 }
 
+// Merge multiple per-track fMP4 init segments into a single combined init segment.
+// mp4box.js produces one init segment per track (each containing ftyp + moov with
+// only that track's trak/trex). MSE with a single SourceBuffer needs ONE init segment
+// declaring ALL tracks, otherwise audio is silently ignored.
+function mergeInitSegments(segments) {
+    if (segments.length <= 1) return segments[0];
+
+    const rd = (d, o) => ((d[o] << 24) | (d[o+1] << 16) | (d[o+2] << 8) | d[o+3]) >>> 0;
+    const wr = (d, o, v) => { d[o]=(v>>>24)&0xff; d[o+1]=(v>>>16)&0xff; d[o+2]=(v>>>8)&0xff; d[o+3]=v&0xff; };
+    const btype = (d, o) => String.fromCharCode(d[o+4], d[o+5], d[o+6], d[o+7]);
+
+    function findBox(d, s, e, t) {
+        let p = s;
+        while (p + 8 <= e) {
+            const sz = rd(d, p);
+            if (sz < 8 || p + sz > e) break;
+            if (btype(d, p) === t) return { off: p, sz };
+            p += sz;
+        }
+        return null;
+    }
+    function findBoxes(d, s, e, t) {
+        const r = []; let p = s;
+        while (p + 8 <= e) {
+            const sz = rd(d, p);
+            if (sz < 8 || p + sz > e) break;
+            if (btype(d, p) === t) r.push({ off: p, sz });
+            p += sz;
+        }
+        return r;
+    }
+
+    // Extract extra trak and trex boxes from additional init segments
+    const extraTraks = [], extraTrexes = [];
+    for (let i = 1; i < segments.length; i++) {
+        const s = segments[i];
+        const moov = findBox(s, 0, s.length, 'moov');
+        if (!moov) continue;
+        for (const t of findBoxes(s, moov.off + 8, moov.off + moov.sz, 'trak'))
+            extraTraks.push(s.slice(t.off, t.off + t.sz));
+        const mvex = findBox(s, moov.off + 8, moov.off + moov.sz, 'mvex');
+        if (mvex) for (const t of findBoxes(s, mvex.off + 8, mvex.off + mvex.sz, 'trex'))
+            extraTrexes.push(s.slice(t.off, t.off + t.sz));
+    }
+    if (extraTraks.length === 0) return segments[0];
+
+    const base = segments[0];
+    const moov = findBox(base, 0, base.length, 'moov');
+    if (!moov) return base;
+    const mvex = findBox(base, moov.off + 8, moov.off + moov.sz, 'mvex');
+
+    const addTrak = extraTraks.reduce((s, t) => s + t.length, 0);
+    const addTrex = extraTrexes.reduce((s, t) => s + t.length, 0);
+    const result = new Uint8Array(base.length + addTrak + addTrex);
+    let wp = 0;
+
+    // Copy base up to trak insertion point (before mvex)
+    const trakIns = mvex ? mvex.off : moov.off + moov.sz;
+    result.set(base.subarray(0, trakIns), wp); wp = trakIns;
+
+    // Insert extra trak boxes
+    for (const t of extraTraks) { result.set(t, wp); wp += t.length; }
+
+    if (mvex) {
+        // Copy mvex header, existing content, then insert extra trex boxes
+        result.set(base.subarray(mvex.off, mvex.off + 8), wp);
+        const mvexHdr = wp; wp += 8;
+        result.set(base.subarray(mvex.off + 8, mvex.off + mvex.sz), wp);
+        wp += mvex.sz - 8;
+        for (const t of extraTrexes) { result.set(t, wp); wp += t.length; }
+        wr(result, mvexHdr, mvex.sz + addTrex);
+        // Copy anything in moov after mvex
+        const after = mvex.off + mvex.sz;
+        if (after < moov.off + moov.sz) {
+            result.set(base.subarray(after, moov.off + moov.sz), wp);
+            wp += moov.off + moov.sz - after;
+        }
+    }
+
+    // Copy anything after moov
+    const moovEnd = moov.off + moov.sz;
+    if (moovEnd < base.length) {
+        result.set(base.subarray(moovEnd), wp);
+        wp += base.length - moovEnd;
+    }
+
+    wr(result, moov.off, moov.sz + addTrak + addTrex);
+    return result.subarray(0, wp);
+}
+
 async function remuxToFMP4(data) {
     if (!await loadMP4Box()) return null;
     try {
         const result = await new Promise((resolve, reject) => {
             const mp4box = MP4Box.createFile();
-            const segments = [];
-            let initSegment = null;
+            const trackSegments = new Map(); // trackId -> [Uint8Array]
+            const initSegmentBufs = [];
             let codecStrings = [];
             let pendingTracks = 0;
+            let finalized = false;
 
             mp4box.onReady = (info) => {
-                // Extract codec strings from track info
                 for (const track of info.tracks) {
                     if (track.codec) codecStrings.push(track.codec);
+                    trackSegments.set(track.id, []);
                 }
 
-                // Set up segmentation: use rapAlignement to split at keyframes
                 for (const track of info.tracks) {
-                    // Target ~2-4 second segments; audio tracks have many more
-                    // samples per second than video, so scale accordingly
                     const samples = track.type === 'audio' ? 200 : 60;
-                    mp4box.setSegmentOptions(track.id, null, {
+                    mp4box.setSegmentOptions(track.id, track.id, {
                         rapAlignement: true,
                         nbSamples: samples,
                     });
                     pendingTracks++;
                 }
                 const initSegs = mp4box.initializeSegmentation();
-                // initializeSegmentation returns one init segment covering all tracks
-                if (initSegs.length > 0) {
-                    initSegment = new Uint8Array(initSegs[0].buffer);
+                for (const seg of initSegs) {
+                    initSegmentBufs.push(new Uint8Array(seg.buffer));
                 }
 
                 mp4box.start();
             };
 
             mp4box.onSegment = (id, user, buffer, sampleNum, isLast) => {
-                segments.push(new Uint8Array(buffer));
+                const arr = trackSegments.get(id);
+                if (arr) arr.push(new Uint8Array(buffer));
                 if (isLast) {
                     pendingTracks--;
-                    if (pendingTracks <= 0) {
+                    if (pendingTracks <= 0 && !finalized) {
+                        finalized = true;
                         finalize();
                     }
                 }
             };
 
             function finalize() {
-                if (!initSegment || segments.length === 0) {
-                    reject(new Error('No segments produced'));
+                if (initSegmentBufs.length === 0) {
+                    reject(new Error('No init segments produced'));
                     return;
                 }
-                // Concatenate all media segments into one buffer, then split into
-                // ~1MB chunks at moof boundaries for balanced seeking granularity
-                const mediaLen = segments.reduce((s, seg) => s + seg.length, 0);
-                const mediaBuf = new Uint8Array(mediaLen);
-                let off = 0;
-                for (const seg of segments) { mediaBuf.set(seg, off); off += seg.length; }
 
-                // Split at moof boundaries, merging small moofs into ~1MB chunks
-                const TARGET_CHUNK = 1024 * 1024; // ~1MB per chunk
-                const moofs = splitFMP4Segments(mediaBuf);
-                // moofs[0] would be init if present, but mediaBuf has no init — all are media segments
-                const chunks = [initSegment];
-                let current = [];
-                let currentSize = 0;
-                for (const moof of moofs) {
-                    current.push(moof);
-                    currentSize += moof.length;
-                    if (currentSize >= TARGET_CHUNK) {
-                        const merged = new Uint8Array(currentSize);
-                        let p = 0;
-                        for (const m of current) { merged.set(m, p); p += m.length; }
-                        chunks.push(merged);
-                        current = [];
-                        currentSize = 0;
+                // Merge per-track init segments into one that declares all tracks
+                const initSegment = mergeInitSegments(initSegmentBufs);
+
+                // Interleave segments from different tracks proportionally so
+                // audio and video data are evenly distributed across chunks
+                const allTrackSegs = [...trackSegments.values()].filter(a => a.length > 0);
+                let interleaved;
+                if (allTrackSegs.length <= 1) {
+                    interleaved = allTrackSegs[0] || [];
+                } else {
+                    interleaved = [];
+                    const indices = new Array(allTrackSegs.length).fill(0);
+                    const total = allTrackSegs.reduce((s, a) => s + a.length, 0);
+                    for (let i = 0; i < total; i++) {
+                        let best = -1, bestRatio = 2;
+                        for (let t = 0; t < allTrackSegs.length; t++) {
+                            if (indices[t] >= allTrackSegs[t].length) continue;
+                            const r = indices[t] / allTrackSegs[t].length;
+                            if (r < bestRatio) { bestRatio = r; best = t; }
+                        }
+                        if (best < 0) break;
+                        interleaved.push(allTrackSegs[best][indices[best]++]);
                     }
                 }
-                if (current.length > 0) {
-                    const merged = new Uint8Array(currentSize);
+
+                if (interleaved.length === 0) {
+                    reject(new Error('No media segments produced'));
+                    return;
+                }
+
+                // Merge small segments into ~1MB chunks for encryption
+                const TARGET = 1024 * 1024;
+                const chunks = [initSegment];
+                let buf = [], bufSize = 0;
+                for (const seg of interleaved) {
+                    buf.push(seg);
+                    bufSize += seg.length;
+                    if (bufSize >= TARGET) {
+                        const merged = new Uint8Array(bufSize);
+                        let p = 0;
+                        for (const b of buf) { merged.set(b, p); p += b.length; }
+                        chunks.push(merged);
+                        buf = [];
+                        bufSize = 0;
+                    }
+                }
+                if (buf.length > 0) {
+                    const merged = new Uint8Array(bufSize);
                     let p = 0;
-                    for (const m of current) { merged.set(m, p); p += m.length; }
+                    for (const b of buf) { merged.set(b, p); p += b.length; }
                     chunks.push(merged);
                 }
 
@@ -130,9 +240,10 @@ async function remuxToFMP4(data) {
 
             // Safety timeout — if onSegment isLast never fires
             setTimeout(() => {
-                if (segments.length > 0 && initSegment) {
+                if (!finalized && initSegmentBufs.length > 0) {
+                    finalized = true;
                     finalize();
-                } else {
+                } else if (!finalized) {
                     reject(new Error('Remux timeout'));
                 }
             }, 30000);
@@ -1626,7 +1737,16 @@ function createFolderElements() {
             menu.appendChild(moveBtn);
             menu.appendChild(downloadBtn);
             menu.appendChild(deleteBtn);
-            el.appendChild(menu);
+            document.body.appendChild(menu);
+            const mbRect = menuBtn.getBoundingClientRect();
+            menu.style.position = 'fixed';
+            menu.style.right = (window.innerWidth - mbRect.right) + 'px';
+            const mh = menu.offsetHeight;
+            if (mbRect.bottom + 4 + mh > window.innerHeight) {
+                menu.style.bottom = (window.innerHeight - mbRect.top + 4) + 'px';
+            } else {
+                menu.style.top = (mbRect.bottom + 4) + 'px';
+            }
 
             // Close menu on outside click
             const closeMenu = (ev) => {
@@ -2056,8 +2176,14 @@ function openItemContextMenu(item, parentEl, anchorBtn) {
 
     document.body.appendChild(menu);
     const btnRect = anchorBtn.getBoundingClientRect();
-    menu.style.top = (btnRect.bottom + 4) + 'px';
     menu.style.right = (window.innerWidth - btnRect.right) + 'px';
+    // Position below the button, but flip upward if it would overflow the viewport
+    const menuHeight = menu.offsetHeight;
+    if (btnRect.bottom + 4 + menuHeight > window.innerHeight) {
+        menu.style.bottom = (window.innerHeight - btnRect.top + 4) + 'px';
+    } else {
+        menu.style.top = (btnRect.bottom + 4) + 'px';
+    }
     parentEl.classList.add('menu-active');
 
     const closeMenu = (ev) => {
@@ -3507,12 +3633,50 @@ async function downloadCurrentItem() {
 }
 
 async function downloadItem(item) {
+    const filename = item.name || 'download';
+    const mime = item.mime_type || 'application/octet-stream';
+
+    // Show progress toast
+    const toast = document.createElement('div');
+    toast.className = 'download-toast';
+    toast.innerHTML = `<span class="download-toast-text">Downloading: ${filename}</span><span class="download-toast-progress">0/${item.chunk_count}</span>`;
+    document.body.appendChild(toast);
+
     try {
         const fileKeyEnc = base64ToBuffer(item.file_key_enc);
         const fileKey = await decryptFileKey(fileKeyEnc);
+        const progressEl = toast.querySelector('.download-toast-progress');
 
+        // Try File System Access API for streaming writes (Chrome/Edge)
+        if (window.showSaveFilePicker) {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: filename,
+                    types: [{ accept: { [mime]: [] } }],
+                });
+                const writable = await handle.createWritable();
+                for (let i = 0; i < item.chunk_count; i++) {
+                    progressEl.textContent = `${i + 1}/${item.chunk_count}`;
+                    const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const encData = new Uint8Array(await res.arrayBuffer());
+                    const dec = await workerDecrypt('decryptChunk', encData, fileKey, i);
+                    await writable.write(dec);
+                }
+                await writable.close();
+                toast.remove();
+                return;
+            } catch (e) {
+                if (e.name === 'AbortError') { toast.remove(); return; } // user cancelled picker
+                // Fall through to blob approach
+            }
+        }
+
+        // Fallback: collect all chunks, then trigger blob download
         const chunks = [];
         for (let i = 0; i < item.chunk_count; i++) {
+            progressEl.textContent = `${i + 1}/${item.chunk_count}`;
             const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -3521,23 +3685,17 @@ async function downloadItem(item) {
             chunks.push(dec);
         }
 
-        verifyChunkCount(item, chunks.length);
-        const totalLen = chunks.reduce((s, c) => s + c.length, 0);
-        const merged = new Uint8Array(totalLen);
-        let offset = 0;
-        for (const c of chunks) { merged.set(c, offset); offset += c.length; }
-
-        const filename = item.name || 'download';
-
-        const blob = new Blob([merged], { type: item.mime_type });
+        const blob = new Blob(chunks, { type: mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = filename;
         a.click();
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (e) {
         alert('Download failed: ' + e.message);
+    } finally {
+        toast.remove();
     }
 }
 
