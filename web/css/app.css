@@ -21,7 +21,10 @@ body {
     color: var(--text);
     min-height: 100vh;
     line-height: 1.5;
+    overflow-x: hidden;
 }
+
+html { overflow-x: hidden; }
 
 .hidden { display: none !important; }
 
@@ -57,10 +60,10 @@ header {
     position: fixed;
     top: 0;
     left: 0;
-    right: 0;
+    width: 100%;
     z-index: 100;
 }
-#app > main { padding-top: 56px; }
+main { padding-top: 56px; }
 .logo { font-size: 20px; font-weight: 700; color: var(--accent); cursor: pointer; }
 .nav-active { color: var(--text); background: var(--bg-hover); }
 .header-right { display: flex; gap: 8px; align-items: center; }
@@ -96,7 +99,7 @@ header {
 }
 
 /* Auth */
-.view { width: 100%; }
+.view { width: 100%; max-width: 100vw; overflow-x: hidden; }
 #auth-view {
     display: flex;
     align-items: center;
@@ -688,4 +691,9 @@ header {
     .breadcrumb-compact { display: contents !important; }
     .viewer-actions-desktop { display: none !important; }
     .viewer-more-btn { display: inline-flex !important; }
+    .folder-bar { padding-left: 16px; padding-right: 8px; }
+    #gallery-view { padding: 8px 12px 24px; }
+    .admin-panel { padding: 16px; }
+    .admin-create, .admin-users { padding: 16px; }
+    .viewer-header { padding: 12px 12px; }
 }
