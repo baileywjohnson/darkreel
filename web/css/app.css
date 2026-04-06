@@ -63,7 +63,7 @@ header {
     width: 100%;
     z-index: 100;
 }
-main { padding-top: 56px; }
+main { padding-top: 0; }
 .logo { font-size: 20px; font-weight: 700; color: var(--accent); cursor: pointer; }
 .nav-active { color: var(--text); background: var(--bg-hover); }
 .header-right { display: flex; gap: 8px; align-items: center; }
@@ -104,8 +104,10 @@ main { padding-top: 56px; }
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
+    height: 100vh;
+    height: 100dvh;
     padding: 0 24px;
+    overflow: hidden;
 }
 .auth-card {
     background: var(--bg-card);
@@ -114,6 +116,8 @@ main { padding-top: 56px; }
     border: 1px solid var(--border);
     width: 100%;
     max-width: 400px;
+    max-height: 100%;
+    overflow-y: auto;
 }
 .auth-title { font-size: 28px; font-weight: 700; color: var(--accent); text-align: center; margin-bottom: 16px; }
 .auth-subtitle { text-align: center; color: var(--text-dim); margin: 4px 0 32px; font-size: 14px; }
@@ -362,7 +366,7 @@ main { padding-top: 56px; }
 }
 
 /* Admin */
-.admin-panel { max-width: 600px; margin: 0 auto; padding: 24px; }
+.admin-panel { max-width: 600px; margin: 0 auto; padding: 80px 24px 24px; }
 .admin-header { display: flex; align-items: center; justify-content: center; margin-bottom: 24px; }
 .admin-header h2 { font-size: 20px; font-weight: 600; position: relative; }
 .btn-back-circle {
@@ -409,7 +413,7 @@ main { padding-top: 56px; }
 .admin-create form input[type="password"]:focus { outline: none; border-color: var(--accent); }
 
 /* Gallery */
-#gallery-view { padding: 8px 24px 24px; }
+#gallery-view { padding: 64px 24px 24px; }
 .gallery-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -692,8 +696,10 @@ main { padding-top: 56px; }
     .viewer-actions-desktop { display: none !important; }
     .viewer-more-btn { display: inline-flex !important; }
     .folder-bar { padding-left: 16px; padding-right: 8px; }
-    #gallery-view { padding: 8px 12px 24px; }
+    #gallery-view { padding: 64px 12px 24px; }
     .admin-panel { padding: 16px; }
     .admin-create, .admin-users { padding: 16px; }
     .viewer-header { padding: 12px 12px; }
+    .auth-card { padding: 32px 24px; }
+    .auth-title { font-size: 24px; }
 }
