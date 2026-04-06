@@ -29,7 +29,7 @@ Most encrypted storage tools encrypt your files but stop there. Darkreel goes fu
 
 - **Hardened deployment in one command** -- The setup script doesn't just install Darkreel. It configures the firewall, fail2ban, SSH hardening, automatic TLS, automatic OS security updates, and daily database backups. Most tools ship a `docker-compose.yml` and leave server hardening as an exercise for the reader.
 
-- **Encrypted video streaming** -- Videos are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI, or ffmpeg WASM in the browser (loaded once in the background, reused across uploads). Each encrypted chunk contains complete MP4 fragments that the browser can decode independently. On playback, 4 chunks are fetched in parallel, decrypted in a Web Worker, and appended to a MediaSource SourceBuffer. Playback starts after the first chunk — no waiting for the full file. No server-side decryption.
+- **Encrypted video streaming** -- Videos are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI, or mp4box.js in the browser (144 KB, no WASM). Each encrypted chunk contains complete MP4 fragments that the browser can decode independently. On playback, chunks are fetched with prefetch-ahead, decrypted in a Web Worker, and appended to a MediaSource SourceBuffer (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk — no waiting for the full file. No server-side decryption.
 
 ## Quick start (VPS)
 
