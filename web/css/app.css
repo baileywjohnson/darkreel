@@ -338,7 +338,8 @@ main { padding-top: 0; position: relative; z-index: 1; }
 .folder-item .folder-menu-btn {
     position: absolute; top: 6px; right: 6px;
     background: rgba(0,0,0,0.5); border: none; color: #fff; cursor: pointer;
-    font-size: 22px; padding: 1px 8px 7px; border-radius: 6px; line-height: 1;
+    font-size: 22px; padding: 2px 8px; border-radius: 6px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
 }
 .folder-item .folder-menu-btn:hover { background: rgba(0,0,0,0.8); }
 .folder-context-menu {
@@ -536,11 +537,14 @@ main { padding-top: 0; position: relative; z-index: 1; }
     color: #fff;
     cursor: pointer;
     font-size: 22px;
-    padding: 1px 8px 7px;
+    padding: 2px 8px;
     border-radius: 6px;
     line-height: 1;
     opacity: 0;
     transition: opacity 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 .gallery-item:hover .item-menu-btn { opacity: 1; }
 .gallery-item .item-menu-btn:hover { background: rgba(0,0,0,0.8); }
@@ -754,7 +758,7 @@ main { padding-top: 0; position: relative; z-index: 1; }
 
 .delete-warning { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
 
-.theme-picker { display: flex; gap: 12px; flex-wrap: wrap; }
+.theme-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .theme-swatch {
     display: flex; flex-direction: column; align-items: center; gap: 8px;
     background: var(--bg); border: 2px solid var(--border); border-radius: var(--radius);

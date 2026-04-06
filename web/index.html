@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-X/zz7CqKwJUSKPWqE5TX5MUYPRDipPJIOmmnmazzfBDELkGq/kubem18w+TK276i" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-tHYaT6p2fHB7xyYn+YBRjj3Qht6C2rzDb+8sVprlyKSweByWvE0HF3lt8TmQ4NJd" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -38,7 +38,7 @@
                     <h2 class="auth-title">&#127871; Darkreel</h2>
 
                     <form id="auth-form">
-                        <input type="text" id="auth-username" placeholder="Username" required minlength="3" autocomplete="username">
+                        <input type="text" id="auth-username" placeholder="Username" required minlength="3" autocomplete="username" autocapitalize="none" autocorrect="off">
                         <input type="password" id="auth-password" placeholder="Password" required autocomplete="current-password">
                         <div class="auth-buttons">
                             <button type="submit" id="login-btn" class="btn btn-primary">Login</button>
@@ -158,7 +158,7 @@
                     <div class="admin-create">
                         <h3>Create User</h3>
                         <form id="admin-create-form">
-                            <input type="text" id="admin-new-username" placeholder="Username" required autocomplete="off">
+                            <input type="text" id="admin-new-username" placeholder="Username" required autocomplete="off" autocapitalize="none" autocorrect="off">
                             <p id="admin-username-reqs" class="password-reqs hidden">Username must be at least <span data-req="ulen">3 characters</span>, at most <span data-req="umax">64 characters</span>, and may only contain <span class="met">letters and numbers</span>.</p>
                             <input type="password" id="admin-new-password" placeholder="Password" required autocomplete="off">
                             <p id="admin-password-reqs" class="password-reqs hidden">Password must be at least <span data-req="length">16 characters</span>, and must contain a <span data-req="letter">letter</span>, a <span data-req="number">number</span>, and a <span data-req="symbol">symbol</span>.</p>
