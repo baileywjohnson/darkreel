@@ -42,7 +42,7 @@ async function loadFFmpeg() {
             const { FFmpeg } = await import('/js/vendor/ffmpeg/index.js');
             const ff = new FFmpeg();
             const loadTimeout = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('FFmpeg load timeout (30s)')), 30000)
+                setTimeout(() => reject(new Error('FFmpeg load timeout (120s)')), 120000)
             );
             await Promise.race([
                 ff.load({
@@ -3834,14 +3834,13 @@ async function uploadFile(file, itemEl, targetFolderId) {
 
     // Remux videos to fMP4 for streaming playback
     if (mediaType === 'video') {
-        setUploadStatus(itemEl, 'Preparing for streaming...');
+        setUploadStatus(itemEl, _ffmpegInstance ? 'Preparing for streaming...' : 'Loading video engine...');
         const fmp4Data = await remuxToFMP4(fileData, file.name);
         if (fmp4Data) {
             fileData = fmp4Data;
             fragmented = true;
         } else {
             console.warn('Video will be uploaded without streaming support (ffmpeg remux failed)');
-            setUploadStatus(itemEl, 'Uploading without streaming...');
         }
     }
 
