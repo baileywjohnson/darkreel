@@ -1783,10 +1783,15 @@ function addRefreshButton() {
         galleryEmpty.after(refreshWrap);
     }
 }
+function galleryFingerprint() {
+    const items = mediaItems.map(m => m.id + ':' + (m.folderId || '') + ':' + (m.name || '')).join(',');
+    const fldrs = folders.map(f => f.id + f.name + (f.parentId || '')).join(',');
+    return items + '|' + fldrs;
+}
+
 function onRefreshClick() {
     _silentRefresh = true;
-    const oldIds = mediaItems.map(m => m.id).join(',');
-    const oldFolders = folders.map(f => f.id + f.name + (f.parentId || '')).join(',');
+    const oldFingerprint = galleryFingerprint();
     galleryView.classList.add('refreshing');
     galleryGrid.style.minHeight = galleryGrid.offsetHeight + 'px';
     const wrap = document.getElementById('refresh-wrap');
@@ -1799,9 +1804,7 @@ function onRefreshClick() {
         _silentRefresh = false;
         galleryGrid.style.minHeight = '';
         galleryView.classList.remove('refreshing');
-        const newIds = mediaItems.map(m => m.id).join(',');
-        const newFolders = folders.map(f => f.id + f.name + (f.parentId || '')).join(',');
-        if (newIds !== oldIds || newFolders !== oldFolders) {
+        if (galleryFingerprint() !== oldFingerprint) {
             await renderGalleryItems();
         }
         addRefreshButton();
@@ -2484,7 +2487,7 @@ async function handleDropUpload(files, targetFolderId) {
         const uploadId = Date.now() + '-' + Math.random().toString(36).slice(2);
         pendingUploads.set(uploadId, { name: file.name, folderId: targetFolderId });
 
-        // Hide empty state and move refresh button out of the way
+        // Hide empty state
         galleryEmpty.classList.add('hidden');
         document.getElementById('refresh-wrap')?.remove();
 
@@ -2496,6 +2499,7 @@ async function handleDropUpload(files, targetFolderId) {
             placeholder.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span style="font-size:12px;color:var(--text-dim)">' + escapeHtml(file.name) + '</span></div>';
             galleryGrid.appendChild(placeholder);
         }
+        addRefreshButton();
 
         try {
             const dummyEl = createUploadItem(file.name);
