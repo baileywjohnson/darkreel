@@ -2523,37 +2523,62 @@ function readU32(buf, offset) {
 }
 
 /**
- * Extract complete top-level MP4 boxes from a buffer.
- * Returns { boxes: Uint8Array (complete boxes), remainder: Uint8Array (leftover) }.
+ * Split fMP4 data at moof boundaries for segment-aligned chunking.
+ * Returns [init_segment, segment_1, segment_2, ...] where the init segment
+ * is everything before the first moof, and each media segment is a moof+mdat pair.
  */
-function extractCompleteBoxes(buf) {
+function splitFMP4Segments(data) {
+    const segments = [];
     let pos = 0;
-    let lastComplete = 0;
+    let initEnd = 0;
 
-    while (pos + 8 <= buf.length) {
-        let size = readU32(buf, pos);
-        if (size === 1) {
-            // 64-bit extended size
-            if (pos + 16 > buf.length) break;
-            const hi = readU32(buf, pos + 8);
-            const lo = readU32(buf, pos + 12);
-            size = hi * 0x100000000 + lo;
-        } else if (size === 0) {
-            // Box extends to end of buffer — only valid if this is the last box
-            // Treat as incomplete unless we know all data has arrived
-            break;
+    while (pos + 8 <= data.length) {
+        const size = readU32(data, pos);
+        const type = String.fromCharCode(data[pos+4], data[pos+5], data[pos+6], data[pos+7]);
+
+        let boxSize = size;
+        if (size === 1 && pos + 16 <= data.length) {
+            const hi = readU32(data, pos + 8);
+            const lo = readU32(data, pos + 12);
+            boxSize = hi * 0x100000000 + lo;
         }
-        if (size < 8) break; // malformed
-        if (pos + size > buf.length) break; // incomplete box
+        if (size === 0) boxSize = data.length - pos;
+        if (boxSize < 8 || pos + boxSize > data.length) break;
 
-        pos += size;
-        lastComplete = pos;
+        if (type === 'moof') {
+            if (initEnd === 0) initEnd = pos;
+            // moof + following mdat = one segment
+            const moofEnd = pos + boxSize;
+            let segEnd = moofEnd;
+            // Check if next box is mdat
+            if (moofEnd + 8 <= data.length) {
+                const nextSize = readU32(data, moofEnd);
+                const nextType = String.fromCharCode(data[moofEnd+4], data[moofEnd+5], data[moofEnd+6], data[moofEnd+7]);
+                if (nextType === 'mdat') {
+                    let mdatSize = nextSize;
+                    if (nextSize === 1 && moofEnd + 16 <= data.length) {
+                        const hi = readU32(data, moofEnd + 8);
+                        const lo = readU32(data, moofEnd + 12);
+                        mdatSize = hi * 0x100000000 + lo;
+                    }
+                    if (nextSize === 0) mdatSize = data.length - moofEnd;
+                    segEnd = moofEnd + mdatSize;
+                }
+            }
+            segments.push(data.slice(pos, segEnd));
+            pos = segEnd;
+            continue;
+        }
+
+        pos += boxSize;
     }
 
-    return {
-        boxes: buf.slice(0, lastComplete),
-        remainder: buf.slice(lastComplete),
-    };
+    // Init segment is everything before first moof
+    if (initEnd > 0) {
+        segments.unshift(data.slice(0, initEnd));
+    }
+
+    return segments;
 }
 
 async function playVideoMSE(item, fileKey) {
@@ -2580,52 +2605,57 @@ async function playVideoMSE(item, fileKey) {
         return playVideoBlob(item, fileKey, item.mime_type || 'video/mp4');
     }
 
+    if (item.duration && isFinite(item.duration)) {
+        ms.duration = item.duration;
+    }
+
     let aborted = false;
-    let started = false;
-    let remainder = new Uint8Array(0);
-    viewerTitle.textContent = `Buffering... 0/${item.chunk_count}`;
     viewerVideo._abortStreaming = () => { aborted = true; };
 
-    // Waits until the SourceBuffer finishes its current update
+    // Cache for decrypted chunks (keeps init segment + recently fetched)
+    const chunkCache = new Map();
+    let fetchGeneration = 0; // incremented on seek to cancel stale fetches
+
     function waitForUpdate() {
         if (!sb.updating) return Promise.resolve();
         return new Promise(r => sb.addEventListener('updateend', r, { once: true }));
     }
 
-    // Appends data to SourceBuffer, handling quota by evicting played segments
-    async function safeAppend(data) {
-        while (!aborted) {
-            await waitForUpdate();
-            if (aborted) return;
+    async function fetchChunk(index) {
+        if (chunkCache.has(index)) return chunkCache.get(index);
+        const res = await fetch(`/api/media/${item.id}/chunk/${index}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
+        const encData = new Uint8Array(await res.arrayBuffer());
+        const dec = await workerDecrypt('decryptChunk', encData, fileKey, index);
+        chunkCache.set(index, dec);
+        return dec;
+    }
 
-            // Evict played content if buffer is large
-            try {
-                if (sb.buffered.length > 0 && viewerVideo.currentTime > 5) {
-                    const bufferedDuration = sb.buffered.end(sb.buffered.length - 1) - sb.buffered.start(0);
-                    if (bufferedDuration > 60) {
-                        sb.remove(sb.buffered.start(0), viewerVideo.currentTime - 5);
-                        await waitForUpdate();
-                        if (aborted) return;
-                    }
-                }
-            } catch {}
-
+    async function appendData(data) {
+        if (ms.readyState === 'closed') return;
+        // Reopen if endOfStream was called
+        if (ms.readyState === 'ended') {
+            try { ms.duration = item.duration; } catch { return; }
+        }
+        await waitForUpdate();
+        if (aborted) return;
+        for (let attempt = 0; attempt < 5; attempt++) {
             try {
                 sb.appendBuffer(data);
                 await waitForUpdate();
-                if (!started && sb.buffered.length > 0) {
-                    started = true;
-                    viewerTitle.textContent = item.name || 'Video';
-                    viewerVideo.play().catch(() => {});
-                }
                 return;
             } catch (e) {
-                if (e.name === 'QuotaExceededError' && viewerVideo.currentTime > 2) {
+                if (e.name === 'QuotaExceededError') {
                     try {
-                        sb.remove(0, viewerVideo.currentTime - 1);
-                        await waitForUpdate();
+                        if (sb.buffered.length > 0) {
+                            const start = sb.buffered.start(0);
+                            const end = sb.buffered.end(sb.buffered.length - 1);
+                            sb.remove(start, start + (end - start) * 0.25);
+                            await waitForUpdate();
+                        }
                     } catch {}
-                    // retry the append
                 } else {
                     throw e;
                 }
@@ -2633,62 +2663,120 @@ async function playVideoMSE(item, fileKey) {
         }
     }
 
-    try {
-        // Sequential fetch-decrypt-append pipeline with parallel prefetch
+    // Estimate which media chunk (1-based, since 0 is init) corresponds to a time
+    function timeToChunk(time) {
+        if (!item.duration || item.chunk_count <= 1) return 1;
+        const mediaChunks = item.chunk_count - 1; // chunk 0 is init
+        const ratio = Math.max(0, Math.min(time / item.duration, 1));
+        return Math.max(1, Math.floor(ratio * mediaChunks) + 1);
+    }
+
+    // Check if a time is within any buffered range
+    function isBuffered(time) {
+        for (let i = 0; i < sb.buffered.length; i++) {
+            if (time >= sb.buffered.start(i) && time <= sb.buffered.end(i)) return true;
+        }
+        return false;
+    }
+
+    // Fetch and append the init segment (chunk 0) — required before any media segments
+    async function ensureInit() {
+        const initData = await fetchChunk(0);
+        if (aborted) return;
+        await appendData(initData);
+    }
+
+    // Fetch and append chunks sequentially from startChunk, respecting generation
+    async function streamFrom(startChunk, generation) {
         const PREFETCH = 4;
-        const prefetched = new Map(); // index -> Promise<Uint8Array>
 
-        function startFetch(index) {
-            if (index >= item.chunk_count || prefetched.has(index)) return;
-            prefetched.set(index, (async () => {
-                const res = await fetch(`/api/media/${item.id}/chunk/${index}`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
-                const encData = new Uint8Array(await res.arrayBuffer());
-                return workerDecrypt('decryptChunk', encData, fileKey, index);
-            })());
-        }
-
-        for (let i = 0; i < item.chunk_count && !aborted; i++) {
-            // Keep prefetch window ahead
+        for (let i = startChunk; i < item.chunk_count && !aborted && generation === fetchGeneration; i++) {
+            // Prefetch ahead
             for (let p = i; p < Math.min(i + PREFETCH, item.chunk_count); p++) {
-                startFetch(p);
+                if (!chunkCache.has(p)) {
+                    // Fire and forget — will be awaited when we get to it
+                    fetchChunk(p).catch(() => {});
+                }
             }
 
-            const dec = await prefetched.get(i);
-            prefetched.delete(i);
-            if (aborted) break;
+            const dec = await fetchChunk(i);
+            if (aborted || generation !== fetchGeneration) return;
 
-            viewerTitle.textContent = started ? (item.name || 'Video') : `Buffering... ${i + 1}/${item.chunk_count}`;
+            viewerTitle.textContent = item.name || 'Video';
+            await appendData(dec);
+            if (aborted || generation !== fetchGeneration) return;
 
-            // Merge with remainder from previous chunk
-            let data;
-            if (remainder.length > 0) {
-                data = new Uint8Array(remainder.length + dec.length);
-                data.set(remainder);
-                data.set(dec, remainder.length);
-            } else {
-                data = dec;
-            }
-
-            const isLast = (i === item.chunk_count - 1);
-            if (isLast) {
-                // Last chunk — append everything
-                if (data.length > 0) await safeAppend(data);
-                remainder = new Uint8Array(0);
-            } else {
-                const { boxes, remainder: leftover } = extractCompleteBoxes(data);
-                remainder = leftover;
-                if (boxes.length > 0) await safeAppend(boxes);
+            // Throttle: wait if we're far ahead of playback
+            if (i > startChunk + 10) {
+                try {
+                    while (!aborted && generation === fetchGeneration && sb.buffered.length > 0) {
+                        const ahead = sb.buffered.end(sb.buffered.length - 1) - viewerVideo.currentTime;
+                        if (ahead < 60) break;
+                        await new Promise(r => setTimeout(r, 2000));
+                    }
+                } catch {}
             }
         }
 
-        if (!aborted) {
-            verifyChunkCount(item, item.chunk_count);
+        // If we finished all chunks for this generation, signal end of stream
+        if (!aborted && generation === fetchGeneration) {
             await waitForUpdate();
             try { if (ms.readyState === 'open') ms.endOfStream(); } catch {}
         }
+    }
+
+    // Handle seeking to unbuffered regions
+    let seekTimeout = null;
+
+    viewerVideo.addEventListener('seeking', () => {
+        if (aborted) return;
+
+        // Debounce: wait 150ms for the user to stop scrubbing
+        if (seekTimeout) clearTimeout(seekTimeout);
+        seekTimeout = setTimeout(() => {
+            seekTimeout = null;
+            if (aborted) return;
+            const seekTime = viewerVideo.currentTime;
+
+            if (isBuffered(seekTime)) return;
+
+            // Cancel current fetch pipeline
+            fetchGeneration++;
+            const gen = fetchGeneration;
+            // Start 2 chunks before estimate to account for imprecision
+            const targetChunk = Math.max(1, timeToChunk(seekTime) - 2);
+
+            (async () => {
+                try {
+                    // Reopen MediaSource if ended (setting duration transitions ended→open)
+                    if (ms.readyState === 'ended') {
+                        try { ms.duration = item.duration; } catch {}
+                    }
+
+                    // Wait for any pending SourceBuffer operation to finish naturally
+                    await waitForUpdate();
+                    if (aborted || gen !== fetchGeneration) return;
+
+                    // Stream from near the seek position — no buffer clear needed,
+                    // fMP4 segments have absolute timestamps so MSE places them correctly
+                    await streamFrom(targetChunk, gen);
+                } catch (e) {
+                    console.error('Seek error:', e);
+                }
+            })();
+        }, 150);
+    });
+
+    try {
+        // Start: fetch init segment, then stream from chunk 1
+        viewerTitle.textContent = `Buffering...`;
+        await ensureInit();
+        if (aborted) return;
+
+        viewerVideo.play().catch(() => {});
+        viewerTitle.textContent = item.name || 'Video';
+
+        await streamFrom(1, fetchGeneration);
     } catch (e) {
         if (!aborted) viewerTitle.textContent = 'Playback failed: ' + e.message;
     }
@@ -3525,14 +3613,22 @@ async function uploadFile(file, itemEl, targetFolderId) {
     // Encrypt thumbnail
     const encThumb = await encryptChunk(thumbData, thumbKey, 0);
 
-    // Encrypt file chunks
-    const chunkCount = Math.ceil(modifiedData.length / CHUNK_SIZE);
+    // Split into segments: fMP4 at moof boundaries, otherwise fixed chunks
+    let segments;
+    if (fragmented) {
+        segments = splitFMP4Segments(modifiedData);
+    } else {
+        segments = [];
+        for (let start = 0; start < modifiedData.length; start += CHUNK_SIZE) {
+            segments.push(modifiedData.slice(start, Math.min(start + CHUNK_SIZE, modifiedData.length)));
+        }
+    }
+    const chunkCount = segments.length;
+
+    // Encrypt segments
     const encChunks = [];
     for (let i = 0; i < chunkCount; i++) {
-        const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, modifiedData.length);
-        const chunk = modifiedData.slice(start, end);
-        encChunks.push(await encryptChunk(chunk, fileKey, i));
+        encChunks.push(await encryptChunk(segments[i], fileKey, i));
         setUploadProgress(itemEl, Math.round(((i + 1) / chunkCount) * 50));
     }
 
