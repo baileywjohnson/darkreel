@@ -255,6 +255,281 @@ async function remuxToFMP4(data) {
     }
 }
 
+/**
+ * Convert fragmented MP4 (fMP4) back to regular MP4 (moov+mdat) for download.
+ * Pure binary approach: parses the init segment and moof/trun boxes to rebuild
+ * proper sample tables (stts, stsz, stco, stss, ctts). Copies the original
+ * stsd (codec descriptions) verbatim so avcC/esds are preserved exactly.
+ */
+function unfragmentMP4(fmp4) {
+    const d = fmp4;
+    const rd = (b, o) => ((b[o]<<24)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3])>>>0;
+    const wr = (b, o, v) => { b[o]=(v>>>24)&0xff; b[o+1]=(v>>>16)&0xff; b[o+2]=(v>>>8)&0xff; b[o+3]=v&0xff; };
+    const bt = (b, o) => String.fromCharCode(b[o+4],b[o+5],b[o+6],b[o+7]);
+    const bs = (b, o) => { const s=rd(b,o); return s===1&&o+16<=b.length ? rd(b,o+8)*0x100000000+rd(b,o+12) : s===0 ? b.length-o : s; };
+
+    function findBox(b, s, e, t) {
+        let p=s; while(p+8<=e){ const sz=bs(b,p); if(sz<8||p+sz>e) break; if(bt(b,p)===t) return {o:p,s:sz}; p+=sz; } return null;
+    }
+    function findAll(b, s, e, t) {
+        const r=[]; let p=s; while(p+8<=e){ const sz=bs(b,p); if(sz<8||p+sz>e) break; if(bt(b,p)===t) r.push({o:p,s:sz}); p+=sz; } return r;
+    }
+    function childrenExcept(b, s, e, ex) {
+        const r=[]; let p=s; while(p+8<=e){ const sz=bs(b,p); if(sz<8||p+sz>e) break; if(!ex.includes(bt(b,p))) r.push(b.slice(p,p+sz)); p+=sz; } return r;
+    }
+    function cat(...a) { const n=a.reduce((s,b)=>s+b.length,0); const r=new Uint8Array(n); let o=0; for(const b of a){r.set(b,o);o+=b.length;} return r; }
+    function box(t, c) { const b=new Uint8Array(8+c.length); wr(b,0,8+c.length); b[4]=t.charCodeAt(0);b[5]=t.charCodeAt(1);b[6]=t.charCodeAt(2);b[7]=t.charCodeAt(3); b.set(c,8); return b; }
+    function fbox(t, v, f, c) { const b=new Uint8Array(12+c.length); wr(b,0,12+c.length); b[4]=t.charCodeAt(0);b[5]=t.charCodeAt(1);b[6]=t.charCodeAt(2);b[7]=t.charCodeAt(3); b[8]=v; b[9]=(f>>16)&0xff;b[10]=(f>>8)&0xff;b[11]=f&0xff; b.set(c,12); return b; }
+
+    try {
+        // Find init segment end (first moof)
+        let initEnd = 0, pos = 0;
+        while (pos+8 <= d.length) { const sz=bs(d,pos); if(sz<8) break; if(bt(d,pos)==='moof'){initEnd=pos;break;} pos+=sz; }
+        if (!initEnd) return null;
+
+        const ftypB = findBox(d,0,initEnd,'ftyp');
+        const moovB = findBox(d,0,initEnd,'moov');
+        if (!ftypB || !moovB) return null;
+        const ftypData = d.slice(ftypB.o, ftypB.o+ftypB.s);
+        const mvhdB = findBox(d, moovB.o+8, moovB.o+moovB.s, 'mvhd');
+        if (!mvhdB) return null;
+
+        // Parse tracks from init moov
+        const traks = findAll(d, moovB.o+8, moovB.o+moovB.s, 'trak');
+        const tracks = new Map();
+        for (const tk of traks) {
+            const tkhd = findBox(d, tk.o+8, tk.o+tk.s, 'tkhd');
+            if (!tkhd) continue;
+            const tv = d[tkhd.o+8];
+            const tid = rd(d, tkhd.o + 12 + (tv===0 ? 8 : 16));
+
+            const mdia = findBox(d, tk.o+8, tk.o+tk.s, 'mdia');
+            if (!mdia) continue;
+            const mdhd = findBox(d, mdia.o+8, mdia.o+mdia.s, 'mdhd');
+            const hdlr = findBox(d, mdia.o+8, mdia.o+mdia.s, 'hdlr');
+            const minf = findBox(d, mdia.o+8, mdia.o+mdia.s, 'minf');
+            if (!mdhd || !hdlr || !minf) continue;
+            const stbl = findBox(d, minf.o+8, minf.o+minf.s, 'stbl');
+            if (!stbl) continue;
+            const stsd = findBox(d, stbl.o+8, stbl.o+stbl.s, 'stsd');
+            if (!stsd) continue;
+            const edts = findBox(d, tk.o+8, tk.o+tk.s, 'edts');
+
+            tracks.set(tid, {
+                tkhdData: d.slice(tkhd.o, tkhd.o+tkhd.s),
+                edtsData: edts ? d.slice(edts.o, edts.o+edts.s) : null,
+                mdhdData: d.slice(mdhd.o, mdhd.o+mdhd.s),
+                hdlrData: d.slice(hdlr.o, hdlr.o+hdlr.s),
+                minfOther: childrenExcept(d, minf.o+8, minf.o+minf.s, ['stbl']),
+                stsdData: d.slice(stsd.o, stsd.o+stsd.s),
+                samples: [], // {dur, size, isSync, ctsOff, dataPos}
+            });
+        }
+        if (tracks.size === 0) return null;
+
+        // Walk moof+mdat pairs to extract sample info
+        pos = initEnd;
+        while (pos+8 <= d.length) {
+            const sz = bs(d, pos);
+            if (sz<8 || pos+sz>d.length) break;
+            if (bt(d, pos) === 'moof') {
+                const moofOff = pos, moofEnd = pos+sz;
+                for (const traf of findAll(d, moofOff+8, moofEnd, 'traf')) {
+                    const tfhd = findBox(d, traf.o+8, traf.o+traf.s, 'tfhd');
+                    if (!tfhd) continue;
+                    const tfF = (d[tfhd.o+9]<<16)|(d[tfhd.o+10]<<8)|d[tfhd.o+11];
+                    const tid = rd(d, tfhd.o+12);
+                    let p = tfhd.o+16;
+                    let baseOff = moofOff;
+                    if (tfF & 0x01) { baseOff = rd(d,p)*0x100000000+rd(d,p+4); p+=8; }
+                    if (tfF & 0x02) p+=4;
+                    let defDur=0, defSz=0, defFlags=0;
+                    if (tfF & 0x08) { defDur=rd(d,p); p+=4; }
+                    if (tfF & 0x10) { defSz=rd(d,p); p+=4; }
+                    if (tfF & 0x20) { defFlags=rd(d,p); p+=4; }
+
+                    const tr = tracks.get(tid);
+                    if (!tr) continue;
+                    for (const trun of findAll(d, traf.o+8, traf.o+traf.s, 'trun')) {
+                        const trF = (d[trun.o+9]<<16)|(d[trun.o+10]<<8)|d[trun.o+11];
+                        const cnt = rd(d, trun.o+12);
+                        let tp = trun.o+16, dataOff=0, firstFlags=0;
+                        if (trF & 0x01) { dataOff=rd(d,tp)|0; tp+=4; }
+                        if (trF & 0x04) { firstFlags=rd(d,tp); tp+=4; }
+                        let sdp = baseOff + dataOff;
+                        for (let i=0; i<cnt; i++) {
+                            let dur=defDur, size=defSz, flags=(i===0&&(trF&0x04))?firstFlags:defFlags, ctsOff=0;
+                            if (trF&0x100) { dur=rd(d,tp); tp+=4; }
+                            if (trF&0x200) { size=rd(d,tp); tp+=4; }
+                            if (trF&0x400) { flags=rd(d,tp); tp+=4; }
+                            if (trF&0x800) { ctsOff=rd(d,tp); if(d[trun.o+8]===1) ctsOff=ctsOff|0; tp+=4; }
+                            tr.samples.push({ dur, size, isSync: !(flags&0x10000), ctsOff, dataPos: sdp });
+                            sdp += size;
+                        }
+                    }
+                }
+                pos = moofEnd;
+                if (pos+8<=d.length && bt(d,pos)==='mdat') pos += bs(d,pos);
+                continue;
+            }
+            pos += sz;
+        }
+
+        // Build sample table boxes
+        function mkStts(samps) {
+            const e=[]; let last=-1;
+            for (const s of samps) { if(s.dur===last) e[e.length-1][0]++; else { e.push([1,s.dur]); last=s.dur; } }
+            const c=new Uint8Array(4+e.length*8); wr(c,0,e.length);
+            for (let i=0;i<e.length;i++) { wr(c,4+i*8,e[i][0]); wr(c,4+i*8+4,e[i][1]); }
+            return fbox('stts',0,0,c);
+        }
+        function mkStsc() {
+            const c=new Uint8Array(16); wr(c,0,1); wr(c,4,1); wr(c,8,1); wr(c,12,1);
+            return fbox('stsc',0,0,c);
+        }
+        function mkStsz(samps) {
+            const same = samps.length>0 && samps.every(s=>s.size===samps[0].size);
+            if (same) { const c=new Uint8Array(8); wr(c,0,samps[0].size); wr(c,4,samps.length); return fbox('stsz',0,0,c); }
+            const c=new Uint8Array(8+samps.length*4); wr(c,0,0); wr(c,4,samps.length);
+            for (let i=0;i<samps.length;i++) wr(c,8+i*4,samps[i].size);
+            return fbox('stsz',0,0,c);
+        }
+        function mkStco(offsets) {
+            const c=new Uint8Array(4+offsets.length*4); wr(c,0,offsets.length);
+            for (let i=0;i<offsets.length;i++) wr(c,4+i*4,offsets[i]);
+            return fbox('stco',0,0,c);
+        }
+        function mkStss(samps) {
+            const s=[]; let allSync=true;
+            for (let i=0;i<samps.length;i++) { if(samps[i].isSync) s.push(i+1); else allSync=false; }
+            if (allSync) return null;
+            const c=new Uint8Array(4+s.length*4); wr(c,0,s.length);
+            for (let i=0;i<s.length;i++) wr(c,4+i*4,s[i]);
+            return fbox('stss',0,0,c);
+        }
+        function mkCtts(samps) {
+            if (!samps.some(s=>s.ctsOff!==0)) return null;
+            const e=[]; let last=null;
+            for (const s of samps) { if(s.ctsOff===last) e[e.length-1][0]++; else { e.push([1,s.ctsOff]); last=s.ctsOff; } }
+            const c=new Uint8Array(4+e.length*8); wr(c,0,e.length);
+            for (let i=0;i<e.length;i++) { wr(c,4+i*8,e[i][0]); wr(c,4+i*8+4,e[i][1]); }
+            return fbox('ctts', e.some(x=>x[1]<0)?1:0, 0, c);
+        }
+
+        // Compute per-track mdat layout: all samples for track 1, then track 2, etc.
+        let mdatPayloadSize = 0;
+        const trackOrder = [...tracks.entries()].filter(([,t])=>t.samples.length>0);
+        for (const [, tr] of trackOrder) {
+            tr._mdatStart = mdatPayloadSize;
+            tr._offsets = [];
+            for (const s of tr.samples) {
+                tr._offsets.push(mdatPayloadSize);
+                mdatPayloadSize += s.size;
+            }
+        }
+
+        // Fix durations: in fMP4, mvhd/tkhd/mdhd all have duration=0.
+        // Compute real duration from sample tables and patch the copied data.
+        const mvhdData = d.slice(mvhdB.o, mvhdB.o+mvhdB.s);
+        const mvhdVer = mvhdData[8];
+        const mvhdTimescale = rd(mvhdData, mvhdVer === 0 ? 20 : 28);
+        let maxMovieDur = 0;
+
+        for (const [, tr] of trackOrder) {
+            // Sum sample durations in track timescale
+            let trackDur = 0;
+            for (const s of tr.samples) trackDur += s.dur;
+
+            // Patch mdhd duration
+            const mv = tr.mdhdData[8]; // version
+            const mdhdTsOff = mv === 0 ? 20 : 28;
+            const mdhdDurOff = mv === 0 ? 24 : 32;
+            const mdhdTs = rd(tr.mdhdData, mdhdTsOff);
+            if (mv === 0) {
+                wr(tr.mdhdData, mdhdDurOff, trackDur);
+            } else {
+                wr(tr.mdhdData, mdhdDurOff, 0); // hi 32
+                wr(tr.mdhdData, mdhdDurOff + 4, trackDur); // lo 32
+            }
+
+            // Patch tkhd duration (in mvhd timescale)
+            const tv = tr.tkhdData[8]; // version
+            const tkhdDurOff = tv === 0 ? 28 : 36;
+            const movieDur = mdhdTs > 0 ? Math.round(trackDur * mvhdTimescale / mdhdTs) : trackDur;
+            if (tv === 0) {
+                wr(tr.tkhdData, tkhdDurOff, movieDur);
+            } else {
+                wr(tr.tkhdData, tkhdDurOff, 0);
+                wr(tr.tkhdData, tkhdDurOff + 4, movieDur);
+            }
+            if (movieDur > maxMovieDur) maxMovieDur = movieDur;
+        }
+
+        // Patch mvhd duration
+        const mvhdDurOff = mvhdVer === 0 ? 24 : 32;
+        if (mvhdVer === 0) {
+            wr(mvhdData, mvhdDurOff, maxMovieDur);
+        } else {
+            wr(mvhdData, mvhdDurOff, 0);
+            wr(mvhdData, mvhdDurOff + 4, maxMovieDur);
+        }
+
+        // Build trak boxes with placeholder stco offsets (will fix after measuring moov)
+        const trakBoxes = [];
+        for (const [, tr] of trackOrder) {
+            const parts = [tr.stsdData, mkStts(tr.samples), mkStsc(), mkStsz(tr.samples), mkStco(tr._offsets)];
+            const stss = mkStss(tr.samples); if (stss) parts.push(stss);
+            const ctts = mkCtts(tr.samples); if (ctts) parts.push(ctts);
+            const stbl = box('stbl', cat(...parts));
+            const minf = box('minf', cat(...tr.minfOther, stbl));
+            const mdia = box('mdia', cat(tr.mdhdData, tr.hdlrData, minf));
+            const tp = [tr.tkhdData]; if (tr.edtsData) tp.push(tr.edtsData); tp.push(mdia);
+            trakBoxes.push(box('trak', cat(...tp)));
+        }
+        const otherMoov = childrenExcept(d, moovB.o+8, moovB.o+moovB.s, ['mvhd','trak','mvex']);
+        const moov = box('moov', cat(mvhdData, ...trakBoxes, ...otherMoov));
+
+        // Fix stco offsets: add (ftyp + moov + mdat header) to all entries
+        const mdatHdrSize = 8;
+        const baseOffset = ftypData.length + moov.length + mdatHdrSize;
+        // Walk moov recursively to find and fix stco boxes
+        (function fixStco(buf, start, end) {
+            let p = start;
+            while (p+8 <= end) {
+                const sz = (buf[p]<<24|buf[p+1]<<16|buf[p+2]<<8|buf[p+3])>>>0;
+                const t = String.fromCharCode(buf[p+4],buf[p+5],buf[p+6],buf[p+7]);
+                if (sz<8||p+sz>end) break;
+                if (['moov','trak','mdia','minf','stbl'].includes(t)) { fixStco(buf, p+8, p+sz); }
+                else if (t==='stco') {
+                    const cnt = rd(buf, p+12);
+                    for (let i=0; i<cnt; i++) { const o=p+16+i*4; wr(buf, o, rd(buf,o)+baseOffset); }
+                }
+                p += sz;
+            }
+        })(moov, 8, moov.length);
+
+        // Build mdat
+        const mdatHdr = new Uint8Array(8);
+        wr(mdatHdr, 0, mdatHdrSize + mdatPayloadSize);
+        mdatHdr[4]=0x6D; mdatHdr[5]=0x64; mdatHdr[6]=0x61; mdatHdr[7]=0x74;
+
+        // Assemble mdat payload by copying sample data from original fMP4
+        const mdatPayload = new Uint8Array(mdatPayloadSize);
+        for (const [, tr] of trackOrder) {
+            let off = tr._mdatStart;
+            for (const s of tr.samples) {
+                mdatPayload.set(d.subarray(s.dataPos, s.dataPos + s.size), off);
+                off += s.size;
+            }
+        }
+
+        return cat(ftypData, moov, mdatHdr, mdatPayload);
+    } catch (e) {
+        console.warn('Unfragment failed:', e);
+        return null;
+    }
+}
+
 function escapeHTML(str) {
     const el = document.createElement('span');
     el.textContent = str;
@@ -2122,7 +2397,17 @@ async function createGalleryItem(item) {
 
     const badge = document.createElement('span');
     badge.className = 'badge';
-    badge.textContent = item.media_type === 'video' ? 'VID' : 'IMG';
+    if (item.media_type === 'video' && item.duration && isFinite(item.duration)) {
+        const s = Math.round(item.duration);
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        badge.textContent = h > 0
+            ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+            : `${m}:${String(sec).padStart(2, '0')}`;
+    } else {
+        badge.textContent = item.media_type === 'video' ? 'VID' : 'IMG';
+    }
 
     const menuBtn = document.createElement('button');
     menuBtn.className = 'item-menu-btn';
@@ -2140,21 +2425,6 @@ async function createGalleryItem(item) {
     div.appendChild(img);
     div.appendChild(badge);
     div.appendChild(menuBtn);
-
-    // Duration badge for videos
-    if (item.media_type === 'video' && item.duration && isFinite(item.duration)) {
-        const durBadge = document.createElement('span');
-        durBadge.className = 'duration-badge';
-        const s = Math.round(item.duration);
-        const h = Math.floor(s / 3600);
-        const m = Math.floor((s % 3600) / 60);
-        const sec = s % 60;
-        durBadge.textContent = h > 0
-            ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
-            : `${m}:${String(sec).padStart(2, '0')}`;
-        div.appendChild(durBadge);
-    }
-
     div.appendChild(nameEl);
     div.addEventListener('click', (e) => {
         if (e.target.closest('.item-menu-btn') || e.target.closest('.folder-context-menu')) return;
@@ -3674,33 +3944,7 @@ async function downloadItem(item) {
         const fileKey = await decryptFileKey(fileKeyEnc);
         const progressEl = toast.querySelector('.download-toast-progress');
 
-        // Try File System Access API for streaming writes (Chrome/Edge)
-        if (window.showSaveFilePicker) {
-            try {
-                const handle = await window.showSaveFilePicker({
-                    suggestedName: filename,
-                    types: [{ accept: { [mime]: [] } }],
-                });
-                const writable = await handle.createWritable();
-                for (let i = 0; i < item.chunk_count; i++) {
-                    progressEl.textContent = `${i + 1}/${item.chunk_count}`;
-                    const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
-                    const encData = new Uint8Array(await res.arrayBuffer());
-                    const dec = await workerDecrypt('decryptChunk', encData, fileKey, i);
-                    await writable.write(dec);
-                }
-                await writable.close();
-                toast.remove();
-                return;
-            } catch (e) {
-                if (e.name === 'AbortError') { toast.remove(); return; } // user cancelled picker
-                // Fall through to blob approach
-            }
-        }
-
-        // Fallback: collect all chunks, then trigger blob download
+        // Collect all chunks
         const chunks = [];
         for (let i = 0; i < item.chunk_count; i++) {
             progressEl.textContent = `${i + 1}/${item.chunk_count}`;
@@ -3712,7 +3956,20 @@ async function downloadItem(item) {
             chunks.push(dec);
         }
 
-        const blob = new Blob(chunks, { type: mime });
+        const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+        let merged = new Uint8Array(totalLen);
+        let off = 0;
+        for (const c of chunks) { merged.set(c, off); off += c.length; }
+
+        // For fragmented MP4: convert back to regular MP4 (moov+mdat) so
+        // QuickTime and other desktop players can open it. fMP4 streams fine
+        // via MSE but standalone players often choke on it.
+        if (item.fragmented) {
+            const unfragmented = await unfragmentMP4(merged);
+            if (unfragmented) merged = unfragmented;
+        }
+
+        const blob = new Blob([merged], { type: mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;

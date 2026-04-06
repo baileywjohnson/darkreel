@@ -526,6 +526,7 @@ main { padding-top: 0; position: relative; z-index: 1; }
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
 }
 .gallery-item .item-menu-btn {
     position: absolute;
@@ -558,18 +559,6 @@ main { padding-top: 0; position: relative; z-index: 1; }
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-.gallery-item .duration-badge {
-    position: absolute;
-    bottom: 32px;
-    left: 8px;
-    padding: 2px 8px;
-    background: rgba(0,0,0,0.7);
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 600;
-    color: #fff;
-    font-variant-numeric: tabular-nums;
 }
 .gallery-empty {
     text-align: center;

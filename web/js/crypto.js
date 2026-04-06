@@ -232,8 +232,9 @@ function generateImageThumbnail(file) {
 function generateVideoThumbnail(file) {
     return new Promise((resolve, reject) => {
         const video = document.createElement('video');
-        video.preload = 'metadata';
+        video.preload = 'auto';
         video.muted = true;
+        video.playsInline = true; // Required for iOS Safari to load video data
         video.onloadeddata = () => {
             video.currentTime = Math.min(1, video.duration / 4);
         };
