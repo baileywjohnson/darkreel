@@ -452,7 +452,7 @@
         </div>
         <div class="pitch-point">
             <h3><span class="dot dot-green"></span> Streaming without decrypting server-side</h3>
-            <p>Files are split into 1 MB encrypted chunks. Your browser fetches chunks on demand, decrypts them in a Web Worker, and pipes the plaintext to &lt;video&gt; or &lt;img&gt; via MediaSource Extensions. Seeking works. No full download needed.</p>
+            <p>Videos are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI, or ffmpeg WASM in the browser (loaded once in the background). No re-encoding, just container restructuring. Each encrypted chunk is independently decodable. Your browser fetches 4 chunks in parallel, decrypts in a Web Worker, and appends to a MediaSource SourceBuffer. Playback starts after the first chunk.</p>
         </div>
         <div class="pitch-point">
             <h3><span class="dot dot-amber"></span> Metadata is encrypted too</h3>
@@ -512,7 +512,7 @@
         <div class="diff-row">
             <div class="diff-cell diff-label">Video playback</div>
             <div class="diff-cell diff-typical">Download entire file, then decrypt and play</div>
-            <div class="diff-cell diff-ours"><strong>Chunk-by-chunk streaming</strong> via MediaSource Extensions. Seeking works. No full download.</div>
+            <div class="diff-cell diff-ours"><strong>Fragmented MP4 + MSE streaming</strong>. Playback starts after the first chunk. 4 chunks fetched in parallel.</div>
         </div>
     </div>
 </div>
