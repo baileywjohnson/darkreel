@@ -6,7 +6,10 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-coeBA6/2bowIZdedSZlqlWGY84vpd13g3XOGT+SSLLKWBkjfwTmvbBgFMs6Yo2LR" crossorigin="anonymous">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-fb4R2z6C3Ri1BoyQByKpL4mUxcuiBJQaOYLEdXa3XW0k24rFStVYbaGiJEXVQaqW" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -21,7 +24,7 @@
                 <button id="admin-btn" class="btn btn-ghost header-desktop hidden">Admin</button>
                 <button id="logout-btn" class="btn btn-ghost header-desktop">Logout</button>
                 <div class="header-menu-wrap">
-                    <button id="header-menu-btn" class="btn btn-ghost header-mobile-only" aria-label="Menu">&#9776;</button>
+                    <button id="header-menu-btn" class="btn btn-icon header-mobile-only" aria-label="Menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
                     <div id="header-menu-popup" class="header-menu-popup hidden">
                         <button id="settings-btn-mobile" class="btn btn-ghost">Settings</button>
                         <button id="admin-btn-mobile" class="btn btn-ghost hidden">Admin</button>
@@ -84,7 +87,7 @@
                     <div id="breadcrumb" class="breadcrumb"></div>
                     <div class="folder-filters">
                         <div class="custom-select filter-desktop" id="sort-select-wrap" data-value="date-desc">
-                            <button class="custom-select-trigger btn-sm">Newest first <span class="caret">&#9662;</span></button>
+                            <button class="custom-select-trigger btn-sm">Newest first <svg class="caret" width="10" height="10" viewBox="0 0 10 10"><path d="M2 4l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                             <div class="custom-select-options hidden">
                                 <div class="custom-select-option selected" data-value="date-desc">Newest first</div>
                                 <div class="custom-select-option" data-value="date-asc">Oldest first</div>
@@ -95,7 +98,7 @@
                             </div>
                         </div>
                         <div class="custom-select filter-desktop" id="type-filter-wrap" data-value="">
-                            <button class="custom-select-trigger btn-sm">All <span class="caret">&#9662;</span></button>
+                            <button class="custom-select-trigger btn-sm">All <svg class="caret" width="10" height="10" viewBox="0 0 10 10"><path d="M2 4l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                             <div class="custom-select-options hidden">
                                 <div class="custom-select-option selected" data-value="">All</div>
                                 <div class="custom-select-option" data-value="image">Images</div>
@@ -106,7 +109,7 @@
                         <div id="filter-popup" class="filter-popup hidden">
                             <label>Sort by</label>
                             <div class="custom-select" id="sort-select-mobile-wrap" data-value="date-desc">
-                                <button class="custom-select-trigger">Newest first <span class="caret">&#9662;</span></button>
+                                <button class="custom-select-trigger">Newest first <svg class="caret" width="10" height="10" viewBox="0 0 10 10"><path d="M2 4l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                                 <div class="custom-select-options hidden">
                                     <div class="custom-select-option selected" data-value="date-desc">Newest first</div>
                                     <div class="custom-select-option" data-value="date-asc">Oldest first</div>
@@ -118,7 +121,7 @@
                             </div>
                             <label>Type</label>
                             <div class="custom-select" id="type-filter-mobile-wrap" data-value="">
-                                <button class="custom-select-trigger">All <span class="caret">&#9662;</span></button>
+                                <button class="custom-select-trigger">All <svg class="caret" width="10" height="10" viewBox="0 0 10 10"><path d="M2 4l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                                 <div class="custom-select-options hidden">
                                     <div class="custom-select-option selected" data-value="">All</div>
                                     <div class="custom-select-option" data-value="image">Images</div>
@@ -153,7 +156,7 @@
             <div id="admin-view" class="view hidden">
                 <div class="admin-panel">
                     <div class="admin-header">
-                        <h2><button id="admin-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back">&#8592;</button>Admin</h2>
+                        <h2><button id="admin-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>Admin</h2>
                     </div>
                     <div class="admin-create">
                         <h3>Create User</h3>
@@ -188,7 +191,7 @@
             <div id="settings-view" class="view hidden">
                 <div class="admin-panel">
                     <div class="admin-header">
-                        <h2><button id="settings-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back">&#8592;</button>Settings</h2>
+                        <h2><button id="settings-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>Settings</h2>
                     </div>
                     <div class="admin-create">
                         <h3>Change Password</h3>
@@ -317,10 +320,10 @@
                     </div>
                 </div>
                 <div class="viewer-content">
-                    <button id="viewer-prev" class="viewer-nav viewer-nav-prev" aria-label="Previous">&#8249;</button>
+                    <button id="viewer-prev" class="viewer-nav viewer-nav-prev" aria-label="Previous"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
                     <video id="viewer-video" class="hidden" controls></video>
                     <img id="viewer-image" class="hidden" alt="">
-                    <button id="viewer-next" class="viewer-nav viewer-nav-next" aria-label="Next">&#8250;</button>
+                    <button id="viewer-next" class="viewer-nav viewer-nav-next" aria-label="Next"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
                 </div>
             </div>
         </main>
@@ -345,6 +348,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-ERnWjpfZFdw1O+QB5F1c99U6Xfl3L89RRZyWs3WPLF8ZqLP/U8UTYfUADFTBgMjc" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-6EDaDk96HBfkKzHc8kI0vjn/qzTVdnWt4xIxQDkfheYqOuM9m6QjouVdCy/5nS7y" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-zGhmkLuMGxXtL3Datie1d7v0j6/aaxdRBUn29E5iSt79VJ/aMzdkOK3M9w51TCQQ" crossorigin="anonymous"></script>
 </body>
 </html>

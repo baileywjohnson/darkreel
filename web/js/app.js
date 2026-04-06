@@ -907,7 +907,7 @@ function applyTheme(theme) {
     });
 }
 // Apply saved theme on load
-applyTheme(localStorage.getItem('darkreel-theme') || 'warm');
+applyTheme(localStorage.getItem('darkreel-theme') || 'classic');
 document.getElementById('theme-picker').addEventListener('click', (e) => {
     const swatch = e.target.closest('.theme-swatch');
     if (swatch) applyTheme(swatch.dataset.theme);
@@ -1393,7 +1393,7 @@ function createFolderElements() {
         el.className = 'folder-item';
         el.dataset.folderId = f.id;
         el.innerHTML = `
-            <span class="folder-icon">📁</span>
+            <svg class="folder-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             <span class="folder-name">${escapeHtml(f.name)}</span>
             <button class="folder-menu-btn" data-folder-action="${f.id}" title="Folder options">⋮</button>
         `;
@@ -1666,7 +1666,7 @@ function initCustomSelect(wrapId, state, key, linkedId) {
         const val = opt.dataset.value;
         state[key] = val;
         wrap.dataset.value = val;
-        trigger.innerHTML = opt.textContent + ' <span class="caret">&#9662;</span>';
+        trigger.innerHTML = opt.textContent + ' <span class="caret"></span>' + '<svg class="caret" width="10" height="10" viewBox="0 0 10 10"><path d="M2 4l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
         optionsEl.querySelectorAll('.custom-select-option').forEach(o => o.classList.toggle('selected', o.dataset.value === val));
         optionsEl.classList.add('hidden');
 
@@ -1675,7 +1675,7 @@ function initCustomSelect(wrapId, state, key, linkedId) {
             const linked = document.getElementById(linkedId);
             linked.dataset.value = val;
             const linkedTrigger = linked.querySelector('.custom-select-trigger');
-            linkedTrigger.innerHTML = opt.textContent + ' <span class="caret">&#9662;</span>';
+            linkedTrigger.innerHTML = opt.textContent + ' <span class="caret"></span>' + '<svg class="caret" width="10" height="10" viewBox="0 0 10 10"><path d="M2 4l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
             linked.querySelectorAll('.custom-select-option').forEach(o => o.classList.toggle('selected', o.dataset.value === val));
         }
         renderGalleryItems();
@@ -1732,7 +1732,7 @@ function addRefreshButton() {
     const refreshBtn = document.createElement('button');
     refreshBtn.className = 'btn-refresh';
     refreshBtn.setAttribute('aria-label', 'Refresh');
-    refreshBtn.innerHTML = '&#8635;';
+    refreshBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
     refreshBtn.addEventListener('click', onRefreshClick);
 
     const hasItems = galleryGrid.querySelector('.gallery-item:not(.refresh-tile)') || galleryGrid.querySelector('.folder-item');
@@ -2144,7 +2144,7 @@ function openMoveModal(item) {
     // Root option
     const rootEl = document.createElement('div');
     rootEl.className = 'move-folder-item' + ((item.folderId || null) === null ? ' active' : '');
-    rootEl.innerHTML = '📂 All Media (root)';
+    rootEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> All Media (root)';
     rootEl.addEventListener('click', () => doMove(null));
     moveFolderList.appendChild(rootEl);
 
@@ -2153,7 +2153,7 @@ function openMoveModal(item) {
         for (const f of folders.filter(x => x.parentId === parentId)) {
             const el = document.createElement('div');
             el.className = 'move-folder-item' + (item.folderId === f.id ? ' active' : '');
-            el.innerHTML = `<span class="move-folder-indent" style="width:${depth * 20}px"></span>📁 ${escapeHtml(f.name)}`;
+            el.innerHTML = `<span class="move-folder-indent" style="width:${depth * 20}px"></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ${escapeHtml(f.name)}`;
             el.addEventListener('click', () => doMove(f.id));
             moveFolderList.appendChild(el);
             addFolders(f.id, depth + 1);
@@ -2200,7 +2200,7 @@ function openMoveFolderModal(folder) {
     // Root option
     const rootEl = document.createElement('div');
     rootEl.className = 'move-folder-item' + ((folder.parentId || null) === null ? ' active' : '');
-    rootEl.innerHTML = '📂 All Media (root)';
+    rootEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> All Media (root)';
     rootEl.addEventListener('click', () => doMoveFolder(null));
     moveFolderList.appendChild(rootEl);
 
@@ -2209,7 +2209,7 @@ function openMoveFolderModal(folder) {
             if (descendantIds.has(f.id)) continue;
             const el = document.createElement('div');
             el.className = 'move-folder-item' + (folder.parentId === f.id ? ' active' : '');
-            el.innerHTML = `<span class="move-folder-indent" style="width:${depth * 20}px"></span>📁 ${escapeHtml(f.name)}`;
+            el.innerHTML = `<span class="move-folder-indent" style="width:${depth * 20}px"></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ${escapeHtml(f.name)}`;
             el.addEventListener('click', () => doMoveFolder(f.id));
             moveFolderList.appendChild(el);
             addFolders(f.id, depth + 1);
