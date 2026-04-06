@@ -2594,58 +2594,77 @@ async function playVideoMSE(item, fileKey) {
     viewerTitle.textContent = `Buffering... 0/${item.chunk_count}`;
     viewerVideo._abortStreaming = () => { aborted = true; };
 
-    function tryAppend() {
-        if (aborted || sb.updating || appendPending) return;
-        // Gather contiguous decrypted chunks starting from nextAppend
-        let newData = remainder;
-        while (nextAppend < item.chunk_count && decrypted[nextAppend]) {
+    // Queue of Uint8Arrays ready to append (each is one or more complete MP4 boxes)
+    const appendQueue = [];
+
+    function feedBuffer() {
+        // Merge one contiguous chunk into remainder, extract complete boxes, queue them
+        if (nextAppend < item.chunk_count && decrypted[nextAppend]) {
             const chunk = decrypted[nextAppend];
             decrypted[nextAppend] = null;
-            const merged = new Uint8Array(newData.length + chunk.length);
-            merged.set(newData);
-            merged.set(chunk, newData.length);
-            newData = merged;
             nextAppend++;
+
+            const merged = new Uint8Array(remainder.length + chunk.length);
+            merged.set(remainder);
+            merged.set(chunk, remainder.length);
+
+            const isLast = allFetched && nextAppend >= item.chunk_count;
+            if (isLast) {
+                // Last data — append everything, no need to parse boxes
+                appendQueue.push(merged);
+                remainder = new Uint8Array(0);
+            } else {
+                const { boxes, remainder: leftover } = extractCompleteBoxes(merged);
+                remainder = leftover;
+                if (boxes.length > 0) appendQueue.push(boxes);
+            }
         }
+    }
 
-        if (newData.length === 0) return;
+    function tryAppend() {
+        if (aborted || sb.updating) return;
 
-        // If all chunks are in, append everything (no need to parse boxes)
-        if (allFetched && nextAppend >= item.chunk_count) {
-            remainder = new Uint8Array(0);
-            appendPending = true;
-            try { sb.appendBuffer(newData); } catch {}
+        // Evict played data if buffer is getting large (>40 MB buffered)
+        try {
+            if (sb.buffered.length > 0 && viewerVideo.currentTime > 5) {
+                const bufferedEnd = sb.buffered.end(sb.buffered.length - 1);
+                const bufferedStart = sb.buffered.start(0);
+                if (bufferedEnd - bufferedStart > 40) {
+                    sb.remove(bufferedStart, viewerVideo.currentTime - 2);
+                    return; // updateend will call tryAppend again
+                }
+            }
+        } catch {}
+
+        // Feed more data into the queue
+        feedBuffer();
+
+        if (appendQueue.length === 0) {
+            // Nothing to append — check if we're done
+            if (allFetched && nextAppend >= item.chunk_count && remainder.length === 0) {
+                try { if (ms.readyState === 'open') ms.endOfStream(); } catch {}
+            }
             return;
         }
 
-        // Extract only complete MP4 boxes
-        const { boxes, remainder: leftover } = extractCompleteBoxes(newData);
-        remainder = leftover;
-
-        if (boxes.length === 0) return;
-
-        appendPending = true;
+        const data = appendQueue.shift();
         try {
-            sb.appendBuffer(boxes);
+            sb.appendBuffer(data);
         } catch (e) {
-            appendPending = false;
-            if (e.name === 'QuotaExceededError' && viewerVideo.currentTime > 1) {
-                try { sb.remove(0, viewerVideo.currentTime - 0.5); } catch {}
+            if (e.name === 'QuotaExceededError' && viewerVideo.currentTime > 2) {
+                // Put data back and evict played segments
+                appendQueue.unshift(data);
+                try { sb.remove(0, viewerVideo.currentTime - 1); } catch {}
             }
         }
     }
 
     sb.addEventListener('updateend', () => {
-        appendPending = false;
         if (aborted) return;
         if (!started && sb.buffered.length > 0) {
             started = true;
             viewerTitle.textContent = item.name || 'Video';
             viewerVideo.play().catch(() => {});
-        }
-        if (allFetched && nextAppend >= item.chunk_count && remainder.length === 0) {
-            try { if (ms.readyState === 'open') ms.endOfStream(); } catch {}
-            return;
         }
         tryAppend();
     });
