@@ -3188,18 +3188,31 @@ function rotateImageData(blob, mimeType) {
 
 async function deleteCurrentItem() {
     if (!currentViewerItem) return;
-    await deleteItem(currentViewerItem);
-    closeViewer();
+    const item = currentViewerItem;
+    showConfirmModal('Delete file', 'Delete this item? This cannot be undone.', () => {
+        closeViewer();
+        mediaItems = mediaItems.filter(m => m.id !== item.id);
+        renderGalleryItems();
+        api(`/api/media/${item.id}`, { method: 'DELETE' }).catch(e => {
+            mediaItems.push(item);
+            renderGalleryItems();
+            showConfirmModal('Error', 'Delete failed: ' + e.message, () => {}, { buttonLabel: 'OK', buttonClass: 'btn-primary' });
+        });
+    });
 }
 
 async function deleteItem(item) {
     showConfirmModal('Delete file', 'Delete this item? This cannot be undone.', async () => {
-        try {
-            await api(`/api/media/${item.id}`, { method: 'DELETE' });
-            loadMedia();
-        } catch (e) {
+        // Optimistic: remove from gallery immediately
+        mediaItems = mediaItems.filter(m => m.id !== item.id);
+        renderGalleryItems();
+        // Fire delete in background
+        api(`/api/media/${item.id}`, { method: 'DELETE' }).catch(e => {
+            // Restore on failure
+            mediaItems.push(item);
+            renderGalleryItems();
             showConfirmModal('Error', 'Delete failed: ' + e.message, () => {}, { buttonLabel: 'OK', buttonClass: 'btn-primary' });
-        }
+        });
     });
 }
 
