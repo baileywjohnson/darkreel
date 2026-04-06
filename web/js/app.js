@@ -2605,6 +2605,11 @@ async function playVideoMSE(item, fileKey) {
         return playVideoBlob(item, fileKey, item.mime_type || 'video/mp4');
     }
 
+    // Set duration so the scrubber/seek bar works
+    if (item.duration && isFinite(item.duration)) {
+        ms.duration = item.duration;
+    }
+
     let aborted = false;
     let started = false;
     viewerTitle.textContent = `Buffering... 0/${item.chunk_count}`;
