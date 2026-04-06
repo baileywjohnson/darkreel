@@ -2372,6 +2372,8 @@ function initTouchDrag(el, getData) {
             if (Math.abs(t.clientX - startX) > 10 || Math.abs(t.clientY - startY) > 10) {
                 clearTimeout(timer);
                 timer = null;
+            } else {
+                e.preventDefault(); // prevent scroll while waiting for long-press
             }
             return;
         }
@@ -2456,8 +2458,39 @@ document.addEventListener('touchend', (e) => {
     cleanupTouchDrag();
 });
 
-document.addEventListener('touchcancel', () => {
-    if (_touchDragState) cleanupTouchDrag();
+document.addEventListener('touchcancel', (e) => {
+    if (!_touchDragState) return;
+
+    // On iOS Firefox, touchcancel fires instead of touchend on long-press drag.
+    // Treat it as a drop if we have a valid target.
+    const touch = e.changedTouches?.[0];
+    if (touch) {
+        const target = findDropTarget(touch.clientX, touch.clientY);
+        document.querySelectorAll('.touch-drag-over').forEach(el => el.classList.remove('touch-drag-over'));
+
+        if (target) {
+            const data = _touchDragState.data;
+            let targetFolderId = null;
+            const folderItem = target.closest('.folder-item');
+            const breadcrumbItem = target.closest('.breadcrumb-item');
+            if (folderItem && folderItem.dataset.folderId) {
+                targetFolderId = folderItem.dataset.folderId;
+            } else if (breadcrumbItem && breadcrumbItem.dataset.folderId) {
+                targetFolderId = breadcrumbItem.dataset.folderId;
+            } else if (breadcrumbItem && !breadcrumbItem.dataset.folderId) {
+                targetFolderId = null;
+            }
+
+            if (data.type === 'item') {
+                moveItemToFolder(data.value, targetFolderId).then(() => renderGalleryItems()).catch(() => {});
+            } else if (data.type === 'folder' && data.value.id !== targetFolderId) {
+                data.value.parentId = targetFolderId;
+                saveFolderTree().then(() => renderGalleryItems());
+            }
+        }
+    }
+
+    cleanupTouchDrag();
 });
 
 // --- Drop-to-upload (no modal) ---
