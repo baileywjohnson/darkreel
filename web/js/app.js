@@ -2515,6 +2515,47 @@ async function playVideo(item, fileKey) {
     }
 }
 
+/**
+ * Read a 32-bit big-endian unsigned int from a Uint8Array.
+ */
+function readU32(buf, offset) {
+    return ((buf[offset] << 24) | (buf[offset+1] << 16) | (buf[offset+2] << 8) | buf[offset+3]) >>> 0;
+}
+
+/**
+ * Extract complete top-level MP4 boxes from a buffer.
+ * Returns { boxes: Uint8Array (complete boxes), remainder: Uint8Array (leftover) }.
+ */
+function extractCompleteBoxes(buf) {
+    let pos = 0;
+    let lastComplete = 0;
+
+    while (pos + 8 <= buf.length) {
+        let size = readU32(buf, pos);
+        if (size === 1) {
+            // 64-bit extended size
+            if (pos + 16 > buf.length) break;
+            const hi = readU32(buf, pos + 8);
+            const lo = readU32(buf, pos + 12);
+            size = hi * 0x100000000 + lo;
+        } else if (size === 0) {
+            // Box extends to end of buffer — only valid if this is the last box
+            // Treat as incomplete unless we know all data has arrived
+            break;
+        }
+        if (size < 8) break; // malformed
+        if (pos + size > buf.length) break; // incomplete box
+
+        pos += size;
+        lastComplete = pos;
+    }
+
+    return {
+        boxes: buf.slice(0, lastComplete),
+        remainder: buf.slice(lastComplete),
+    };
+}
+
 async function playVideoMSE(item, fileKey) {
     const codecString = item.codecs || 'avc1.64001f,mp4a.40.2';
     const mseType = `video/mp4; codecs="${codecString}"`;
@@ -2544,23 +2585,50 @@ async function playVideoMSE(item, fileKey) {
     let nextAppend = 0;
     let started = false;
     let chunksDecrypted = 0;
+    let allFetched = false;
     const decrypted = new Array(item.chunk_count);
     let aborted = false;
+    let remainder = new Uint8Array(0); // leftover bytes from incomplete boxes
+    let appendPending = false;
 
     viewerTitle.textContent = `Buffering... 0/${item.chunk_count}`;
     viewerVideo._abortStreaming = () => { aborted = true; };
 
-    function appendNext() {
-        if (aborted || sb.updating || nextAppend >= item.chunk_count) return;
-        if (!decrypted[nextAppend]) return;
+    function tryAppend() {
+        if (aborted || sb.updating || appendPending) return;
+        // Gather contiguous decrypted chunks starting from nextAppend
+        let newData = remainder;
+        while (nextAppend < item.chunk_count && decrypted[nextAppend]) {
+            const chunk = decrypted[nextAppend];
+            decrypted[nextAppend] = null;
+            const merged = new Uint8Array(newData.length + chunk.length);
+            merged.set(newData);
+            merged.set(chunk, newData.length);
+            newData = merged;
+            nextAppend++;
+        }
 
-        const chunk = decrypted[nextAppend];
-        decrypted[nextAppend] = null;
-        nextAppend++;
+        if (newData.length === 0) return;
 
+        // If all chunks are in, append everything (no need to parse boxes)
+        if (allFetched && nextAppend >= item.chunk_count) {
+            remainder = new Uint8Array(0);
+            appendPending = true;
+            try { sb.appendBuffer(newData); } catch {}
+            return;
+        }
+
+        // Extract only complete MP4 boxes
+        const { boxes, remainder: leftover } = extractCompleteBoxes(newData);
+        remainder = leftover;
+
+        if (boxes.length === 0) return;
+
+        appendPending = true;
         try {
-            sb.appendBuffer(chunk);
+            sb.appendBuffer(boxes);
         } catch (e) {
+            appendPending = false;
             if (e.name === 'QuotaExceededError' && viewerVideo.currentTime > 1) {
                 try { sb.remove(0, viewerVideo.currentTime - 0.5); } catch {}
             }
@@ -2568,17 +2636,18 @@ async function playVideoMSE(item, fileKey) {
     }
 
     sb.addEventListener('updateend', () => {
+        appendPending = false;
         if (aborted) return;
-        if (!started && nextAppend >= 1) {
+        if (!started && sb.buffered.length > 0) {
             started = true;
             viewerTitle.textContent = item.name || 'Video';
             viewerVideo.play().catch(() => {});
         }
-        if (nextAppend >= item.chunk_count && chunksDecrypted >= item.chunk_count) {
+        if (allFetched && nextAppend >= item.chunk_count && remainder.length === 0) {
             try { if (ms.readyState === 'open') ms.endOfStream(); } catch {}
             return;
         }
-        appendNext();
+        tryAppend();
     });
 
     async function fetchAndDecrypt(index) {
@@ -2593,7 +2662,7 @@ async function playVideoMSE(item, fileKey) {
         decrypted[index] = dec;
         chunksDecrypted++;
         viewerTitle.textContent = started ? (item.name || 'Video') : `Buffering... ${chunksDecrypted}/${item.chunk_count}`;
-        appendNext();
+        tryAppend();
     }
 
     try {
@@ -2608,7 +2677,11 @@ async function playVideoMSE(item, fileKey) {
             })());
         }
         await Promise.all(workers);
-        if (!aborted) verifyChunkCount(item, chunksDecrypted);
+        if (!aborted) {
+            allFetched = true;
+            verifyChunkCount(item, chunksDecrypted);
+            tryAppend(); // flush any remaining data
+        }
     } catch (e) {
         if (!aborted) viewerTitle.textContent = 'Playback failed: ' + e.message;
     }
