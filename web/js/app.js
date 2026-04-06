@@ -158,6 +158,16 @@ function showError(msg) {
     authError.classList.remove('hidden');
 }
 
+function btnLoading(btn) {
+    btn.disabled = true;
+    btn.dataset.origText = btn.textContent;
+    btn.innerHTML = '<div class="spinner spinner-sm"></div>';
+}
+function btnReset(btn) {
+    btn.textContent = btn.dataset.origText || '';
+    btn.disabled = false;
+}
+
 async function handleLogin(overrideUsername, overridePassword) {
     const username = overrideUsername || document.getElementById('auth-username').value;
     const password = overridePassword || document.getElementById('auth-password').value;
@@ -778,11 +788,13 @@ adminCreateForm.addEventListener('submit', async (e) => {
         return;
     }
 
+    btnLoading(adminCreateBtn);
     try {
         const res = await api('/api/admin/users', { json: { username, password, is_admin: isAdmin } });
         adminCreateSuccess.innerHTML = 'User "' + escapeHtml(res.username) + '" created.<br>Recovery code:<br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:8px;margin-top:4px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + escapeHtml(res.recovery_code) + '</code>';
         adminCreateSuccess.classList.remove('hidden');
         adminCreateForm.reset();
+        btnReset(adminCreateBtn);
         adminPwConfirm.disabled = true;
         adminCreateBtn.disabled = true;
         adminUsernameReqs.classList.add('hidden');
@@ -790,6 +802,7 @@ adminCreateForm.addEventListener('submit', async (e) => {
         adminConfirmHint.classList.add('hidden');
         loadAdminUsers();
     } catch (err) {
+        btnReset(adminCreateBtn);
         adminCreateError.textContent = err.message || 'Failed to create user';
         adminCreateError.classList.remove('hidden');
     }
@@ -979,6 +992,7 @@ document.getElementById('settings-change-pw-form').addEventListener('submit', as
         return;
     }
 
+    btnLoading(settingsChangePwBtn);
     try {
         const res = await api('/api/auth/change-password', { json: { old_password: oldPw, new_password: newPw } });
 
@@ -1010,10 +1024,12 @@ document.getElementById('settings-change-pw-form').addEventListener('submit', as
         succEl.classList.remove('hidden');
         document.getElementById('settings-change-pw-form').reset();
         settingsNewPwConfirm.disabled = true;
+        btnReset(settingsChangePwBtn);
         settingsChangePwBtn.disabled = true;
         settingsPwReqs.classList.add('hidden');
         settingsConfirmHint.classList.add('hidden');
     } catch (err) {
+        btnReset(settingsChangePwBtn);
         errEl.textContent = err.message || 'Failed to change password';
         errEl.classList.remove('hidden');
     }
@@ -1025,13 +1041,16 @@ document.getElementById('settings-delete-form').addEventListener('submit', async
     errEl.classList.add('hidden');
 
     const password = document.getElementById('settings-delete-pw').value;
+    const deleteBtn = e.target.querySelector('button[type="submit"]');
 
     showConfirmModal('Delete account', 'Are you sure you want to delete your account? All of your encrypted media will be permanently destroyed.', async () => {
+        btnLoading(deleteBtn);
         try {
             await api('/api/auth/account', { method: 'DELETE', json: { password } });
             sessionStorage.clear();
             showAuth();
         } catch (err) {
+            btnReset(deleteBtn);
             errEl.textContent = err.message || 'Failed to delete account';
             errEl.classList.remove('hidden');
         }
