@@ -17,14 +17,9 @@ async function loadFFmpeg() {
         try {
             const { FFmpeg } = await import('/js/vendor/ffmpeg/index.js');
             const ff = new FFmpeg();
-            const workerBlob = new Blob(
-                [await (await fetch('/js/vendor/ffmpeg/worker.js')).text()],
-                { type: 'text/javascript' }
-            );
             await ff.load({
                 coreURL: new URL('/js/vendor/ffmpeg/ffmpeg-core.js', location.origin).href,
                 wasmURL: new URL('/js/vendor/ffmpeg/ffmpeg-core.wasm', location.origin).href,
-                workerURL: URL.createObjectURL(workerBlob),
             });
             _ffmpegInstance = ff;
             return ff;
