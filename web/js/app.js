@@ -2480,11 +2480,21 @@ function closeViewer() {
     viewerIndex = -1;
 }
 
+// Fetch with automatic retry on 429 (rate limit)
+async function fetchRetry(url, options) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const res = await fetch(url, options);
+        if (res.status !== 429) return res;
+        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+    }
+    return fetch(url, options);
+}
+
 async function showImage(item, fileKey) {
     viewerImage.classList.remove('hidden');
     const chunks = [];
     for (let i = 0; i < item.chunk_count; i++) {
-        const res = await fetch(`/api/media/${item.id}/chunk/${i}`, {
+        const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         const encData = new Uint8Array(await res.arrayBuffer());
@@ -2585,11 +2595,12 @@ async function playVideoMSE(item, fileKey) {
     const codecString = item.codecs || 'avc1.64001f,mp4a.40.2';
     const mseType = `video/mp4; codecs="${codecString}"`;
 
-    if (typeof MediaSource === 'undefined' || !MediaSource.isTypeSupported(mseType)) {
+    const MSE = window.MediaSource || window.ManagedMediaSource;
+    if (!MSE || !MSE.isTypeSupported(mseType)) {
         return playVideoBlob(item, fileKey, item.mime_type || 'video/mp4');
     }
 
-    const ms = new MediaSource();
+    const ms = new MSE();
     viewerVideo._mediaSource = ms;
     viewerVideo.src = URL.createObjectURL(ms);
 
@@ -2623,7 +2634,7 @@ async function playVideoMSE(item, fileKey) {
 
     async function fetchChunk(index) {
         if (chunkCache.has(index)) return chunkCache.get(index);
-        const res = await fetch(`/api/media/${item.id}/chunk/${index}`, {
+        const res = await fetchRetry(`/api/media/${item.id}/chunk/${index}`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
@@ -2789,7 +2800,7 @@ async function playVideoBlob(item, fileKey, mime) {
     viewerVideo._abortStreaming = () => { aborted = true; };
 
     try {
-        const PARALLEL = Math.min(4, item.chunk_count);
+        const PARALLEL = Math.min(2, item.chunk_count);
         const decrypted = new Array(item.chunk_count);
         let nextFetch = 0;
         let done = 0;
@@ -2798,7 +2809,7 @@ async function playVideoBlob(item, fileKey, mime) {
             while (!aborted) {
                 const idx = nextFetch++;
                 if (idx >= item.chunk_count) break;
-                const res = await fetch(`/api/media/${item.id}/chunk/${idx}`, {
+                const res = await fetchRetry(`/api/media/${item.id}/chunk/${idx}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (!res.ok) throw new Error(`Chunk ${idx} fetch failed: ${res.status}`);
@@ -2998,7 +3009,7 @@ async function rotateCurrentItem() {
         const fileKey = await decryptFileKey(fileKeyEnc);
         const chunks = [];
         for (let i = 0; i < item.chunk_count; i++) {
-            const res = await fetch(`/api/media/${item.id}/chunk/${i}`, {
+            const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const encData = new Uint8Array(await res.arrayBuffer());
@@ -3179,7 +3190,7 @@ async function downloadItem(item) {
 
         const chunks = [];
         for (let i = 0; i < item.chunk_count; i++) {
-            const res = await fetch(`/api/media/${item.id}/chunk/${i}`, {
+            const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const encData = new Uint8Array(await res.arrayBuffer());
@@ -3247,7 +3258,7 @@ async function downloadFolder(folder) {
 
             const chunks = [];
             for (let i = 0; i < item.chunk_count; i++) {
-                const res = await fetch(`/api/media/${item.id}/chunk/${i}`, {
+                const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 const encData = new Uint8Array(await res.arrayBuffer());
