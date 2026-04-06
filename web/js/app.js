@@ -41,10 +41,16 @@ async function loadFFmpeg() {
             }
             const { FFmpeg } = await import('/js/vendor/ffmpeg/index.js');
             const ff = new FFmpeg();
-            await ff.load({
-                coreURL: new URL('/js/vendor/ffmpeg/ffmpeg-core.js', location.origin).href,
-                wasmURL: new URL('/js/vendor/ffmpeg/ffmpeg-core.wasm', location.origin).href,
-            });
+            const loadTimeout = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('FFmpeg load timeout (30s)')), 30000)
+            );
+            await Promise.race([
+                ff.load({
+                    coreURL: new URL('/js/vendor/ffmpeg/ffmpeg-core.js', location.origin).href,
+                    wasmURL: new URL('/js/vendor/ffmpeg/ffmpeg-core.wasm', location.origin).href,
+                }),
+                loadTimeout,
+            ]);
             _ffmpegInstance = ff;
             return ff;
         } catch (e) {
@@ -3842,7 +3848,10 @@ async function uploadFile(file, itemEl, targetFolderId) {
     setUploadStatus(itemEl, 'Generating thumbnail...');
     let thumbData;
     try {
-        thumbData = await generateThumbnail(file);
+        const thumbTimeout = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Thumbnail timeout')), 15000)
+        );
+        thumbData = await Promise.race([generateThumbnail(file), thumbTimeout]);
     } catch {
         // Fallback: 1px placeholder
         thumbData = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46]);
@@ -3949,11 +3958,16 @@ function getVideoInfo(file) {
     return new Promise((resolve, reject) => {
         const video = document.createElement('video');
         video.preload = 'metadata';
+        const timeout = setTimeout(() => {
+            URL.revokeObjectURL(video.src);
+            reject(new Error('Video metadata timeout'));
+        }, 10000);
         video.onloadedmetadata = () => {
+            clearTimeout(timeout);
             resolve({ width: video.videoWidth, height: video.videoHeight, duration: video.duration });
             URL.revokeObjectURL(video.src);
         };
-        video.onerror = reject;
+        video.onerror = () => { clearTimeout(timeout); reject(new Error('Video metadata error')); };
         video.src = URL.createObjectURL(file);
     });
 }
