@@ -2367,16 +2367,15 @@ async function handleDropUpload(files, targetFolderId) {
         row.appendChild(statusSpan);
         dropUploadStatus.appendChild(row);
 
-        // Add a placeholder tile to the gallery (before refresh button)
+        // Hide empty state and move refresh button out of the way
+        galleryEmpty.classList.add('hidden');
+        document.getElementById('refresh-wrap')?.remove();
+
+        // Add a placeholder tile to the gallery
         const placeholder = document.createElement('div');
         placeholder.className = 'gallery-item';
         placeholder.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span style="font-size:12px;color:var(--text-dim)">' + escapeHtml(file.name) + '</span></div>';
-        const refreshWrap = document.getElementById('refresh-wrap');
-        if (refreshWrap && refreshWrap.parentNode === galleryGrid) {
-            galleryGrid.insertBefore(placeholder, refreshWrap);
-        } else {
-            galleryGrid.appendChild(placeholder);
-        }
+        galleryGrid.appendChild(placeholder);
 
         try {
             const dummyEl = createUploadItem(file.name);
