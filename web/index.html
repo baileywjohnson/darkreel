@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-kSX8hh09boiZSaAJ5VfPFLt8+gOs7DBRy8nPhTzrqcAnjBxINLHL9rUr4Vb8uAT/" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-TN31I0pXdGbAAHSn93WnDDpELmDYhzkDvo8X95YQiX4y60AgjAcbioLJkMt8sDpu" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -204,6 +204,19 @@
                         <p id="settings-pw-success" class="success hidden"></p>
                     </div>
                     <div class="admin-create">
+                        <h3>Theme</h3>
+                        <div id="theme-picker" class="theme-picker">
+                            <button class="theme-swatch" data-theme="warm" title="Warm">
+                                <span class="swatch-colors"><span style="background:#202C39"></span><span style="background:#F29559"></span><span style="background:#F2D492"></span><span style="background:#B8B08D"></span></span>
+                                <span class="swatch-label">Warm</span>
+                            </button>
+                            <button class="theme-swatch" data-theme="classic" title="Classic">
+                                <span class="swatch-colors"><span style="background:#111114"></span><span style="background:#8b7cf6"></span><span style="background:#a89df8"></span><span style="background:#a0a0b0"></span></span>
+                                <span class="swatch-label">Classic</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="admin-create">
                         <h3>Delete Account</h3>
                         <p class="delete-warning">This will permanently delete your account and all your encrypted media. This cannot be undone.</p>
                         <form id="settings-delete-form">
@@ -316,6 +329,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-ERnWjpfZFdw1O+QB5F1c99U6Xfl3L89RRZyWs3WPLF8ZqLP/U8UTYfUADFTBgMjc" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-dz65ubJNY2KlQpDlygAeNxPnCcNSBqiTwpN6U4hG+skxq8ZCb0RKOcp8iRiVSF7H" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-6EDaDk96HBfkKzHc8kI0vjn/qzTVdnWt4xIxQDkfheYqOuM9m6QjouVdCy/5nS7y" crossorigin="anonymous"></script>
 </body>
 </html>

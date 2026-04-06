@@ -898,6 +898,21 @@ document.getElementById('settings-back-btn').addEventListener('click', () => {
     renderBreadcrumb();
 });
 
+// Theme picker
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('darkreel-theme', theme);
+    document.querySelectorAll('.theme-swatch').forEach(s => {
+        s.classList.toggle('active', s.dataset.theme === theme);
+    });
+}
+// Apply saved theme on load
+applyTheme(localStorage.getItem('darkreel-theme') || 'warm');
+document.getElementById('theme-picker').addEventListener('click', (e) => {
+    const swatch = e.target.closest('.theme-swatch');
+    if (swatch) applyTheme(swatch.dataset.theme);
+});
+
 // Settings password validation
 const settingsOldPw = document.getElementById('settings-old-pw');
 const settingsNewPw = document.getElementById('settings-new-pw');
