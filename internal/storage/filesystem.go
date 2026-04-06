@@ -9,10 +9,30 @@ import (
 	"time"
 )
 
-// paddedChunkSize is the fixed size for all chunk files on disk.
+// paddedChunkSize is the legacy fixed size for 1 MB chunks on disk.
 // 1MB plaintext + 12 nonce + 16 tag = 1048604 bytes max encrypted chunk.
-// We pad all chunks to this size to prevent size-based fingerprinting.
 const paddedChunkSize = 1048576 + 28
+
+// paddedSize returns the next bucket size for variable-size chunk padding.
+// This prevents size-based fingerprinting while supporting larger fMP4 segments.
+func paddedSize(dataLen int) int {
+	switch {
+	case dataLen <= 1048604:
+		return 1048604 // <= 1 MB
+	case dataLen <= 2097208:
+		return 2097208 // <= 2 MB
+	case dataLen <= 4194332:
+		return 4194332 // <= 4 MB
+	case dataLen <= 8388636:
+		return 8388636 // <= 8 MB
+	case dataLen <= 16777244:
+		return 16777244 // <= 16 MB
+	default:
+		// Pad to nearest 1 MB boundary
+		const mb = 1048576
+		return ((dataLen + mb - 1) / mb) * mb
+	}
+}
 
 // paddedThumbSize is the fixed size for thumbnail files on disk.
 // Max thumbnail is ~320px wide JPEG at quality 5, which fits in 256 KB.
@@ -22,16 +42,17 @@ const paddedThumbSize = 256 * 1024
 // filesystem modification times don't leak when uploads occurred.
 var epoch = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// WriteChunk writes an encrypted chunk to disk, padded to a fixed size.
+// WriteChunk writes an encrypted chunk to disk, padded to a bucketed size.
 // Format: [4 bytes big-endian real length][data][random padding]
 func (l *Layout) WriteChunk(userID, mediaID string, index int, data []byte) error {
 	path := l.ChunkPath(userID, mediaID, index)
 
-	padded := make([]byte, 4+paddedChunkSize)
+	padSize := paddedSize(len(data))
+	padded := make([]byte, 4+padSize)
 	binary.BigEndian.PutUint32(padded[:4], uint32(len(data)))
 	copy(padded[4:], data)
 	// Fill remaining with random bytes so padding isn't distinguishable
-	if pad := 4 + paddedChunkSize - 4 - len(data); pad > 0 {
+	if rem := padSize - len(data); rem > 0 {
 		rand.Read(padded[4+len(data):])
 	}
 
