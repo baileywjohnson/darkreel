@@ -2458,6 +2458,7 @@ function closeViewer() {
     viewer.classList.add('hidden');
     viewerVideo.pause();
     viewerVideo.removeAttribute('src');
+    viewerVideo.srcObject = null;
     viewerVideo.load();
     viewerVideo.classList.add('hidden');
     viewerImage.classList.add('hidden');
@@ -2602,7 +2603,16 @@ async function playVideoMSE(item, fileKey) {
 
     const ms = new MSE();
     viewerVideo._mediaSource = ms;
-    viewerVideo.src = URL.createObjectURL(ms);
+    viewerVideo.disableRemotePlayback = true;
+    // Use srcObject if available (required for ManagedMediaSource), else createObjectURL
+    if ('srcObject' in viewerVideo && MSE === window.ManagedMediaSource) {
+        viewerVideo.srcObject = ms;
+    } else {
+        viewerVideo.src = URL.createObjectURL(ms);
+    }
+    // Call play() immediately while still in the user gesture context —
+    // the browser queues it until SourceBuffer has data
+    viewerVideo.play().catch(() => {});
 
     const sb = await new Promise((resolve, reject) => {
         ms.addEventListener('sourceopen', () => {
@@ -2622,6 +2632,13 @@ async function playVideoMSE(item, fileKey) {
 
     let aborted = false;
     viewerVideo._abortStreaming = () => { aborted = true; };
+
+    // ManagedMediaSource (iOS) uses streaming events to control data flow
+    let streamingAllowed = !(ms instanceof (window.ManagedMediaSource || function(){}));
+    if (!streamingAllowed) {
+        ms.addEventListener('startstreaming', () => { streamingAllowed = true; });
+        ms.addEventListener('endstreaming', () => { streamingAllowed = false; });
+    }
 
     // Cache for decrypted chunks (keeps init segment + recently fetched)
     const chunkCache = new Map();
@@ -2717,13 +2734,22 @@ async function playVideoMSE(item, fileKey) {
             await appendData(dec);
             if (aborted || generation !== fetchGeneration) return;
 
-            // Throttle: wait if we're far ahead of playback
-            if (i > startChunk + 10) {
+            // Throttle: wait if we're far ahead of playback or ManagedMediaSource paused streaming
+            if (i > startChunk + 2) {
                 try {
-                    while (!aborted && generation === fetchGeneration && sb.buffered.length > 0) {
-                        const ahead = sb.buffered.end(sb.buffered.length - 1) - viewerVideo.currentTime;
-                        if (ahead < 60) break;
-                        await new Promise(r => setTimeout(r, 2000));
+                    while (!aborted && generation === fetchGeneration) {
+                        if (!streamingAllowed) {
+                            await new Promise(r => setTimeout(r, 500));
+                            continue;
+                        }
+                        if (sb.buffered.length > 0) {
+                            const ahead = sb.buffered.end(sb.buffered.length - 1) - viewerVideo.currentTime;
+                            if (ahead >= 60) {
+                                await new Promise(r => setTimeout(r, 2000));
+                                continue;
+                            }
+                        }
+                        break;
                     }
                 } catch {}
             }
@@ -2784,7 +2810,6 @@ async function playVideoMSE(item, fileKey) {
         await ensureInit();
         if (aborted) return;
 
-        viewerVideo.play().catch(() => {});
         viewerTitle.textContent = item.name || 'Video';
 
         await streamFrom(1, fetchGeneration);
