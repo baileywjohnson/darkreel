@@ -244,40 +244,6 @@
                 </div>
             </div>
 
-            <!-- Rename / New Folder modal -->
-            <div id="rename-modal" class="modal-overlay hidden">
-                <div class="modal-card">
-                    <h3 id="rename-title">Rename</h3>
-                    <input type="text" id="rename-input" placeholder="New name" autocomplete="off">
-                    <p id="rename-error" class="error hidden"></p>
-                    <div class="modal-card-actions">
-                        <button id="rename-cancel" class="btn btn-ghost">Cancel</button>
-                        <button id="rename-confirm" class="btn btn-primary">Rename</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Confirm modal -->
-            <div id="confirm-modal" class="modal-overlay hidden">
-                <div class="modal-card">
-                    <h3 id="confirm-title">Confirm</h3>
-                    <p id="confirm-message" style="font-size:14px;color:var(--text-dim);margin-bottom:20px"></p>
-                    <div class="modal-card-actions">
-                        <button id="confirm-cancel" class="btn btn-ghost">Cancel</button>
-                        <button id="confirm-ok" class="btn btn-danger">Delete</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Move to folder modal -->
-            <div id="move-modal" class="modal-overlay hidden">
-                <div class="modal-card">
-                    <h3>Move to folder</h3>
-                    <div id="move-folder-list" class="move-folder-list"></div>
-                    <button id="move-cancel" class="btn btn-ghost move-cancel-btn">Cancel</button>
-                </div>
-            </div>
-
         </main>
 
         <!-- Viewer overlay (outside main to escape its stacking context) -->
@@ -325,6 +291,36 @@
                     <button id="viewer-next" class="viewer-nav viewer-nav-next" aria-label="Next"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
                 </div>
             </div>
+
+        <!-- Modals (outside main to escape its stacking context) -->
+        <div id="rename-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <h3 id="rename-title">Rename</h3>
+                <input type="text" id="rename-input" placeholder="New name" autocomplete="off">
+                <p id="rename-error" class="error hidden"></p>
+                <div class="modal-card-actions">
+                    <button id="rename-cancel" class="btn btn-ghost">Cancel</button>
+                    <button id="rename-confirm" class="btn btn-primary">Rename</button>
+                </div>
+            </div>
+        </div>
+        <div id="confirm-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <h3 id="confirm-title">Confirm</h3>
+                <p id="confirm-message" style="font-size:14px;color:var(--text-dim);margin-bottom:20px"></p>
+                <div class="modal-card-actions">
+                    <button id="confirm-cancel" class="btn btn-ghost">Cancel</button>
+                    <button id="confirm-ok" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+        <div id="move-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <h3>Move to folder</h3>
+                <div id="move-folder-list" class="move-folder-list"></div>
+                <button id="move-cancel" class="btn btn-ghost move-cancel-btn">Cancel</button>
+            </div>
+        </div>
 
         <!-- Upload modal -->
         <div id="upload-modal" class="modal hidden">
