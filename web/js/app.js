@@ -2153,6 +2153,8 @@ async function moveItemToFolder(item, newFolderId, skipDupeCheck) {
     if (item.height) meta.height = item.height;
     if (item.duration) meta.duration = item.duration;
     if (item.rotation) meta.rotation = item.rotation;
+    if (item.fragmented) meta.fragmented = true;
+    if (item.codecs) meta.codecs = item.codecs;
 
     const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
     const enc = await encryptBlock(metaBytes, getMasterKeyRaw());
@@ -3372,6 +3374,7 @@ async function deleteCurrentItem() {
         closeViewer();
         pendingDeletes.add(item.id);
         mediaItems = mediaItems.filter(m => m.id !== item.id);
+        viewerList = viewerList.filter(m => m.id !== item.id);
         renderGalleryItems();
         api(`/api/media/${item.id}`, { method: 'DELETE' }).then(() => {
             pendingDeletes.delete(item.id);
@@ -3389,6 +3392,7 @@ async function deleteItem(item) {
         // Optimistic: remove from gallery immediately
         pendingDeletes.add(item.id);
         mediaItems = mediaItems.filter(m => m.id !== item.id);
+        viewerList = viewerList.filter(m => m.id !== item.id);
         renderGalleryItems();
         // Fire delete in background
         api(`/api/media/${item.id}`, { method: 'DELETE' }).then(() => {
@@ -3727,6 +3731,8 @@ async function updateItemMetadata(item) {
     if (item.height) meta.height = item.height;
     if (item.duration) meta.duration = item.duration;
     if (item.rotation) meta.rotation = item.rotation;
+    if (item.fragmented) meta.fragmented = true;
+    if (item.codecs) meta.codecs = item.codecs;
 
     const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
     const enc = await encryptBlock(metaBytes, getMasterKeyRaw());
