@@ -3202,7 +3202,18 @@ async function handleDropUpload(files, targetFolderId) {
     dropUploadStatus.innerHTML = '';
     let hasErrors = false;
 
+    // Filter unsupported files before processing
+    const supported = [];
     for (const file of files) {
+        if (isUnsupportedFile(file)) {
+            showUnsupportedModal(file);
+        } else {
+            supported.push(file);
+        }
+    }
+    if (!supported.length) return;
+
+    for (const file of supported) {
         const row = document.createElement('div');
         row.className = 'drop-upload-item';
         const nameSpan = document.createElement('span');
@@ -3255,16 +3266,10 @@ async function handleDropUpload(files, targetFolderId) {
             statusSpan.textContent = 'Done';
             statusSpan.className = 'status done';
         } catch (e) {
-            if (e.message === 'unsupported format') {
-                // Modal already shown — just clean up quietly
-                statusSpan.textContent = 'Unsupported';
-                row.remove();
-            } else {
-                console.error('Drop upload failed:', e);
-                statusSpan.textContent = 'Error';
-                statusSpan.className = 'status error';
-                hasErrors = true;
-            }
+            console.error('Drop upload failed:', e);
+            statusSpan.textContent = 'Error';
+            statusSpan.className = 'status error';
+            hasErrors = true;
         } finally {
             pendingUploads.delete(uploadId);
             const ph = document.querySelector(`[data-pending-upload="${uploadId}"]`);
@@ -4573,11 +4578,34 @@ uploadDropzone.addEventListener('drop', (e) => {
 });
 uploadInput.addEventListener('change', (e) => handleFiles(e.target.files));
 
+function isUnsupportedFile(file) {
+    const unsupportedExts = /\.(avi|flv|wmv|ogv|ts|mts|m2ts)$/i;
+    return unsupportedExts.test(file.name) || /x-msvideo|x-flv|x-ms-wmv/i.test(file.type);
+}
+
+function showUnsupportedModal(file) {
+    showConfirmModal('File type not supported',
+        `"${file.name}" cannot be uploaded.\n\nSupported formats:\n\nVideo: MP4, MOV, WEBM, MKV, M4V\nImage: JPG, PNG, GIF, WEBP`,
+        () => {}, { buttonLabel: 'Dismiss', buttonClass: 'btn-primary', hideCancel: true });
+}
+
 async function handleFiles(files) {
     if (!files.length) return;
+
+    // Check for unsupported files first — show modal and filter them out
+    const supported = [];
+    for (const file of files) {
+        if (isUnsupportedFile(file)) {
+            showUnsupportedModal(file);
+        } else {
+            supported.push(file);
+        }
+    }
+    if (!supported.length) return;
+
     uploadProgress.classList.remove('hidden');
 
-    for (const file of files) {
+    for (const file of supported) {
         const itemEl = createUploadItem(file.name);
         uploadList.appendChild(itemEl);
 
@@ -4585,12 +4613,8 @@ async function handleFiles(files) {
             await uploadFile(file, itemEl);
             setUploadStatus(itemEl, 'Done');
         } catch (e) {
-            if (e.message === 'unsupported format') {
-                setUploadStatus(itemEl, 'Unsupported');
-            } else {
-                console.error('Upload failed:', e);
-                setUploadStatus(itemEl, 'Error: ' + e.message);
-            }
+            console.error('Upload failed:', e);
+            setUploadStatus(itemEl, 'Error: ' + e.message);
         }
     }
     loadMedia();
@@ -4622,15 +4646,6 @@ async function uploadFile(file, itemEl, targetFolderId) {
     let fileData = new Uint8Array(await file.arrayBuffer());
 
     const videoExts = /\.(mp4|mov|m4v|webm|mkv)$/i;
-    // M4V often has Apple-specific boxes that MSE rejects — treat as non-remuxable
-    const unsupportedExts = /\.(avi|flv|wmv|ogv|ts|mts|m2ts)$/i;
-    if (unsupportedExts.test(file.name) || /x-msvideo|x-flv|x-ms-wmv/i.test(file.type)) {
-        setUploadStatus(itemEl, 'Unsupported');
-        showConfirmModal('File type not supported',
-            `"${file.name}" cannot be uploaded.\n\nSupported formats:\n\nVideo: MP4, MOV, WEBM, MKV, M4V\nImage: JPG, PNG, GIF, WEBP`,
-            () => {}, { buttonLabel: 'Dismiss', buttonClass: 'btn-primary', hideCancel: true });
-        throw new Error('unsupported format');
-    }
     const mediaType = (file.type.startsWith('video/') || videoExts.test(file.name)) ? 'video' : 'image';
     let fragmented = false;
 

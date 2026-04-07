@@ -359,7 +359,7 @@ main { padding-top: 0; position: relative; z-index: 1; }
 /* Move modal */
 .modal-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.95);
-    display: flex; align-items: center; justify-content: center; z-index: 300;
+    display: flex; align-items: center; justify-content: center; z-index: 400;
 }
 .modal-overlay.hidden { display: none; }
 .modal-card {
