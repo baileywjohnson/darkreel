@@ -232,29 +232,38 @@ function generateImageThumbnail(file) {
 function generateVideoThumbnail(file) {
     return new Promise((resolve, reject) => {
         const video = document.createElement('video');
-        video.preload = 'auto';
+        video.preload = 'metadata';
         video.muted = true;
-        video.playsInline = true; // Required for iOS Safari to load video data
-        video.onloadeddata = () => {
-            video.currentTime = Math.min(1, video.duration / 4);
-        };
-        video.onseeked = () => {
+        video.playsInline = true;
+        const url = URL.createObjectURL(file);
+
+        function capture() {
             const canvas = document.createElement('canvas');
             const maxDim = 320;
             let w = video.videoWidth, h = video.videoHeight;
+            if (!w || !h) { URL.revokeObjectURL(url); reject(new Error('No video dimensions')); return; }
             if (w > h) { h = h * maxDim / w; w = maxDim; }
             else { w = w * maxDim / h; h = maxDim; }
             canvas.width = w;
             canvas.height = h;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0, w, h);
+            video.pause();
             canvas.toBlob(blob => {
-                URL.revokeObjectURL(video.src);
+                URL.revokeObjectURL(url);
                 blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
             }, 'image/jpeg', 0.7);
+        }
+
+        video.onseeked = capture;
+        video.onloadedmetadata = () => {
+            // Seek to a frame near the start
+            video.currentTime = Math.min(1, video.duration / 4);
         };
-        video.onerror = reject;
-        video.src = URL.createObjectURL(file);
+        video.onerror = () => { URL.revokeObjectURL(url); reject(video.error); };
+        video.src = url;
+        // On iOS, a brief play() is needed to trigger frame loading
+        video.play().then(() => video.pause()).catch(() => {});
     });
 }
 
