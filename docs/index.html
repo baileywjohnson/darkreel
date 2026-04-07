@@ -452,7 +452,7 @@
         </div>
         <div class="pitch-point">
             <h3><span class="dot dot-green"></span> Streaming without decrypting server-side</h3>
-            <p>Videos (MP4, MOV, etc.) are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI, or mp4box.js in the browser (144 KB, no WASM). No re-encoding, just container restructuring. Your browser decrypts in a Web Worker and streams via MediaSource (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk. Downloads convert back to standard MP4.</p>
+            <p>Videos are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI (all formats), or mp4box.js in the browser (144 KB, no WASM, MP4/MOV). No re-encoding, just container restructuring. Other formats (WEBM, MKV) play via blob fallback. Your browser decrypts in a Web Worker and streams via MediaSource (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk. Downloads convert back to standard MP4.</p>
         </div>
         <div class="pitch-point">
             <h3><span class="dot dot-amber"></span> Metadata is encrypted too</h3>

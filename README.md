@@ -5,7 +5,7 @@ End-to-end encrypted video and photo storage with streaming playback. The server
 ## Features
 
 - **End-to-end encrypted** -- AES-256-GCM chunk encryption, keys derived from your password via Argon2id. The server stores only opaque blobs.
-- **Streaming playback** -- Videos (MP4, MOV, etc.) are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI, or mp4box.js in the browser (144 KB, no WASM). Encrypted chunks are decrypted in a Web Worker and streamed via MediaSource Extensions (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk.
+- **Streaming playback** -- Videos are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI (supports all formats including WEBM/MKV), or mp4box.js in the browser (144 KB, no WASM, supports MP4/MOV). Non-remuxable formats (WEBM, MKV, AVI) are uploaded as-is and played via blob. Encrypted chunks are decrypted in a Web Worker and streamed via MediaSource Extensions (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk.
 - **Zero-knowledge metadata** -- File names, types, sizes, dimensions, and durations are encrypted into a single blob. The server cannot read any of it.
 - **Chunk padding** -- Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data, preventing file size fingerprinting.
 - **Secure deletion** -- Deleted files are overwritten 3 times with random data before unlinking.
@@ -29,7 +29,7 @@ Most encrypted storage tools encrypt your files but stop there. Darkreel goes fu
 
 - **Hardened deployment in one command** -- The setup script doesn't just install Darkreel. It configures the firewall, fail2ban, SSH hardening, automatic TLS, automatic OS security updates, and daily database backups. Most tools ship a `docker-compose.yml` and leave server hardening as an exercise for the reader.
 
-- **Encrypted video streaming** -- Videos (MP4, MOV, and any container mp4box.js can parse) are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI, or mp4box.js in the browser (144 KB, no WASM). The browser extracts audio and video samples, builds time-sorted fMP4 segments (~2 seconds each), and merges them into ~1 MB encrypted chunks. On playback, chunks are fetched with prefetch-ahead, decrypted in a Web Worker, and appended to a MediaSource SourceBuffer (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk — no waiting for the full file. Downloads convert fMP4 back to standard MP4 for QuickTime compatibility. No server-side decryption.
+- **Encrypted video streaming** -- Videos are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI (all formats), or mp4box.js in the browser (144 KB, no WASM, MP4/MOV only). Non-ISO BMFF formats (WEBM, MKV, AVI) can't be remuxed in the browser without WASM and are uploaded as-is with blob playback. The browser extracts audio and video samples, builds time-sorted fMP4 segments (~2 seconds each), and merges them into ~1 MB encrypted chunks. On playback, chunks are fetched with prefetch-ahead, decrypted in a Web Worker, and appended to a MediaSource SourceBuffer (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk — no waiting for the full file. Downloads convert fMP4 back to standard MP4 for QuickTime compatibility. No server-side decryption.
 
 ## Quick start (VPS)
 

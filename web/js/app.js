@@ -193,10 +193,14 @@ async function remuxToFMP4(data) {
     try {
         const mp4box = MP4Box.createFile();
 
-        // Parse the file to get track info and samples
+        // Parse the file to get track info and samples.
+        // mp4box.js only handles ISO BMFF containers (MP4, MOV, M4V, 3GP).
+        // For unsupported formats (WEBM, MKV, AVI, etc.), onReady/onError
+        // never fire, so we use a timeout to detect and skip gracefully.
         const info = await new Promise((resolve, reject) => {
-            mp4box.onReady = resolve;
-            mp4box.onError = reject;
+            const timeout = setTimeout(() => reject(new Error('mp4box parse timeout')), 5000);
+            mp4box.onReady = (i) => { clearTimeout(timeout); resolve(i); };
+            mp4box.onError = (e) => { clearTimeout(timeout); reject(e); };
             const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
             ab.fileStart = 0;
             mp4box.appendBuffer(ab);
@@ -4596,10 +4600,12 @@ async function uploadFile(file, itemEl, targetFolderId) {
     const mediaType = file.type.startsWith('video/') ? 'video' : 'image';
     let fragmented = false;
 
-    // Remux videos to fMP4 for streaming playback
+    // Remux videos to fMP4 for streaming playback.
+    // Skip non-ISO BMFF containers (WEBM, MKV, AVI, etc.) — mp4box.js can't parse them.
+    const canRemux = mediaType === 'video' && !/webm|matroska|x-msvideo|avi/i.test(file.type);
     let detectedCodecs = null;
     let fmp4Segments = null;
-    if (mediaType === 'video') {
+    if (canRemux) {
         setUploadStatus(itemEl, 'Preparing for streaming...');
         const fmp4Result = await remuxToFMP4(fileData);
         if (fmp4Result) {
