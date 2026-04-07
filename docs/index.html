@@ -434,7 +434,7 @@
 <!-- Hero -->
 <div class="hero">
     <h1><span style="font-size: 0.85em;">🍿</span> Darkreel</h1>
-    <p>Self-hosted video and photo storage with E2E encryption and streaming playback. One binary. Zero knowledge. Open source.</p>
+    <p>Self-hosted, end-to-end encrypted video and photo storage with streaming playback. Single Go binary. Zero-knowledge architecture. Open source.</p>
     <a href="#quickstart" class="hero-cta">Deploy in 5 minutes</a>
     <div class="hero-sub">or <code>git clone</code> and <code>go build</code></div>
 </div>
@@ -444,27 +444,28 @@
 
 <!-- How it works -->
 <div class="pitch" id="how">
-    <h2>Everything encrypted.<br>Nothing phoned home.</h2>
+    <h2>Architecture</h2>
     <div class="pitch-points">
         <div class="pitch-point">
             <h3><span class="dot dot-purple"></span> Client-side encryption</h3>
-            <p>Your browser encrypts every file with AES-256-GCM before it touches the server. Each file gets its own random key, wrapped with your master key, derived from your password via Argon2id. The server only ever stores ciphertext.</p>
+            <p>AES-256-GCM encryption happens in the browser before data leaves your device. Each file gets a random key, wrapped with a master key derived from your password via Argon2id. The server stores only ciphertext.</p>
         </div>
         <div class="pitch-point">
             <h3><span class="dot dot-green"></span> Streaming without decrypting server-side</h3>
-            <p>Videos are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI (all formats), or mp4box.js in the browser (144 KB, no WASM, MP4/MOV). No re-encoding, just container restructuring. Other formats (WEBM, MKV) play via blob fallback. Your browser decrypts in a Web Worker and streams via MediaSource (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk. Downloads convert back to standard MP4.</p>
+            <p>Videos are remuxed to fMP4 on upload (ffmpeg in the CLI, mp4box.js in the browser — 144 KB, no WASM). Container restructuring only, no re-encoding. Chunks are decrypted in a Web Worker and streamed via MSE/ManagedMediaSource. Playback starts after the first chunk. Downloads convert back to standard MP4.</p>
         </div>
         <div class="pitch-point">
             <h3><span class="dot dot-amber"></span> Metadata is encrypted too</h3>
-            <p>File names, MIME types, sizes, dimensions, durations — all encrypted into a single blob. The server stores it opaquely. Folder structures are also encrypted. Upload timestamps are coarsened to year + week to minimize leakage.</p>
+            <p>File names, MIME types, sizes, dimensions, durations — encrypted into a single blob. Folder structures are also encrypted. Upload timestamps are coarsened to year + week to limit metadata leakage.</p>
         </div>
         <div class="pitch-point">
-            <h3><span class="dot dot-purple"></span> Chunk padding defeats fingerprinting</h3>
-            <p>Every chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random fill. An observer sees a handful of uniform sizes on disk — they can't determine original file sizes even with full disk access.</p>
+            <h3><span class="dot dot-purple"></span> Chunk padding</h3>
+            <p>Every chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random fill. Original file sizes are unrecoverable even with full disk access.</p>
         </div>
         <div class="pitch-point">
             <h3><span class="dot dot-green"></span> Supported formats</h3>
-            <p><strong>Video:</strong> MP4, MOV (streaming), WEBM, MKV, M4V (blob playback)<br>
+            <p><strong>Video (streaming):</strong> MP4, MOV<br>
+            <strong>Video (blob playback):</strong> WEBM, MKV, M4V<br>
             <strong>Image:</strong> JPG, PNG, GIF, WEBP<br>
             <span style="color: var(--text-3); font-size: 0.9em;">CLI uploads via ffmpeg support all video formats with full streaming.</span></p>
         </div>
@@ -480,8 +481,8 @@
 <!-- What's different -->
 <div class="section">
     <div class="section-head">
-        <h2>Where most encrypted storage stops, Darkreel keeps going</h2>
-        <p>Encrypting files is table stakes. What matters is everything around the files.</p>
+        <h2>Design trade-offs</h2>
+        <p>Encrypting files is the baseline. What matters is the metadata, the storage layout, and the threat model.</p>
     </div>
 
     <div class="diff-grid">
@@ -528,8 +529,8 @@
 <!-- Zero knowledge -->
 <div class="section" id="privacy">
     <div class="section-head">
-        <h2>What the server sees</h2>
-        <p>Darkreel is designed so the server is useless to anyone who doesn't have your password.</p>
+        <h2>Threat model</h2>
+        <p>The server is assumed compromised. An attacker with full disk and database access learns the following — and nothing else.</p>
     </div>
 
     <div class="zk">

@@ -25,21 +25,21 @@ End-to-end encrypted video and photo storage with streaming playback. The server
 
 Videos uploaded via the CLI (using ffmpeg) support all formats including WEBM and MKV with full streaming playback.
 
-## Why Darkreel
+## Design decisions
 
-Most encrypted storage tools encrypt your files but stop there. Darkreel goes further:
+Darkreel makes specific trade-offs that most encrypted storage tools don't:
 
-- **Size fingerprinting resistance** -- Every encrypted chunk is padded to the next bucket boundary (1, 2, 4, 8, or 16 MB) with random fill. An observer with full disk access sees a handful of uniform sizes — they can't determine original file sizes, distinguish a 500 KB photo from a 900 KB one, or correlate files across backups by size.
+- **Size fingerprinting resistance** -- Encrypted chunks are padded to bucketed sizes (1, 2, 4, 8, or 16 MB) with random fill. An observer with full disk access sees uniform sizes — original file sizes are unrecoverable.
 
-- **Secure deletion, not just unlinking** -- When you delete a file, the data is overwritten 3 times with random bytes, fsynced to disk, then unlinked. On spinning disks, deleted data is actually destroyed. Most tools just call `delete()` and trust the filesystem to eventually reclaim the space.
+- **Secure deletion** -- Deleted files are overwritten 3 times with random bytes, fsynced, then unlinked. On HDDs, deleted data is destroyed. On SSDs, best-effort due to wear leveling.
 
-- **Timestamp coarsening** -- Upload timestamps are stored as year + week number only (e.g., "2026-W14"). Most tools store full-precision timestamps, which can reveal usage patterns, time zones, and activity windows. Darkreel deliberately discards this information.
+- **Timestamp coarsening** -- Upload timestamps are stored as year + week number only (e.g., "2026-W14"). Precision that could reveal usage patterns is deliberately discarded.
 
-- **14 MB of RAM** -- Darkreel is a single Go binary with an embedded web UI and SQLite. No Docker, no PostgreSQL, no Redis, no S3, no external services. It runs comfortably on a $6/month VPS. Most self-hosted media tools need 1-6 GB of RAM across multiple containers.
+- **~14 MB RAM** -- Single Go binary, embedded SQLite, embedded web UI. No Docker, no PostgreSQL, no Redis, no S3. Runs on a $6/month VPS.
 
-- **Hardened deployment in one command** -- The setup script doesn't just install Darkreel. It configures the firewall, fail2ban, SSH hardening, automatic TLS, automatic OS security updates, and daily database backups. Most tools ship a `docker-compose.yml` and leave server hardening as an exercise for the reader.
+- **One-command hardened deployment** -- `setup.sh` configures firewall, fail2ban, SSH hardening, automatic TLS, OS security updates, and daily database backups.
 
-- **Encrypted video streaming** -- Videos are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI (all formats), or mp4box.js in the browser (144 KB, no WASM, MP4/MOV only). Non-ISO BMFF formats (WEBM, MKV, AVI) can't be remuxed in the browser without WASM and are uploaded as-is with blob playback. The browser extracts audio and video samples, builds time-sorted fMP4 segments (~2 seconds each), and merges them into ~1 MB encrypted chunks. On playback, chunks are fetched with prefetch-ahead, decrypted in a Web Worker, and appended to a MediaSource SourceBuffer (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk — no waiting for the full file. Downloads convert fMP4 back to standard MP4 for QuickTime compatibility. No server-side decryption.
+- **Encrypted video streaming** -- Videos are remuxed to fMP4 on upload (ffmpeg in the CLI, mp4box.js in the browser). The browser extracts audio/video samples, builds time-sorted ~2s fMP4 segments, and merges them into ~1 MB encrypted chunks. Playback uses MSE (or ManagedMediaSource on iOS Safari 17.1+) with prefetch-ahead — starts after the first chunk. Downloads convert back to standard MP4. No server-side decryption.
 
 ## Quick start (VPS)
 
