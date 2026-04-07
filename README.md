@@ -1,5 +1,5 @@
 <p align="center">
-  <span style="font-size: 80px;">🍿</span>
+  <img src="https://em-content.zobj.net/source/apple/391/popcorn_1f37f.png" width="120" />
 </p>
 
 <h1 align="center">Darkreel</h1>
