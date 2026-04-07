@@ -2715,6 +2715,20 @@ async function loadThumbnail(item, img) {
 
         // Decrypt thumbnail (it's encrypted as chunk index 0)
         const decrypted = await workerDecrypt('decryptChunk', encData, thumbKey, 0);
+
+        // If the thumbnail is the tiny JFIF placeholder (failed generation), show fallback
+        if (decrypted.length <= 20) {
+            img.style.display = 'none';
+            const parent = img.parentElement;
+            if (parent) {
+                const fallback = document.createElement('div');
+                fallback.className = 'thumb-fallback';
+                fallback.textContent = '?';
+                parent.insertBefore(fallback, img);
+            }
+            return;
+        }
+
         const blob = new Blob([decrypted], { type: 'image/jpeg' });
         img.src = URL.createObjectURL(blob);
     } catch (e) {
@@ -4161,12 +4175,14 @@ async function downloadItem(item) {
     let filename = item.name || 'download';
     // Add appropriate extension if missing
     if (!/\.\w+$/.test(filename)) {
-        if (item.media_type === 'video') filename += '.mp4';
-        else if (item.mime_type) filename += '.' + (item.mime_type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
-    }
-    // Remuxed videos are ISO BMFF (.mp4) regardless of original container
-    if (item.fragmented && !/\.mp4$/i.test(filename)) {
-        filename = filename.replace(/\.[^.]+$/, '.mp4');
+        if (item.fragmented) {
+            filename += '.mp4'; // remuxed to ISO BMFF
+        } else if (item.mime_type) {
+            const extMap = { 'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm',
+                'video/x-matroska': '.mkv', 'video/x-msvideo': '.avi', 'video/x-flv': '.flv',
+                'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp' };
+            filename += extMap[item.mime_type] || '.' + (item.mime_type.split('/')[1] || 'bin');
+        }
     }
 
     // Show progress toast
@@ -4590,19 +4606,23 @@ function setUploadProgress(el, pct) {
 
 async function uploadFile(file, itemEl, targetFolderId) {
     if (targetFolderId === undefined) targetFolderId = currentFolderId;
-    // Strip file extension from display name
-    const baseName = file.name.replace(/\.[^.]+$/, '') || file.name;
-    const uploadName = uniqueFileName(baseName, targetFolderId);
 
     setUploadStatus(itemEl, 'Reading...');
     let fileData = new Uint8Array(await file.arrayBuffer());
 
-    const mediaType = file.type.startsWith('video/') ? 'video' : 'image';
+    const videoExts = /\.(mp4|mov|m4v|webm|mkv|avi|3gp|3g2|ts|mts|m2ts|flv|wmv|ogv)$/i;
+    const mediaType = (file.type.startsWith('video/') || videoExts.test(file.name)) ? 'video' : 'image';
     let fragmented = false;
 
     // Remux videos to fMP4 for streaming playback.
     // Skip non-ISO BMFF containers (WEBM, MKV, AVI, etc.) — mp4box.js can't parse them.
-    const canRemux = mediaType === 'video' && !/webm|matroska|x-msvideo|avi/i.test(file.type);
+    const nonRemuxable = /webm|matroska|x-msvideo|avi/i.test(file.type) || /\.(webm|mkv|avi|flv|wmv|ogv|ts|mts)$/i.test(file.name);
+    const canRemux = mediaType === 'video' && !nonRemuxable;
+
+    // Strip extension only for files that will be remuxed (container changes to MP4).
+    // Keep original extension for non-remuxable formats so downloads get the right type.
+    const baseName = canRemux ? (file.name.replace(/\.[^.]+$/, '') || file.name) : file.name;
+    const uploadName = uniqueFileName(baseName, targetFolderId);
     let detectedCodecs = null;
     let fmp4Segments = null;
     if (canRemux) {
