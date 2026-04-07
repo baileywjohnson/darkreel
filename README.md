@@ -5,7 +5,7 @@ End-to-end encrypted video and photo storage with streaming playback. The server
 ## Features
 
 - **End-to-end encrypted** -- AES-256-GCM chunk encryption, keys derived from your password via Argon2id. The server stores only opaque blobs.
-- **Streaming playback** -- Videos are remuxed to fragmented MP4 on upload. Encrypted chunks are fetched in parallel, decrypted in a Web Worker, and streamed to `<video>` via MediaSource Extensions. Playback starts in seconds, not after the full download.
+- **Streaming playback** -- Videos (MP4, MOV, etc.) are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI, or mp4box.js in the browser (144 KB, no WASM). Encrypted chunks are decrypted in a Web Worker and streamed via MediaSource Extensions (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk.
 - **Zero-knowledge metadata** -- File names, types, sizes, dimensions, and durations are encrypted into a single blob. The server cannot read any of it.
 - **Chunk padding** -- Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data, preventing file size fingerprinting.
 - **Secure deletion** -- Deleted files are overwritten 3 times with random data before unlinking.
@@ -29,7 +29,7 @@ Most encrypted storage tools encrypt your files but stop there. Darkreel goes fu
 
 - **Hardened deployment in one command** -- The setup script doesn't just install Darkreel. It configures the firewall, fail2ban, SSH hardening, automatic TLS, automatic OS security updates, and daily database backups. Most tools ship a `docker-compose.yml` and leave server hardening as an exercise for the reader.
 
-- **Encrypted video streaming** -- Videos are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI, or mp4box.js in the browser (144 KB, no WASM). Each encrypted chunk contains complete MP4 fragments that the browser can decode independently. On playback, chunks are fetched with prefetch-ahead, decrypted in a Web Worker, and appended to a MediaSource SourceBuffer (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk — no waiting for the full file. No server-side decryption.
+- **Encrypted video streaming** -- Videos (MP4, MOV, and any container mp4box.js can parse) are remuxed to fragmented MP4 on upload — via ffmpeg in the CLI, or mp4box.js in the browser (144 KB, no WASM). The browser extracts audio and video samples, builds time-sorted fMP4 segments (~2 seconds each), and merges them into ~1 MB encrypted chunks. On playback, chunks are fetched with prefetch-ahead, decrypted in a Web Worker, and appended to a MediaSource SourceBuffer (or ManagedMediaSource on iOS Safari 17.1+). Playback starts after the first chunk — no waiting for the full file. Downloads convert fMP4 back to standard MP4 for QuickTime compatibility. No server-side decryption.
 
 ## Quick start (VPS)
 
@@ -162,11 +162,11 @@ Caddy handles TLS automatically via Let's Encrypt. For nginx, see the [nginx exa
 
 1. Your password derives a **master key** via Argon2id that never leaves your browser
 2. Each file gets a random **file key**, encrypted (wrapped) with your master key and stored on the server
-3. Videos are remuxed to **fragmented MP4** (no re-encoding) so each chunk is independently decodable
-4. Files are split into **chunks** -- videos at fMP4 segment boundaries (one moof+mdat per chunk), other files at 1 MB -- each encrypted with AES-256-GCM using the chunk index as additional authenticated data (prevents reordering)
+3. Videos are remuxed to **fragmented MP4** (no re-encoding) — audio and video samples are extracted, metadata tracks are stripped, and time-sorted fMP4 segments are built from scratch
+4. Files are split into **chunks** -- videos into ~1 MB chunks containing complete moof+mdat pairs, other files at 1 MB -- each encrypted with AES-256-GCM using the chunk index as additional authenticated data (prevents reordering)
 5. All file metadata (name, type, MIME, size, dimensions, duration, codec info) is encrypted into a single blob -- the server stores it opaquely
 6. Every chunk is padded to a bucketed size on disk with random fill so the server cannot determine original file sizes
-7. Your browser fetches chunks in parallel, decrypts them in a Web Worker, and streams to `<video>` via MediaSource Extensions — playback starts after the first chunk
+7. Your browser fetches chunks with prefetch-ahead, decrypts them in a Web Worker, and streams to `<video>` via MediaSource Extensions — playback starts after the first chunk. Downloads convert fMP4 back to standard MP4 for desktop player compatibility
 
 ### Key hierarchy
 
