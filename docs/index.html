@@ -58,7 +58,7 @@
             max-width: 980px; margin: 0 auto; padding: 0 1.5rem;
             height: 56px; display: flex; align-items: center; justify-content: space-between;
         }
-        .logo { font-weight: 700; font-size: 1.1rem; color: var(--text); text-decoration: none; }
+        .logo { font-weight: 700; font-size: 1.1rem; color: var(--text); text-decoration: none !important; }
         .nav-links { display: flex; gap: 1.5rem; align-items: center; }
         .nav-links a { color: var(--text-2); font-size: 0.85rem; font-weight: 500; text-decoration: none; }
         .nav-links a:hover { color: var(--text); }
@@ -211,7 +211,7 @@
             .diff-row { grid-template-columns: 1fr; }
             .diff-cell + .diff-cell { border-left: none; border-top: 1px solid var(--border); }
             .diff-header { display: none; }
-            .diff-cell::before { display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); margin-bottom: 0.25rem; font-weight: 600; }
+            .diff-cell[data-label]::before { content: attr(data-label); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); margin-bottom: 0.25rem; font-weight: 600; }
         }
 
         /* --- Zero-knowledge split --- */
@@ -411,6 +411,7 @@
             .eco-grid { grid-template-columns: 1fr; }
             .hardening { columns: 1; }
             .nav-links a:not(.nav-gh) { display: none; }
+            .hero h1 span { top: 2px !important; }
         }
     </style>
 </head>
@@ -418,7 +419,7 @@
 
 <nav>
     <div class="nav-inner">
-        <a href="#" class="logo">🍿 Darkreel</a>
+        <a href="#" class="logo">🍿 <span style="position:relative;top:1px">Darkreel</span></a>
         <div class="nav-links">
             <a href="#how">How it works</a>
             <a href="#quickstart">Quick start</a>
@@ -433,7 +434,7 @@
 
 <!-- Hero -->
 <div class="hero">
-    <h1><span style="font-size: 0.85em;">🍿</span> Darkreel</h1>
+    <h1><span style="font-size: 0.85em;">🍿</span> <span style="position:relative;top:4px">Darkreel</span></h1>
     <p>Self-hosted, end-to-end encrypted photo and video storage with streaming playback. Single Go binary. Zero-knowledge architecture. Open source.</p>
     <a href="#quickstart" class="hero-cta">Deploy in 5 minutes</a>
     <div class="hero-sub">or <code>git clone</code> and <code>go build</code></div>
@@ -480,8 +481,8 @@
 <!-- What's different -->
 <div class="section">
     <div class="section-head">
-        <h2>Design trade-offs</h2>
-        <p>Encrypting files is the baseline. What matters is the metadata, the storage layout, and the threat model.</p>
+        <h2>Design</h2>
+        <p>Darkreel handles metadata, storage, deletion and more in a way that is private and secure by design.</p>
     </div>
 
     <div class="diff-grid">
@@ -492,33 +493,33 @@
         </div>
         <div class="diff-row">
             <div class="diff-cell diff-label">File sizes on disk</div>
-            <div class="diff-cell diff-typical">Encrypted blobs reveal original sizes — a 4.2 MB blob is a ~4.2 MB file</div>
-            <div class="diff-cell diff-ours"><strong>Every chunk padded to bucketed sizes (1/2/4/8/16 MB)</strong> with random fill. An observer sees a handful of uniform sizes.</div>
+            <div class="diff-cell diff-typical" data-label="Typical">Encrypted blobs reveal original sizes — a 4.2 MB blob is a ~4.2 MB file</div>
+            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>Every chunk padded to bucketed sizes (1/2/4/8/16 MB)</strong> with random fill. An observer sees a handful of uniform sizes.</div>
         </div>
         <div class="diff-row">
             <div class="diff-cell diff-label">Deletion</div>
-            <div class="diff-cell diff-typical">Calls <code>delete()</code> — data remains on disk until overwritten by chance</div>
-            <div class="diff-cell diff-ours"><strong>3-pass random overwrite</strong>, fsync to disk, then unlink. Deleted means destroyed.</div>
+            <div class="diff-cell diff-typical" data-label="Typical">Calls <code>delete()</code> — data remains on disk until overwritten by chance</div>
+            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>3-pass random overwrite</strong>, fsync to disk, then unlink. Deleted means destroyed.</div>
         </div>
         <div class="diff-row">
             <div class="diff-cell diff-label">Timestamps</div>
-            <div class="diff-cell diff-typical">Full-precision timestamps stored — reveals usage patterns, time zones, activity windows</div>
-            <div class="diff-cell diff-ours"><strong>Coarsened to year + week number</strong>. Deliberately discards precision the server doesn't need.</div>
+            <div class="diff-cell diff-typical" data-label="Typical">Full-precision timestamps stored — reveals usage patterns, time zones, activity windows</div>
+            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>Coarsened to year + week number</strong>. Deliberately discards precision the server doesn't need.</div>
         </div>
         <div class="diff-row">
             <div class="diff-cell diff-label">Resource usage</div>
-            <div class="diff-cell diff-typical">Multiple containers, external databases, 1-6 GB RAM</div>
-            <div class="diff-cell diff-ours"><strong>Single binary, embedded SQLite, ~14 MB RAM</strong>. Runs on a $6/mo VPS.</div>
+            <div class="diff-cell diff-typical" data-label="Typical">Multiple containers, external databases, 1-6 GB RAM</div>
+            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>Single binary, embedded SQLite, ~14 MB RAM</strong>. Runs on a $6/mo VPS.</div>
         </div>
         <div class="diff-row">
             <div class="diff-cell diff-label">Server setup</div>
-            <div class="diff-cell diff-typical">Docker Compose file, manual TLS, no security hardening</div>
-            <div class="diff-cell diff-ours"><strong>One script</strong>: auto TLS, firewall, fail2ban, SSH hardening, daily backups.</div>
+            <div class="diff-cell diff-typical" data-label="Typical">Docker Compose file, manual TLS, no security hardening</div>
+            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>One script</strong>: auto TLS, firewall, fail2ban, SSH hardening, daily backups.</div>
         </div>
         <div class="diff-row">
             <div class="diff-cell diff-label">Video playback</div>
-            <div class="diff-cell diff-typical">Download entire file, then decrypt and play</div>
-            <div class="diff-cell diff-ours"><strong>Fragmented MP4 + MSE streaming</strong>. Playback starts after the first chunk. Downloads convert to standard MP4.</div>
+            <div class="diff-cell diff-typical" data-label="Typical">Download entire file, then decrypt and play</div>
+            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>Fragmented MP4 + MSE streaming</strong>. Playback starts after the first chunk. Downloads convert to standard MP4.</div>
         </div>
     </div>
 </div>
