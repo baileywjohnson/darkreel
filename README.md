@@ -15,6 +15,16 @@ End-to-end encrypted video and photo storage with streaming playback. The server
 - **Single binary** -- One Go binary with an embedded web UI. No external dependencies, no runtime requirements.
 - **Self-hosted** -- Your data stays on your hardware.
 
+### Supported formats
+
+| Type | Formats | Playback |
+|------|---------|----------|
+| Video | MP4, MOV | Streaming (MSE) |
+| Video | WEBM, MKV, M4V | Blob playback |
+| Image | JPG, PNG, GIF, WEBP | Native |
+
+Videos uploaded via the CLI (using ffmpeg) support all formats including WEBM and MKV with full streaming playback.
+
 ## Why Darkreel
 
 Most encrypted storage tools encrypt your files but stop there. Darkreel goes further:

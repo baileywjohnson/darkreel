@@ -463,6 +463,12 @@
             <p>Every chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random fill. An observer sees a handful of uniform sizes on disk — they can't determine original file sizes even with full disk access.</p>
         </div>
         <div class="pitch-point">
+            <h3><span class="dot dot-green"></span> Supported formats</h3>
+            <p><strong>Video:</strong> MP4, MOV (streaming), WEBM, MKV, M4V (blob playback)<br>
+            <strong>Image:</strong> JPG, PNG, GIF, WEBP<br>
+            <span style="color: var(--text-3); font-size: 0.9em;">CLI uploads via ffmpeg support all video formats with full streaming.</span></p>
+        </div>
+        <div class="pitch-point">
             <h3><span class="dot dot-green"></span> Secure deletion, not just unlinking</h3>
             <p>Deleted files are overwritten 3 times with random data, fsynced, then unlinked. On spinning disks this provides strong assurance. On SSDs it's best-effort due to wear leveling — an inherent hardware limitation.</p>
         </div>
