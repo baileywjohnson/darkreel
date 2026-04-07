@@ -651,7 +651,7 @@ main { padding-top: 0; position: relative; z-index: 1; }
 .viewer-right { display: flex; align-items: center; gap: 8px; position: relative; z-index: 25; }
 .viewer-more-wrap { position: relative; }
 .viewer-more-btn { display: none; }
-.viewer-more-menu { position: absolute; top: 100%; right: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 0; min-width: 140px; z-index: 10; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+.viewer-more-menu { position: absolute; top: calc(100% + 20px); right: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 0; min-width: 140px; z-index: 10; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
 .viewer-more-menu button { display: block; width: 100%; text-align: left; padding: 8px 16px; background: none; border: none; color: var(--text); font-size: 14px; cursor: pointer; }
 .viewer-more-menu button:hover { background: rgba(255,255,255,0.08); }
 .viewer-more-menu button.danger { color: var(--danger); }

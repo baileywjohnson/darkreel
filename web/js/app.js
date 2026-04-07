@@ -2614,7 +2614,7 @@ async function createGalleryItem(item) {
             ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
             : `${m}:${String(sec).padStart(2, '0')}`;
     } else {
-        badge.textContent = item.media_type === 'video' ? 'VID' : 'IMG';
+        badge.textContent = item.media_type === 'video' ? 'VID' : (item.mime_type === 'image/gif' ? 'GIF' : 'IMG');
     }
 
     const menuBtn = document.createElement('button');
@@ -3255,10 +3255,16 @@ async function handleDropUpload(files, targetFolderId) {
             statusSpan.textContent = 'Done';
             statusSpan.className = 'status done';
         } catch (e) {
-            console.error('Drop upload failed:', e);
-            statusSpan.textContent = 'Error';
-            statusSpan.className = 'status error';
-            hasErrors = true;
+            if (e.message === 'unsupported format') {
+                // Modal already shown — just clean up quietly
+                statusSpan.textContent = 'Unsupported';
+                row.remove();
+            } else {
+                console.error('Drop upload failed:', e);
+                statusSpan.textContent = 'Error';
+                statusSpan.className = 'status error';
+                hasErrors = true;
+            }
         } finally {
             pendingUploads.delete(uploadId);
             const ph = document.querySelector(`[data-pending-upload="${uploadId}"]`);
@@ -4472,6 +4478,7 @@ function showConfirmModal(title, message, onConfirm, opts = {}) {
     confirmMessage.textContent = message;
     confirmOkBtn.textContent = opts.buttonLabel || 'Delete';
     confirmOkBtn.className = 'btn ' + (opts.buttonClass || 'btn-danger');
+    confirmCancelBtn.style.display = opts.hideCancel ? 'none' : '';
     confirmModal.classList.remove('hidden');
 
     const cleanup = () => {
@@ -4578,8 +4585,12 @@ async function handleFiles(files) {
             await uploadFile(file, itemEl);
             setUploadStatus(itemEl, 'Done');
         } catch (e) {
-            console.error('Upload failed:', e);
-            setUploadStatus(itemEl, 'Error: ' + e.message);
+            if (e.message === 'unsupported format') {
+                setUploadStatus(itemEl, 'Unsupported');
+            } else {
+                console.error('Upload failed:', e);
+                setUploadStatus(itemEl, 'Error: ' + e.message);
+            }
         }
     }
     loadMedia();
@@ -4610,13 +4621,22 @@ async function uploadFile(file, itemEl, targetFolderId) {
     setUploadStatus(itemEl, 'Reading...');
     let fileData = new Uint8Array(await file.arrayBuffer());
 
-    const videoExts = /\.(mp4|mov|m4v|webm|mkv|avi|3gp|3g2|ts|mts|m2ts|flv|wmv|ogv)$/i;
+    const videoExts = /\.(mp4|mov|m4v|webm|mkv)$/i;
+    // M4V often has Apple-specific boxes that MSE rejects — treat as non-remuxable
+    const unsupportedExts = /\.(avi|flv|wmv|ogv|ts|mts|m2ts)$/i;
+    if (unsupportedExts.test(file.name) || /x-msvideo|x-flv|x-ms-wmv/i.test(file.type)) {
+        setUploadStatus(itemEl, 'Unsupported');
+        showConfirmModal('File type not supported',
+            `"${file.name}" cannot be uploaded.\n\nSupported formats:\n\nVideo: MP4, MOV, WEBM, MKV, M4V\nImage: JPG, PNG, GIF, WEBP`,
+            () => {}, { buttonLabel: 'Dismiss', buttonClass: 'btn-primary', hideCancel: true });
+        throw new Error('unsupported format');
+    }
     const mediaType = (file.type.startsWith('video/') || videoExts.test(file.name)) ? 'video' : 'image';
     let fragmented = false;
 
     // Remux videos to fMP4 for streaming playback.
-    // Skip non-ISO BMFF containers (WEBM, MKV, AVI, etc.) — mp4box.js can't parse them.
-    const nonRemuxable = /webm|matroska|x-msvideo|avi/i.test(file.type) || /\.(webm|mkv|avi|flv|wmv|ogv|ts|mts)$/i.test(file.name);
+    // Skip non-ISO BMFF containers (WEBM, MKV) — mp4box.js can't parse them.
+    const nonRemuxable = /webm|matroska/i.test(file.type) || /\.(webm|mkv|m4v)$/i.test(file.name);
     const canRemux = mediaType === 'video' && !nonRemuxable;
 
     // Strip extension only for files that will be remuxed (container changes to MP4).
