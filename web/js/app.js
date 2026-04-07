@@ -400,73 +400,334 @@ async function remuxToFMP4(data) {
  * then builds a clean non-fragmented MP4 with proper sample tables.
  */
 /**
- * Convert fMP4 to regular MP4 for download.
- * Uses mp4box.js to parse and extract samples, then addTrack/addSample to
- * build a clean non-fragmented MP4. This avoids all the binary parsing edge cases.
+ * Convert fMP4 to regular MP4 for download. Uses mp4box.js to parse and
+ * extract samples, then builds a clean non-fragmented MP4 from scratch.
+ * All boxes are constructed from scratch — no copying/patching of fMP4 boxes.
  */
 async function unfragmentMP4(fmp4) {
     if (!await loadMP4Box()) return null;
-
     try {
         const mp4box = MP4Box.createFile();
         const info = await new Promise((resolve, reject) => {
             mp4box.onReady = resolve;
             mp4box.onError = reject;
-            const ab = d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength);
+            const ab = fmp4.buffer.slice(fmp4.byteOffset, fmp4.byteOffset + fmp4.byteLength);
             ab.fileStart = 0;
             mp4box.appendBuffer(ab);
             mp4box.flush();
         });
 
-        // Only video + audio
         const avTracks = info.tracks.filter(t => t.type === 'video' || t.type === 'audio');
         if (avTracks.length === 0) return null;
 
-        // Extract all samples
+        // Extract samples
         const trackSamples = new Map();
         for (const t of avTracks) {
             trackSamples.set(t.id, []);
             mp4box.setExtractionOptions(t.id, null, { nbSamples: 5000 });
         }
-        mp4box.onSamples = (id, user, samples) => {
+        mp4box.onSamples = (id, u, samples) => {
             const arr = trackSamples.get(id);
             if (arr) for (const s of samples) arr.push(s);
         };
         mp4box.start();
 
-        // Build output using mp4box addTrack/addSample
-        const dst = MP4Box.createFile();
-        const trackMap = new Map(); // old id -> new id
+        // Get stsd from per-track init segments (preserves codec descriptions exactly)
+        for (const t of avTracks) mp4box.setSegmentOptions(t.id, null, { nbSamples: 1 });
+        const perTrackInits = mp4box.initializeSegmentation();
 
-        // Video first, then audio
-        const sorted = [...avTracks].sort((a, b) => (a.type === 'video' ? 0 : 1) - (b.type === 'video' ? 0 : 1));
-
-        for (const t of sorted) {
-            const srcTrak = mp4box.getTrackById(t.id);
-            if (!srcTrak) continue;
-
-            const newId = dst.addTrack(srcTrak);
-            if (newId) trackMap.set(t.id, newId);
+        // Binary helpers
+        const w4 = (b,o,v) => { b[o]=(v>>>24)&0xff;b[o+1]=(v>>>16)&0xff;b[o+2]=(v>>>8)&0xff;b[o+3]=v&0xff; };
+        const r4 = (b,o) => ((b[o]<<24)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3])>>>0;
+        const cat = (...a) => { const n=a.reduce((s,b)=>s+b.length,0); const r=new Uint8Array(n); let o=0; for(const b of a){r.set(b,o);o+=b.length;} return r; };
+        function mkBox(type, content) {
+            const b = new Uint8Array(8 + content.length);
+            w4(b, 0, b.length);
+            for (let i = 0; i < 4; i++) b[4+i] = type.charCodeAt(i);
+            b.set(content, 8);
+            return b;
+        }
+        function mkFullBox(type, ver, flags, content) {
+            const b = new Uint8Array(12 + content.length);
+            w4(b, 0, b.length);
+            for (let i = 0; i < 4; i++) b[4+i] = type.charCodeAt(i);
+            b[8] = ver; b[9] = (flags>>16)&0xff; b[10] = (flags>>8)&0xff; b[11] = flags&0xff;
+            b.set(content, 12);
+            return b;
         }
 
-        // Add samples
-        for (const [oldId, newId] of trackMap) {
-            const samples = trackSamples.get(oldId) || [];
+        // Extract stsd from each per-track init segment
+        function extractStsd(initBuf) {
+            const d = new Uint8Array(initBuf);
+            function find(d, start, end, type) {
+                let p = start;
+                while (p + 8 <= end) {
+                    const sz = r4(d, p);
+                    if (sz < 8 || p + sz > end) break;
+                    const t = String.fromCharCode(d[p+4],d[p+5],d[p+6],d[p+7]);
+                    if (t === type) return { off: p, sz };
+                    p += sz;
+                }
+                return null;
+            }
+            const moov = find(d, 0, d.length, 'moov'); if (!moov) return null;
+            const trak = find(d, moov.off+8, moov.off+moov.sz, 'trak'); if (!trak) return null;
+            const mdia = find(d, trak.off+8, trak.off+trak.sz, 'mdia'); if (!mdia) return null;
+            const minf = find(d, mdia.off+8, mdia.off+mdia.sz, 'minf'); if (!minf) return null;
+            const stbl = find(d, minf.off+8, minf.off+minf.sz, 'stbl'); if (!stbl) return null;
+            const stsd = find(d, stbl.off+8, stbl.off+stbl.sz, 'stsd'); if (!stsd) return null;
+            return d.slice(stsd.off, stsd.off + stsd.sz);
+        }
+
+        // Inject esds into mp4a stsd if missing (needed for MOV-sourced audio)
+        function ensureEsds(stsdData, sampleRate, channelCount) {
+            if (!stsdData || stsdData.length < 52) return stsdData;
+            const et = String.fromCharCode(stsdData[20],stsdData[21],stsdData[22],stsdData[23]);
+            if (et !== 'mp4a') return stsdData;
+            // Check if esds already present
+            const entrySize = r4(stsdData, 16);
+            let p = 52;
+            while (p + 8 <= 16 + entrySize) {
+                const t = String.fromCharCode(stsdData[p+4],stsdData[p+5],stsdData[p+6],stsdData[p+7]);
+                if (t === 'esds') return stsdData; // already has it
+                const sz = r4(stsdData, p); if (sz < 8) break; p += sz;
+            }
+            const freqs = [96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000];
+            let fi = freqs.indexOf(sampleRate); if (fi < 0) fi = 4;
+            const asc0 = (2 << 3) | (fi >> 1);
+            const asc1 = ((fi & 1) << 7) | ((channelCount & 0xf) << 3);
+            const esds = new Uint8Array([
+                0,0,0,0x27, 0x65,0x73,0x64,0x73, 0,0,0,0,
+                0x03,0x19,0x00,0x02,0x00, 0x04,0x11,0x40,0x15,0x00,0x00,0x00,
+                0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+                0x05,0x02,asc0,asc1, 0x06,0x01,0x02
+            ]);
+            const before = stsdData.slice(0, 52);
+            const after = stsdData.slice(16 + entrySize);
+            const result = new Uint8Array(before.length + esds.length + after.length);
+            result.set(before, 0);
+            result.set(esds, before.length);
+            result.set(after, before.length + esds.length);
+            w4(result, 16, 36 + esds.length); // mp4a entry size
+            w4(result, 0, result.length); // stsd size
+            return result;
+        }
+
+        // Sort: video first
+        const sorted = [...avTracks].sort((a,b) => (a.type==='video'?0:1)-(b.type==='video'?0:1));
+
+        // Build track data
+        const outTracks = [];
+        for (let ti = 0; ti < sorted.length; ti++) {
+            const t = sorted[ti];
+            const samples = trackSamples.get(t.id) || [];
+            if (samples.length === 0) continue;
+
+            let stsd = extractStsd(perTrackInits[avTracks.indexOf(t)].buffer);
+            if (t.type === 'audio') {
+                stsd = ensureEsds(stsd, t.audio?.sample_rate || 44100, t.audio?.channel_count || 2);
+            }
+            if (!stsd) continue;
+
+            outTracks.push({ info: t, samples, stsd, trackId: outTracks.length + 1 });
+        }
+
+        if (outTracks.length === 0) return null;
+
+        // Compute mdat layout — interleave samples from all tracks for better playback
+        let mdatSize = 0;
+        const sampleOffsets = []; // per-track array of offsets within mdat
+        for (const ot of outTracks) {
+            const offsets = [];
+            for (const s of ot.samples) {
+                offsets.push(mdatSize);
+                mdatSize += s.size;
+            }
+            sampleOffsets.push(offsets);
+        }
+
+        // Build each trak box
+        const MOVIE_TIMESCALE = 1000;
+        let maxMovieDur = 0;
+
+        function buildTrak(ot, trackIdx) {
+            const t = ot.info;
+            const samples = ot.samples;
+            const offsets = sampleOffsets[trackIdx];
+            const isVideo = t.type === 'video';
+
+            const totalDur = samples.reduce((s, x) => s + x.duration, 0);
+            const movieDur = Math.round(totalDur * MOVIE_TIMESCALE / t.timescale);
+            if (movieDur > maxMovieDur) maxMovieDur = movieDur;
+
+            // tkhd
+            const tkhdC = new Uint8Array(80);
+            w4(tkhdC, 8, ot.trackId);
+            w4(tkhdC, 16, movieDur);
+            w4(tkhdC, 32, 0x00010000); // matrix[0]
+            w4(tkhdC, 48, 0x00010000); // matrix[4]
+            w4(tkhdC, 64, 0x40000000); // matrix[8]
+            if (isVideo) {
+                const w = t.video?.width || t.track_width || 0;
+                const h = t.video?.height || t.track_height || 0;
+                w4(tkhdC, 68, w << 16);
+                w4(tkhdC, 72, h << 16);
+            }
+            if (!isVideo) { tkhdC[36] = 0x01; tkhdC[37] = 0x00; } // volume = 1.0 for audio
+            const tkhd = mkFullBox('tkhd', 0, 3, tkhdC);
+
+            // mdhd
+            const mdhdC = new Uint8Array(24);
+            w4(mdhdC, 8, t.timescale);
+            w4(mdhdC, 12, totalDur);
+            mdhdC[16] = 0x55; mdhdC[17] = 0xC4; // 'und'
+            const mdhd = mkFullBox('mdhd', 0, 0, mdhdC);
+
+            // hdlr
+            const name = isVideo ? 'VideoHandler\0' : 'SoundHandler\0';
+            const hdlrC = new Uint8Array(20 + name.length);
+            const ht = isVideo ? 'vide' : 'soun';
+            for (let i = 0; i < 4; i++) hdlrC[4+i] = ht.charCodeAt(i);
+            for (let i = 0; i < name.length; i++) hdlrC[20+i] = name.charCodeAt(i);
+            const hdlr = mkFullBox('hdlr', 0, 0, hdlrC);
+
+            // media header (vmhd or smhd)
+            const mediaHdr = isVideo
+                ? mkFullBox('vmhd', 0, 1, new Uint8Array(8))
+                : mkFullBox('smhd', 0, 0, new Uint8Array(4));
+
+            // dinf/dref
+            const urlBox = mkFullBox('url ', 0, 1, new Uint8Array(0));
+            const drefC = new Uint8Array(4 + urlBox.length);
+            w4(drefC, 0, 1);
+            drefC.set(urlBox, 4);
+            const dinf = mkBox('dinf', mkFullBox('dref', 0, 0, drefC));
+
+            // stts
+            const sttsEntries = []; let lastD = -1;
             for (const s of samples) {
-                dst.addSample(newId, s.data, {
-                    duration: s.duration,
-                    dts: s.dts,
-                    cts: s.cts,
-                    is_sync: s.is_sync,
-                });
+                if (s.duration === lastD) sttsEntries[sttsEntries.length-1][0]++;
+                else { sttsEntries.push([1, s.duration]); lastD = s.duration; }
+            }
+            const sttsC = new Uint8Array(4 + sttsEntries.length * 8);
+            w4(sttsC, 0, sttsEntries.length);
+            for (let i = 0; i < sttsEntries.length; i++) { w4(sttsC, 4+i*8, sttsEntries[i][0]); w4(sttsC, 4+i*8+4, sttsEntries[i][1]); }
+            const stts = mkFullBox('stts', 0, 0, sttsC);
+
+            // stsc: 1 chunk per sample (simplest correct approach)
+            const stscC = new Uint8Array(4 + 12);
+            w4(stscC, 0, 1); w4(stscC, 4, 1); w4(stscC, 8, 1); w4(stscC, 12, 1);
+            const stsc = mkFullBox('stsc', 0, 0, stscC);
+
+            // stsz
+            const allSame = samples.every(s => s.size === samples[0].size);
+            let stsz;
+            if (allSame) {
+                const c = new Uint8Array(8); w4(c,0,samples[0].size); w4(c,4,samples.length);
+                stsz = mkFullBox('stsz',0,0,c);
+            } else {
+                const c = new Uint8Array(8+samples.length*4); w4(c,0,0); w4(c,4,samples.length);
+                for (let i=0;i<samples.length;i++) w4(c,8+i*4,samples[i].size);
+                stsz = mkFullBox('stsz',0,0,c);
+            }
+
+            // stco: one entry per sample (matches stsc of 1 sample per chunk)
+            const stcoC = new Uint8Array(4 + samples.length * 4);
+            w4(stcoC, 0, samples.length);
+            // offsets filled as placeholders — will be fixed after moov is sized
+            for (let i = 0; i < samples.length; i++) w4(stcoC, 4+i*4, offsets[i]);
+            const stco = mkFullBox('stco', 0, 0, stcoC);
+
+            // stss (sync samples) — only for video with non-all-sync
+            let stss = null;
+            if (isVideo) {
+                const syncs = []; let allSync = true;
+                for (let i=0;i<samples.length;i++) { if(samples[i].is_sync) syncs.push(i+1); else allSync=false; }
+                if (!allSync && syncs.length > 0) {
+                    const c = new Uint8Array(4+syncs.length*4); w4(c,0,syncs.length);
+                    for (let i=0;i<syncs.length;i++) w4(c,4+i*4,syncs[i]);
+                    stss = mkFullBox('stss',0,0,c);
+                }
+            }
+
+            // ctts
+            let ctts = null;
+            if (samples.some(s => s.cts !== s.dts)) {
+                const entries = []; let lastOff = null;
+                for (const s of samples) {
+                    const off = s.cts - s.dts;
+                    if (off === lastOff) entries[entries.length-1][0]++;
+                    else { entries.push([1, off]); lastOff = off; }
+                }
+                const c = new Uint8Array(4+entries.length*8); w4(c,0,entries.length);
+                for (let i=0;i<entries.length;i++) { w4(c,4+i*8,entries[i][0]); w4(c,4+i*8+4,entries[i][1]); }
+                ctts = mkFullBox('ctts', entries.some(e=>e[1]<0)?1:0, 0, c);
+            }
+
+            const stblParts = [ot.stsd, stts, stsc, stsz, stco];
+            if (stss) stblParts.push(stss);
+            if (ctts) stblParts.push(ctts);
+            const stbl = mkBox('stbl', cat(...stblParts));
+            const minf = mkBox('minf', cat(mediaHdr, dinf, stbl));
+            const mdia = mkBox('mdia', cat(mdhd, hdlr, minf));
+            return mkBox('trak', cat(tkhd, mdia));
+        }
+
+        const trakBoxes = outTracks.map((ot, i) => buildTrak(ot, i));
+
+        // mvhd
+        const mvhdC = new Uint8Array(96);
+        w4(mvhdC, 8, MOVIE_TIMESCALE);
+        w4(mvhdC, 12, maxMovieDur);
+        w4(mvhdC, 16, 0x00010000); // rate
+        mvhdC[20] = 0x01; mvhdC[21] = 0x00; // volume
+        w4(mvhdC, 32, 0x00010000); w4(mvhdC, 48, 0x00010000); w4(mvhdC, 64, 0x40000000);
+        w4(mvhdC, 92, outTracks.length + 1);
+        const mvhd = mkFullBox('mvhd', 0, 0, mvhdC);
+
+        // ftyp
+        const ftyp = new Uint8Array([
+            0,0,0,0x1C, 0x66,0x74,0x79,0x70,
+            0x69,0x73,0x6F,0x6D, 0,0,0,1,
+            0x69,0x73,0x6F,0x6D, 0x69,0x73,0x6F,0x32, 0x6D,0x70,0x34,0x31
+        ]);
+
+        const moov = mkBox('moov', cat(mvhd, ...trakBoxes));
+
+        // Fix stco offsets: add ftyp + moov + mdat header size
+        const mdatHdrSize = (8 + mdatSize > 0xFFFFFFFF) ? 16 : 8;
+        const baseOffset = ftyp.length + moov.length + mdatHdrSize;
+        (function fixStco(buf, s, e) {
+            let p = s;
+            while (p+8 <= e) {
+                const sz = r4(buf,p);
+                const t = String.fromCharCode(buf[p+4],buf[p+5],buf[p+6],buf[p+7]);
+                if (sz<8||p+sz>e) break;
+                if (['moov','trak','mdia','minf','stbl'].includes(t)) fixStco(buf, p+8, p+sz);
+                else if (t === 'stco') {
+                    const cnt = r4(buf, p+12);
+                    for (let i=0;i<cnt;i++) { const o=p+16+i*4; w4(buf,o,r4(buf,o)+baseOffset); }
+                }
+                p += sz;
+            }
+        })(moov, 8, moov.length);
+
+        // Build mdat
+        const mdatHdr = new Uint8Array(mdatHdrSize);
+        w4(mdatHdr, 0, mdatHdrSize + mdatSize);
+        mdatHdr[4]=0x6D; mdatHdr[5]=0x64; mdatHdr[6]=0x61; mdatHdr[7]=0x74;
+
+        const mdatPayload = new Uint8Array(mdatSize);
+        for (let ti = 0; ti < outTracks.length; ti++) {
+            const offsets = sampleOffsets[ti];
+            for (let si = 0; si < outTracks[ti].samples.length; si++) {
+                const s = outTracks[ti].samples[si];
+                const src = new Uint8Array(s.data.buffer || s.data, s.data.byteOffset || 0, s.size);
+                mdatPayload.set(src, offsets[si]);
             }
         }
 
-        // Write
-        const ds = new DataStream();
-        ds.endianness = DataStream.BIG_ENDIAN;
-        dst.write(ds);
-        return new Uint8Array(ds.buffer);
+        return cat(ftyp, moov, mdatHdr, mdatPayload);
     } catch (e) {
         console.warn('Unfragment failed:', e);
         return null;
@@ -3932,12 +4193,10 @@ async function downloadItem(item) {
         let off = 0;
         for (const c of chunks) { merged.set(c, off); off += c.length; }
 
-        // For fragmented MP4: convert back to regular MP4 (moov+mdat) so
-        // QuickTime and other desktop players can open it. fMP4 streams fine
-        // via MSE but standalone players often choke on it.
+        // Convert fMP4 to regular MP4 for QuickTime/VLC compatibility
         if (item.fragmented) {
-            const unfragmented = await unfragmentMP4(merged);
-            if (unfragmented) merged = unfragmented;
+            const converted = await unfragmentMP4(merged);
+            if (converted) merged = converted;
         }
 
         // Use octet-stream so the browser respects the download filename exactly
