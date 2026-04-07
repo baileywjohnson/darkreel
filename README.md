@@ -1,6 +1,6 @@
 # 🍿 Darkreel
 
-End-to-end encrypted video and photo storage with streaming playback. The server never sees your content -- all encryption and decryption happens in your browser.
+End-to-end encrypted photo and video storage with streaming playback. The server never sees your content -- all encryption and decryption happens in your browser.
 
 ## Features
 
@@ -17,13 +17,10 @@ End-to-end encrypted video and photo storage with streaming playback. The server
 
 ### Supported formats
 
-| Type | Formats | Playback |
-|------|---------|----------|
-| Video | MP4, MOV | Streaming (MSE) |
-| Video | WEBM, MKV, M4V | Blob playback |
-| Image | JPG, PNG, GIF, WEBP | Native |
+- **Video:** MP4, MOV, WEBM, MKV, M4V
+- **Image:** JPG, PNG, GIF, WEBP
 
-Videos uploaded via the CLI (using ffmpeg) support all formats including WEBM and MKV with full streaming playback.
+> **Note:** Only MP4 and MOV videos support streaming playback when uploaded in the browser. CLI uploads via ffmpeg support all video formats with full streaming.
 
 ## Design decisions
 
