@@ -1,6 +1,30 @@
-# 🍿 Darkreel
+<p align="center">
+  <span style="font-size: 80px;">🍿</span>
+</p>
 
-End-to-end encrypted photo and video storage with streaming playback. The server never sees your content -- all encryption and decryption happens in your browser.
+<h1 align="center">Darkreel</h1>
+
+<p align="center">
+  <strong>End-to-end encrypted photo and video storage with streaming playback.</strong><br>
+  The server never sees your content — all encryption and decryption happens in your browser.
+</p>
+
+<p align="center">
+  <a href="https://github.com/baileywjohnson/darkreel/stargazers"><img src="https://img.shields.io/github/stars/baileywjohnson/darkreel?style=flat&color=yellow" alt="Stars"></a>
+  <a href="https://github.com/baileywjohnson/darkreel/commits/main"><img src="https://img.shields.io/github/last-commit/baileywjohnson/darkreel?style=flat" alt="Last Commit"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/baileywjohnson/darkreel?style=flat" alt="License"></a>
+</p>
+
+<p align="center">
+  <a href="https://darkreel.io">Website</a> •
+  <a href="#features">Features</a> •
+  <a href="#quick-start-vps">Quick Start</a> •
+  <a href="#how-it-works">How It Works</a> •
+  <a href="#privacy-and-security">Security</a> •
+  <a href="#api">API</a>
+</p>
+
+---
 
 ## Features
 
