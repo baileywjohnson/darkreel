@@ -40,215 +40,348 @@ async function loadMP4Box() {
 function mergeInitSegments(segments) {
     if (segments.length <= 1) return segments[0];
 
-    const rd = (d, o) => ((d[o] << 24) | (d[o+1] << 16) | (d[o+2] << 8) | d[o+3]) >>> 0;
+    const rd = (d, o) => ((d[o]<<24)|(d[o+1]<<16)|(d[o+2]<<8)|d[o+3])>>>0;
     const wr = (d, o, v) => { d[o]=(v>>>24)&0xff; d[o+1]=(v>>>16)&0xff; d[o+2]=(v>>>8)&0xff; d[o+3]=v&0xff; };
-    const btype = (d, o) => String.fromCharCode(d[o+4], d[o+5], d[o+6], d[o+7]);
+    const bt = (d, o) => String.fromCharCode(d[o+4],d[o+5],d[o+6],d[o+7]);
+    const cat = (...a) => { const n=a.reduce((s,b)=>s+b.length,0); const r=new Uint8Array(n); let o=0; for(const b of a){r.set(b,o);o+=b.length;} return r; };
+    const mkBox = (t, c) => { const b=new Uint8Array(8+c.length); wr(b,0,8+c.length); b[4]=t.charCodeAt(0);b[5]=t.charCodeAt(1);b[6]=t.charCodeAt(2);b[7]=t.charCodeAt(3); b.set(c,8); return b; };
 
-    function findBox(d, s, e, t) {
-        let p = s;
-        while (p + 8 <= e) {
-            const sz = rd(d, p);
-            if (sz < 8 || p + sz > e) break;
-            if (btype(d, p) === t) return { off: p, sz };
-            p += sz;
-        }
-        return null;
-    }
-    function findBoxes(d, s, e, t) {
-        const r = []; let p = s;
-        while (p + 8 <= e) {
-            const sz = rd(d, p);
-            if (sz < 8 || p + sz > e) break;
-            if (btype(d, p) === t) r.push({ off: p, sz });
-            p += sz;
-        }
+    function parseChildren(d, s, e) {
+        const r=[]; let p=s;
+        while(p+8<=e){ const sz=rd(d,p); if(sz<8||p+sz>e) break; r.push({type:bt(d,p), data:d.slice(p,p+sz)}); p+=sz; }
         return r;
     }
 
-    // Extract extra trak and trex boxes from additional init segments
-    const extraTraks = [], extraTrexes = [];
-    for (let i = 1; i < segments.length; i++) {
-        const s = segments[i];
-        const moov = findBox(s, 0, s.length, 'moov');
-        if (!moov) continue;
-        for (const t of findBoxes(s, moov.off + 8, moov.off + moov.sz, 'trak'))
-            extraTraks.push(s.slice(t.off, t.off + t.sz));
-        const mvex = findBox(s, moov.off + 8, moov.off + moov.sz, 'mvex');
-        if (mvex) for (const t of findBoxes(s, mvex.off + 8, mvex.off + mvex.sz, 'trex'))
-            extraTrexes.push(s.slice(t.off, t.off + t.sz));
+    // Synthesize an esds box for AAC-LC given sample rate and channel count.
+    // Required because mp4box.js strips esds from MOV files' mp4a entries.
+    function mkEsds(sampleRate, channels) {
+        const freqs = [96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000];
+        let freqIdx = freqs.indexOf(sampleRate);
+        if (freqIdx < 0) freqIdx = 4; // default 44100
+        // AudioSpecificConfig: 5 bits AOT(2=AAC-LC) + 4 bits freqIdx + 4 bits channels + 3 bits pad
+        const asc0 = (2 << 3) | (freqIdx >> 1);
+        const asc1 = ((freqIdx & 1) << 7) | (channels << 3);
+        // DecoderSpecificInfo (tag=5)
+        const dsi = new Uint8Array([0x05, 0x02, asc0, asc1]);
+        // DecoderConfigDescriptor (tag=4): OTI=0x40(AAC), streamType=0x15(audio)
+        const dcd = new Uint8Array([0x04, 0x0d + dsi.length, 0x40, 0x15, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...dsi]);
+        // SLConfigDescriptor (tag=6)
+        const slc = new Uint8Array([0x06, 0x01, 0x02]);
+        // ES_Descriptor (tag=3)
+        const esLen = 3 + dcd.length + slc.length;
+        const esd = new Uint8Array([0x03, esLen, 0x00, 0x02, 0x00, ...dcd, ...slc]);
+        // esds full box: size + 'esds' + version/flags + ES_Descriptor
+        const esdsSize = 12 + esd.length;
+        const esds = new Uint8Array(esdsSize);
+        wr(esds, 0, esdsSize);
+        esds[4]=0x65; esds[5]=0x73; esds[6]=0x64; esds[7]=0x73; // 'esds'
+        // version=0, flags=0 (bytes 8-11 already 0)
+        esds.set(esd, 12);
+        return esds;
     }
-    if (extraTraks.length === 0) return segments[0];
 
-    const base = segments[0];
-    const moov = findBox(base, 0, base.length, 'moov');
-    if (!moov) return base;
-    const mvex = findBox(base, moov.off + 8, moov.off + moov.sz, 'mvex');
+    // Fix mp4a entries that are missing esds (common with MOV→fMP4 via mp4box.js)
+    function fixAudioTrak(trakData) {
+        const children = parseChildren(trakData, 8, trakData.length);
+        const mdia = children.find(c => c.type === 'mdia');
+        if (!mdia) return trakData;
+        const mdiaChildren = parseChildren(mdia.data, 8, mdia.data.length);
+        const hdlr = mdiaChildren.find(c => c.type === 'hdlr');
+        if (!hdlr || String.fromCharCode(hdlr.data[16],hdlr.data[17],hdlr.data[18],hdlr.data[19]) !== 'soun') return trakData;
+        const minf = mdiaChildren.find(c => c.type === 'minf');
+        if (!minf) return trakData;
+        const minfChildren = parseChildren(minf.data, 8, minf.data.length);
+        const stbl = minfChildren.find(c => c.type === 'stbl');
+        if (!stbl) return trakData;
+        const stblChildren = parseChildren(stbl.data, 8, stbl.data.length);
+        const stsd = stblChildren.find(c => c.type === 'stsd');
+        if (!stsd) return trakData;
 
-    const addTrak = extraTraks.reduce((s, t) => s + t.length, 0);
-    const addTrex = extraTrexes.reduce((s, t) => s + t.length, 0);
-    const result = new Uint8Array(base.length + addTrak + addTrex);
-    let wp = 0;
+        // Check mp4a entry for esds child
+        const entryOff = 16; // stsd header(8) + version/flags(4) + count(4)
+        if (entryOff + 8 > stsd.data.length) return trakData;
+        const entrySize = rd(stsd.data, entryOff);
+        const entryType = String.fromCharCode(stsd.data[entryOff+4],stsd.data[entryOff+5],stsd.data[entryOff+6],stsd.data[entryOff+7]);
+        if (entryType !== 'mp4a') return trakData;
 
-    // Copy base up to trak insertion point (before mvex)
-    const trakIns = mvex ? mvex.off : moov.off + moov.sz;
-    result.set(base.subarray(0, trakIns), wp); wp = trakIns;
-
-    // Insert extra trak boxes
-    for (const t of extraTraks) { result.set(t, wp); wp += t.length; }
-
-    if (mvex) {
-        // Copy mvex header, existing content, then insert extra trex boxes
-        result.set(base.subarray(mvex.off, mvex.off + 8), wp);
-        const mvexHdr = wp; wp += 8;
-        result.set(base.subarray(mvex.off + 8, mvex.off + mvex.sz), wp);
-        wp += mvex.sz - 8;
-        for (const t of extraTrexes) { result.set(t, wp); wp += t.length; }
-        wr(result, mvexHdr, mvex.sz + addTrex);
-        // Copy anything in moov after mvex
-        const after = mvex.off + mvex.sz;
-        if (after < moov.off + moov.sz) {
-            result.set(base.subarray(after, moov.off + moov.sz), wp);
-            wp += moov.off + moov.sz - after;
+        // Check if esds already exists (child boxes start at offset 36 within entry)
+        const mp4aChildStart = entryOff + 36; // after mp4a fixed fields
+        if (mp4aChildStart < entryOff + entrySize) {
+            const existingChildren = parseChildren(stsd.data, mp4aChildStart, entryOff + entrySize);
+            if (existingChildren.some(c => c.type === 'esds')) return trakData; // already has esds
         }
+
+        // Extract sample_rate and channels from mp4a header
+        const channels = (stsd.data[entryOff + 24] << 8) | stsd.data[entryOff + 25];
+        const sampleRate = (stsd.data[entryOff + 28] << 8) | stsd.data[entryOff + 29]; // 16.16 fixed-point, take integer part
+        const esds = mkEsds(sampleRate, channels);
+
+        // Rebuild stsd with esds injected into mp4a
+        const beforeMp4a = stsd.data.slice(0, entryOff + 36); // stsd header + mp4a fixed fields
+        const afterMp4a = stsd.data.slice(entryOff + entrySize); // anything after mp4a entry
+        const newEntrySize = 36 + esds.length;
+        const newStsdContent = cat(beforeMp4a, esds, afterMp4a);
+        // Fix mp4a entry size
+        wr(newStsdContent, entryOff, newEntrySize);
+        // Fix stsd box size
+        const newStsd = new Uint8Array(newStsdContent.length);
+        newStsd.set(newStsdContent);
+        wr(newStsd, 0, newStsd.length);
+
+        // Rebuild trak from components, replacing stsd
+        const newStblParts = stblChildren.map(c => c.type === 'stsd' ? newStsd : c.data);
+        const newStbl = mkBox('stbl', cat(...newStblParts));
+        const newMinfParts = minfChildren.map(c => c.type === 'stbl' ? newStbl : c.data);
+        const newMinf = mkBox('minf', cat(...newMinfParts));
+        const newMdiaParts = mdiaChildren.map(c => c.type === 'minf' ? newMinf : c.data);
+        const newMdia = mkBox('mdia', cat(...newMdiaParts));
+        const newTrakParts = children.map(c => c.type === 'mdia' ? newMdia : c.data);
+        return mkBox('trak', cat(...newTrakParts));
     }
 
-    // Copy anything after moov
-    const moovEnd = moov.off + moov.sz;
-    if (moovEnd < base.length) {
-        result.set(base.subarray(moovEnd), wp);
-        wp += base.length - moovEnd;
-    }
+    try {
+        // Parse all init segments: collect ftyp, mvhd, trak boxes, and trex boxes
+        let ftyp = null;
+        let mvhd = null;
+        const allTraks = [];
+        const allTrexes = [];
+        let otherMoovBoxes = [];
 
-    wr(result, moov.off, moov.sz + addTrak + addTrex);
-    return result.subarray(0, wp);
+        for (const seg of segments) {
+            const topBoxes = parseChildren(seg, 0, seg.length);
+            for (const b of topBoxes) {
+                if (b.type === 'ftyp' && !ftyp) ftyp = b.data;
+                if (b.type === 'moov') {
+                    const moovChildren = parseChildren(b.data, 8, b.data.length);
+                    for (const mc of moovChildren) {
+                        if (mc.type === 'mvhd' && !mvhd) mvhd = mc.data;
+                        else if (mc.type === 'trak') allTraks.push(fixAudioTrak(mc.data));
+                        else if (mc.type === 'mvex') {
+                            const mvexChildren = parseChildren(mc.data, 8, mc.data.length);
+                            for (const mx of mvexChildren) {
+                                if (mx.type === 'trex') allTrexes.push(mx.data);
+                            }
+                        } else if (mc.type !== 'trak' && mc.type !== 'mvhd' && mc.type !== 'mvex') {
+                            // Collect other boxes (udta, etc.) but only once
+                            if (!otherMoovBoxes.some(x => x.type === mc.type)) otherMoovBoxes.push(mc);
+                        }
+                    }
+                }
+            }
+        }
+
+
+        if (!ftyp || !mvhd || allTraks.length === 0) return segments[0];
+
+        // Rebuild mvex with all trex entries
+        const mvex = allTrexes.length > 0 ? mkBox('mvex', cat(...allTrexes)) : new Uint8Array(0);
+
+        // Rebuild moov: mvhd + all traks + mvex + other boxes
+        const otherData = otherMoovBoxes.map(b => b.data);
+        const moov = mkBox('moov', cat(mvhd, ...allTraks, mvex, ...otherData));
+
+        return cat(ftyp, moov);
+    } catch (e) {
+        console.warn('mergeInitSegments failed, using first segment:', e);
+        return segments[0];
+    }
 }
 
 async function remuxToFMP4(data) {
     if (!await loadMP4Box()) return null;
     try {
-        const result = await new Promise((resolve, reject) => {
-            const mp4box = MP4Box.createFile();
-            const trackSegments = new Map(); // trackId -> [Uint8Array]
-            const initSegmentBufs = [];
-            let codecStrings = [];
-            let pendingTracks = 0;
-            let finalized = false;
+        const mp4box = MP4Box.createFile();
 
-            mp4box.onReady = (info) => {
-                for (const track of info.tracks) {
-                    if (track.codec) codecStrings.push(track.codec);
-                    trackSegments.set(track.id, []);
-                }
-
-                for (const track of info.tracks) {
-                    const samples = track.type === 'audio' ? 200 : 60;
-                    mp4box.setSegmentOptions(track.id, track.id, {
-                        rapAlignement: true,
-                        nbSamples: samples,
-                    });
-                    pendingTracks++;
-                }
-                const initSegs = mp4box.initializeSegmentation();
-                for (const seg of initSegs) {
-                    initSegmentBufs.push(new Uint8Array(seg.buffer));
-                }
-
-                mp4box.start();
-            };
-
-            mp4box.onSegment = (id, user, buffer, sampleNum, isLast) => {
-                const arr = trackSegments.get(id);
-                if (arr) arr.push(new Uint8Array(buffer));
-                if (isLast) {
-                    pendingTracks--;
-                    if (pendingTracks <= 0 && !finalized) {
-                        finalized = true;
-                        finalize();
-                    }
-                }
-            };
-
-            function finalize() {
-                if (initSegmentBufs.length === 0) {
-                    reject(new Error('No init segments produced'));
-                    return;
-                }
-
-                // Merge per-track init segments into one that declares all tracks
-                const initSegment = mergeInitSegments(initSegmentBufs);
-
-                // Interleave segments from different tracks proportionally so
-                // audio and video data are evenly distributed across chunks
-                const allTrackSegs = [...trackSegments.values()].filter(a => a.length > 0);
-                let interleaved;
-                if (allTrackSegs.length <= 1) {
-                    interleaved = allTrackSegs[0] || [];
-                } else {
-                    interleaved = [];
-                    const indices = new Array(allTrackSegs.length).fill(0);
-                    const total = allTrackSegs.reduce((s, a) => s + a.length, 0);
-                    for (let i = 0; i < total; i++) {
-                        let best = -1, bestRatio = 2;
-                        for (let t = 0; t < allTrackSegs.length; t++) {
-                            if (indices[t] >= allTrackSegs[t].length) continue;
-                            const r = indices[t] / allTrackSegs[t].length;
-                            if (r < bestRatio) { bestRatio = r; best = t; }
-                        }
-                        if (best < 0) break;
-                        interleaved.push(allTrackSegs[best][indices[best]++]);
-                    }
-                }
-
-                if (interleaved.length === 0) {
-                    reject(new Error('No media segments produced'));
-                    return;
-                }
-
-                // Merge small segments into ~1MB chunks for encryption
-                const TARGET = 1024 * 1024;
-                const chunks = [initSegment];
-                let buf = [], bufSize = 0;
-                for (const seg of interleaved) {
-                    buf.push(seg);
-                    bufSize += seg.length;
-                    if (bufSize >= TARGET) {
-                        const merged = new Uint8Array(bufSize);
-                        let p = 0;
-                        for (const b of buf) { merged.set(b, p); p += b.length; }
-                        chunks.push(merged);
-                        buf = [];
-                        bufSize = 0;
-                    }
-                }
-                if (buf.length > 0) {
-                    const merged = new Uint8Array(bufSize);
-                    let p = 0;
-                    for (const b of buf) { merged.set(b, p); p += b.length; }
-                    chunks.push(merged);
-                }
-
-                resolve({ segments: chunks, codecs: codecStrings.join(',') });
-            }
-
-            mp4box.onError = (e) => reject(e);
-
-            // Feed the data to mp4box
+        // Parse the file to get track info and samples
+        const info = await new Promise((resolve, reject) => {
+            mp4box.onReady = resolve;
+            mp4box.onError = reject;
             const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
             ab.fileStart = 0;
             mp4box.appendBuffer(ab);
             mp4box.flush();
-
-            // Safety timeout — if onSegment isLast never fires
-            setTimeout(() => {
-                if (!finalized && initSegmentBufs.length > 0) {
-                    finalized = true;
-                    finalize();
-                } else if (!finalized) {
-                    reject(new Error('Remux timeout'));
-                }
-            }, 30000);
         });
-        return result;
+
+        if (!info.tracks || info.tracks.length === 0) return null;
+
+        // Only process video and audio tracks — skip metadata, timecode, subtitle, etc.
+        const avTracks = info.tracks.filter(t => t.type === 'video' || t.type === 'audio');
+        if (avTracks.length === 0) return null;
+
+        // Extract all samples from each A/V track
+        const trackSamples = new Map();
+        for (const t of avTracks) {
+            trackSamples.set(t.id, []);
+            mp4box.setExtractionOptions(t.id, null, { nbSamples: 1000 });
+        }
+        mp4box.onSamples = (trackId, user, samples) => {
+            const arr = trackSamples.get(trackId);
+            if (arr) for (const s of samples) arr.push(s);
+        };
+        mp4box.start();
+
+        // Build codec strings
+        const codecStrings = [];
+        for (const t of avTracks) {
+            let codec = t.codec || '';
+            if (codec === 'mp4a') codec = 'mp4a.40.2';
+            if (codec) codecStrings.push(codec);
+        }
+
+        // Get per-track init segments (for stsd/codec description)
+        // but build a combined init ourselves — only for A/V tracks
+        for (const t of avTracks) {
+            mp4box.setSegmentOptions(t.id, null, { nbSamples: 1 });
+        }
+        const perTrackInits = mp4box.initializeSegmentation();
+        const initSegmentBufs = perTrackInits.map(s => new Uint8Array(s.buffer));
+        const initSegment = mergeInitSegments(initSegmentBufs);
+
+        // Helper to build a moof+mdat for a batch of samples from one track
+        const rd = (b, o) => ((b[o]<<24)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3])>>>0;
+        const wr4 = (b, o, v) => { b[o]=(v>>>24)&0xff; b[o+1]=(v>>>16)&0xff; b[o+2]=(v>>>8)&0xff; b[o+3]=v&0xff; };
+
+        function buildMoofMdat(trackId, samples, seqNum) {
+            // trun flags: data-offset(0x01) + duration(0x100) + size(0x200) + flags(0x400) + cts-offset(0x800)
+            const hasCts = samples.some(s => s.cts !== s.dts);
+            let trunFlags = 0x01 | 0x100 | 0x200 | 0x400;
+            if (hasCts) trunFlags |= 0x800;
+            const perSample = hasCts ? 16 : 12;
+
+            // trun: full-box header(12) + sample_count(4) + data_offset(4) + per-sample data
+            const trunSize = 12 + 4 + 4 + samples.length * perSample;
+            const trun = new Uint8Array(trunSize);
+            wr4(trun, 0, trunSize);
+            trun[4]=0x74;trun[5]=0x72;trun[6]=0x75;trun[7]=0x6E; // 'trun'
+            trun[8] = hasCts ? 1 : 0; // version (1 for signed cts)
+            trun[9]=(trunFlags>>16)&0xff; trun[10]=(trunFlags>>8)&0xff; trun[11]=trunFlags&0xff;
+            wr4(trun, 12, samples.length);
+            // data_offset: will be filled after we know moof size
+            let tp = 20;
+            let mdatPayload = 0;
+            for (const s of samples) {
+                wr4(trun, tp, s.duration); tp += 4;
+                wr4(trun, tp, s.size); tp += 4;
+                const flags = s.is_sync ? 0x02000000 : 0x00010000;
+                wr4(trun, tp, flags); tp += 4;
+                if (hasCts) { wr4(trun, tp, (s.cts - s.dts)|0); tp += 4; }
+                mdatPayload += s.size;
+            }
+
+            // tfhd: full-box header(12) + track_id(4) = 16 bytes, flags=0x020000 (default-base-is-moof)
+            const tfhd = new Uint8Array(16);
+            wr4(tfhd, 0, 16);
+            tfhd[4]=0x74;tfhd[5]=0x66;tfhd[6]=0x68;tfhd[7]=0x64; // 'tfhd'
+            tfhd[9]=0x02; tfhd[10]=0x00; tfhd[11]=0x00; // default-base-is-moof
+            wr4(tfhd, 12, trackId);
+
+            // tfdt: full-box v1 header(12) + baseMediaDecodeTime(8) = 20 bytes
+            const tfdt = new Uint8Array(20);
+            wr4(tfdt, 0, 20);
+            tfdt[4]=0x74;tfdt[5]=0x66;tfdt[6]=0x64;tfdt[7]=0x74; // 'tfdt'
+            tfdt[8] = 1; // version 1 (64-bit time)
+            const dts = samples[0].dts;
+            wr4(tfdt, 12, Math.floor(dts / 0x100000000));
+            wr4(tfdt, 16, dts >>> 0);
+
+            // traf
+            const trafContent = new Uint8Array(tfhd.length + tfdt.length + trun.length);
+            trafContent.set(tfhd, 0);
+            trafContent.set(tfdt, tfhd.length);
+            trafContent.set(trun, tfhd.length + tfdt.length);
+            const trafSize = 8 + trafContent.length;
+            const traf = new Uint8Array(trafSize);
+            wr4(traf, 0, trafSize);
+            traf[4]=0x74;traf[5]=0x72;traf[6]=0x61;traf[7]=0x66; // 'traf'
+            traf.set(trafContent, 8);
+
+            // mfhd
+            const mfhd = new Uint8Array(16);
+            wr4(mfhd, 0, 16);
+            mfhd[4]=0x6D;mfhd[5]=0x66;mfhd[6]=0x68;mfhd[7]=0x64; // 'mfhd'
+            wr4(mfhd, 12, seqNum);
+
+            // moof
+            const moofSize = 8 + mfhd.length + traf.length;
+            const moof = new Uint8Array(moofSize);
+            wr4(moof, 0, moofSize);
+            moof[4]=0x6D;moof[5]=0x6F;moof[6]=0x6F;moof[7]=0x66; // 'moof'
+            moof.set(mfhd, 8);
+            moof.set(traf, 8 + mfhd.length);
+
+            // Fix trun data_offset: points from moof start to mdat payload
+            const dataOffset = moofSize + 8; // moof + mdat header
+            wr4(moof, 8 + mfhd.length + 8 + tfhd.length + tfdt.length + 16, dataOffset);
+
+            // mdat
+            const mdat = new Uint8Array(8 + mdatPayload);
+            wr4(mdat, 0, 8 + mdatPayload);
+            mdat[4]=0x6D;mdat[5]=0x64;mdat[6]=0x61;mdat[7]=0x74; // 'mdat'
+            let off = 8;
+            for (const s of samples) {
+                const sdata = s.data;
+                mdat.set(new Uint8Array(sdata.buffer || sdata, sdata.byteOffset || 0, s.size), off);
+                off += s.size;
+            }
+
+            const result = new Uint8Array(moofSize + mdat.length);
+            result.set(moof, 0);
+            result.set(mdat, moofSize);
+            return result;
+        }
+
+        // Build segments: ~2 seconds of samples per segment, for each track
+        const SEGMENT_DURATION_S = 2.0;
+        const allSegments = []; // {trackIdx, seg}
+        let seqNum = 1;
+        for (const t of avTracks) {
+            const samples = trackSamples.get(t.id) || [];
+            if (samples.length === 0) continue;
+            const segDurTicks = SEGMENT_DURATION_S * t.timescale;
+            let batchStart = 0;
+            let batchDts = samples[0].dts;
+            for (let i = 0; i < samples.length; i++) {
+                const elapsed = samples[i].dts + samples[i].duration - batchDts;
+                if (elapsed >= segDurTicks || i === samples.length - 1) {
+                    allSegments.push({
+                        trackIdx: avTracks.indexOf(t),
+                        timePos: batchDts / t.timescale,
+                        seg: buildMoofMdat(t.id, samples.slice(batchStart, i + 1), seqNum++),
+                    });
+                    batchStart = i + 1;
+                    if (batchStart < samples.length) batchDts = samples[batchStart].dts;
+                }
+            }
+        }
+
+        // Sort by time position so both tracks advance together
+        allSegments.sort((a, b) => a.timePos - b.timePos || a.trackIdx - b.trackIdx);
+
+        // Merge into ~1MB encrypted chunks
+        const TARGET = 1024 * 1024;
+        const chunks = [initSegment];
+        let buf = [], bufSize = 0;
+        for (const { seg } of allSegments) {
+            buf.push(seg);
+            bufSize += seg.length;
+            if (bufSize >= TARGET) {
+                const merged = new Uint8Array(bufSize);
+                let p = 0;
+                for (const b of buf) { merged.set(b, p); p += b.length; }
+                chunks.push(merged);
+                buf = [];
+                bufSize = 0;
+            }
+        }
+        if (buf.length > 0) {
+            const merged = new Uint8Array(bufSize);
+            let p = 0;
+            for (const b of buf) { merged.set(b, p); p += b.length; }
+            chunks.push(merged);
+        }
+
+        return { segments: chunks, codecs: codecStrings.join(',') };
     } catch (e) {
         console.warn('fMP4 remux failed:', e);
         return null;
@@ -261,269 +394,79 @@ async function remuxToFMP4(data) {
  * proper sample tables (stts, stsz, stco, stss, ctts). Copies the original
  * stsd (codec descriptions) verbatim so avcC/esds are preserved exactly.
  */
-function unfragmentMP4(fmp4) {
-    const d = fmp4;
-    const rd = (b, o) => ((b[o]<<24)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3])>>>0;
-    const wr = (b, o, v) => { b[o]=(v>>>24)&0xff; b[o+1]=(v>>>16)&0xff; b[o+2]=(v>>>8)&0xff; b[o+3]=v&0xff; };
-    const bt = (b, o) => String.fromCharCode(b[o+4],b[o+5],b[o+6],b[o+7]);
-    const bs = (b, o) => { const s=rd(b,o); return s===1&&o+16<=b.length ? rd(b,o+8)*0x100000000+rd(b,o+12) : s===0 ? b.length-o : s; };
-
-    function findBox(b, s, e, t) {
-        let p=s; while(p+8<=e){ const sz=bs(b,p); if(sz<8||p+sz>e) break; if(bt(b,p)===t) return {o:p,s:sz}; p+=sz; } return null;
-    }
-    function findAll(b, s, e, t) {
-        const r=[]; let p=s; while(p+8<=e){ const sz=bs(b,p); if(sz<8||p+sz>e) break; if(bt(b,p)===t) r.push({o:p,s:sz}); p+=sz; } return r;
-    }
-    function childrenExcept(b, s, e, ex) {
-        const r=[]; let p=s; while(p+8<=e){ const sz=bs(b,p); if(sz<8||p+sz>e) break; if(!ex.includes(bt(b,p))) r.push(b.slice(p,p+sz)); p+=sz; } return r;
-    }
-    function cat(...a) { const n=a.reduce((s,b)=>s+b.length,0); const r=new Uint8Array(n); let o=0; for(const b of a){r.set(b,o);o+=b.length;} return r; }
-    function box(t, c) { const b=new Uint8Array(8+c.length); wr(b,0,8+c.length); b[4]=t.charCodeAt(0);b[5]=t.charCodeAt(1);b[6]=t.charCodeAt(2);b[7]=t.charCodeAt(3); b.set(c,8); return b; }
-    function fbox(t, v, f, c) { const b=new Uint8Array(12+c.length); wr(b,0,12+c.length); b[4]=t.charCodeAt(0);b[5]=t.charCodeAt(1);b[6]=t.charCodeAt(2);b[7]=t.charCodeAt(3); b[8]=v; b[9]=(f>>16)&0xff;b[10]=(f>>8)&0xff;b[11]=f&0xff; b.set(c,12); return b; }
+/**
+ * Convert fMP4 to regular MP4 for download.
+ * Uses mp4box.js to parse and extract samples (same as remuxToFMP4 but in reverse),
+ * then builds a clean non-fragmented MP4 with proper sample tables.
+ */
+/**
+ * Convert fMP4 to regular MP4 for download.
+ * Uses mp4box.js to parse and extract samples, then addTrack/addSample to
+ * build a clean non-fragmented MP4. This avoids all the binary parsing edge cases.
+ */
+async function unfragmentMP4(fmp4) {
+    if (!await loadMP4Box()) return null;
 
     try {
-        // Find init segment end (first moof)
-        let initEnd = 0, pos = 0;
-        while (pos+8 <= d.length) { const sz=bs(d,pos); if(sz<8) break; if(bt(d,pos)==='moof'){initEnd=pos;break;} pos+=sz; }
-        if (!initEnd) return null;
+        const mp4box = MP4Box.createFile();
+        const info = await new Promise((resolve, reject) => {
+            mp4box.onReady = resolve;
+            mp4box.onError = reject;
+            const ab = d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength);
+            ab.fileStart = 0;
+            mp4box.appendBuffer(ab);
+            mp4box.flush();
+        });
 
-        const ftypB = findBox(d,0,initEnd,'ftyp');
-        const moovB = findBox(d,0,initEnd,'moov');
-        if (!ftypB || !moovB) return null;
-        const ftypData = d.slice(ftypB.o, ftypB.o+ftypB.s);
-        const mvhdB = findBox(d, moovB.o+8, moovB.o+moovB.s, 'mvhd');
-        if (!mvhdB) return null;
+        // Only video + audio
+        const avTracks = info.tracks.filter(t => t.type === 'video' || t.type === 'audio');
+        if (avTracks.length === 0) return null;
 
-        // Parse tracks from init moov
-        const traks = findAll(d, moovB.o+8, moovB.o+moovB.s, 'trak');
-        const tracks = new Map();
-        for (const tk of traks) {
-            const tkhd = findBox(d, tk.o+8, tk.o+tk.s, 'tkhd');
-            if (!tkhd) continue;
-            const tv = d[tkhd.o+8];
-            const tid = rd(d, tkhd.o + 12 + (tv===0 ? 8 : 16));
-
-            const mdia = findBox(d, tk.o+8, tk.o+tk.s, 'mdia');
-            if (!mdia) continue;
-            const mdhd = findBox(d, mdia.o+8, mdia.o+mdia.s, 'mdhd');
-            const hdlr = findBox(d, mdia.o+8, mdia.o+mdia.s, 'hdlr');
-            const minf = findBox(d, mdia.o+8, mdia.o+mdia.s, 'minf');
-            if (!mdhd || !hdlr || !minf) continue;
-            const stbl = findBox(d, minf.o+8, minf.o+minf.s, 'stbl');
-            if (!stbl) continue;
-            const stsd = findBox(d, stbl.o+8, stbl.o+stbl.s, 'stsd');
-            if (!stsd) continue;
-            const edts = findBox(d, tk.o+8, tk.o+tk.s, 'edts');
-
-            tracks.set(tid, {
-                tkhdData: d.slice(tkhd.o, tkhd.o+tkhd.s),
-                edtsData: edts ? d.slice(edts.o, edts.o+edts.s) : null,
-                mdhdData: d.slice(mdhd.o, mdhd.o+mdhd.s),
-                hdlrData: d.slice(hdlr.o, hdlr.o+hdlr.s),
-                minfOther: childrenExcept(d, minf.o+8, minf.o+minf.s, ['stbl']),
-                stsdData: d.slice(stsd.o, stsd.o+stsd.s),
-                samples: [], // {dur, size, isSync, ctsOff, dataPos}
-            });
+        // Extract all samples
+        const trackSamples = new Map();
+        for (const t of avTracks) {
+            trackSamples.set(t.id, []);
+            mp4box.setExtractionOptions(t.id, null, { nbSamples: 5000 });
         }
-        if (tracks.size === 0) return null;
+        mp4box.onSamples = (id, user, samples) => {
+            const arr = trackSamples.get(id);
+            if (arr) for (const s of samples) arr.push(s);
+        };
+        mp4box.start();
 
-        // Walk moof+mdat pairs to extract sample info
-        pos = initEnd;
-        while (pos+8 <= d.length) {
-            const sz = bs(d, pos);
-            if (sz<8 || pos+sz>d.length) break;
-            if (bt(d, pos) === 'moof') {
-                const moofOff = pos, moofEnd = pos+sz;
-                for (const traf of findAll(d, moofOff+8, moofEnd, 'traf')) {
-                    const tfhd = findBox(d, traf.o+8, traf.o+traf.s, 'tfhd');
-                    if (!tfhd) continue;
-                    const tfF = (d[tfhd.o+9]<<16)|(d[tfhd.o+10]<<8)|d[tfhd.o+11];
-                    const tid = rd(d, tfhd.o+12);
-                    let p = tfhd.o+16;
-                    let baseOff = moofOff;
-                    if (tfF & 0x01) { baseOff = rd(d,p)*0x100000000+rd(d,p+4); p+=8; }
-                    if (tfF & 0x02) p+=4;
-                    let defDur=0, defSz=0, defFlags=0;
-                    if (tfF & 0x08) { defDur=rd(d,p); p+=4; }
-                    if (tfF & 0x10) { defSz=rd(d,p); p+=4; }
-                    if (tfF & 0x20) { defFlags=rd(d,p); p+=4; }
+        // Build output using mp4box addTrack/addSample
+        const dst = MP4Box.createFile();
+        const trackMap = new Map(); // old id -> new id
 
-                    const tr = tracks.get(tid);
-                    if (!tr) continue;
-                    for (const trun of findAll(d, traf.o+8, traf.o+traf.s, 'trun')) {
-                        const trF = (d[trun.o+9]<<16)|(d[trun.o+10]<<8)|d[trun.o+11];
-                        const cnt = rd(d, trun.o+12);
-                        let tp = trun.o+16, dataOff=0, firstFlags=0;
-                        if (trF & 0x01) { dataOff=rd(d,tp)|0; tp+=4; }
-                        if (trF & 0x04) { firstFlags=rd(d,tp); tp+=4; }
-                        let sdp = baseOff + dataOff;
-                        for (let i=0; i<cnt; i++) {
-                            let dur=defDur, size=defSz, flags=(i===0&&(trF&0x04))?firstFlags:defFlags, ctsOff=0;
-                            if (trF&0x100) { dur=rd(d,tp); tp+=4; }
-                            if (trF&0x200) { size=rd(d,tp); tp+=4; }
-                            if (trF&0x400) { flags=rd(d,tp); tp+=4; }
-                            if (trF&0x800) { ctsOff=rd(d,tp); if(d[trun.o+8]===1) ctsOff=ctsOff|0; tp+=4; }
-                            tr.samples.push({ dur, size, isSync: !(flags&0x10000), ctsOff, dataPos: sdp });
-                            sdp += size;
-                        }
-                    }
-                }
-                pos = moofEnd;
-                if (pos+8<=d.length && bt(d,pos)==='mdat') pos += bs(d,pos);
-                continue;
-            }
-            pos += sz;
+        // Video first, then audio
+        const sorted = [...avTracks].sort((a, b) => (a.type === 'video' ? 0 : 1) - (b.type === 'video' ? 0 : 1));
+
+        for (const t of sorted) {
+            const srcTrak = mp4box.getTrackById(t.id);
+            if (!srcTrak) continue;
+
+            const newId = dst.addTrack(srcTrak);
+            if (newId) trackMap.set(t.id, newId);
         }
 
-        // Build sample table boxes
-        function mkStts(samps) {
-            const e=[]; let last=-1;
-            for (const s of samps) { if(s.dur===last) e[e.length-1][0]++; else { e.push([1,s.dur]); last=s.dur; } }
-            const c=new Uint8Array(4+e.length*8); wr(c,0,e.length);
-            for (let i=0;i<e.length;i++) { wr(c,4+i*8,e[i][0]); wr(c,4+i*8+4,e[i][1]); }
-            return fbox('stts',0,0,c);
-        }
-        function mkStsc() {
-            const c=new Uint8Array(16); wr(c,0,1); wr(c,4,1); wr(c,8,1); wr(c,12,1);
-            return fbox('stsc',0,0,c);
-        }
-        function mkStsz(samps) {
-            const same = samps.length>0 && samps.every(s=>s.size===samps[0].size);
-            if (same) { const c=new Uint8Array(8); wr(c,0,samps[0].size); wr(c,4,samps.length); return fbox('stsz',0,0,c); }
-            const c=new Uint8Array(8+samps.length*4); wr(c,0,0); wr(c,4,samps.length);
-            for (let i=0;i<samps.length;i++) wr(c,8+i*4,samps[i].size);
-            return fbox('stsz',0,0,c);
-        }
-        function mkStco(offsets) {
-            const c=new Uint8Array(4+offsets.length*4); wr(c,0,offsets.length);
-            for (let i=0;i<offsets.length;i++) wr(c,4+i*4,offsets[i]);
-            return fbox('stco',0,0,c);
-        }
-        function mkStss(samps) {
-            const s=[]; let allSync=true;
-            for (let i=0;i<samps.length;i++) { if(samps[i].isSync) s.push(i+1); else allSync=false; }
-            if (allSync) return null;
-            const c=new Uint8Array(4+s.length*4); wr(c,0,s.length);
-            for (let i=0;i<s.length;i++) wr(c,4+i*4,s[i]);
-            return fbox('stss',0,0,c);
-        }
-        function mkCtts(samps) {
-            if (!samps.some(s=>s.ctsOff!==0)) return null;
-            const e=[]; let last=null;
-            for (const s of samps) { if(s.ctsOff===last) e[e.length-1][0]++; else { e.push([1,s.ctsOff]); last=s.ctsOff; } }
-            const c=new Uint8Array(4+e.length*8); wr(c,0,e.length);
-            for (let i=0;i<e.length;i++) { wr(c,4+i*8,e[i][0]); wr(c,4+i*8+4,e[i][1]); }
-            return fbox('ctts', e.some(x=>x[1]<0)?1:0, 0, c);
-        }
-
-        // Compute per-track mdat layout: all samples for track 1, then track 2, etc.
-        let mdatPayloadSize = 0;
-        const trackOrder = [...tracks.entries()].filter(([,t])=>t.samples.length>0);
-        for (const [, tr] of trackOrder) {
-            tr._mdatStart = mdatPayloadSize;
-            tr._offsets = [];
-            for (const s of tr.samples) {
-                tr._offsets.push(mdatPayloadSize);
-                mdatPayloadSize += s.size;
+        // Add samples
+        for (const [oldId, newId] of trackMap) {
+            const samples = trackSamples.get(oldId) || [];
+            for (const s of samples) {
+                dst.addSample(newId, s.data, {
+                    duration: s.duration,
+                    dts: s.dts,
+                    cts: s.cts,
+                    is_sync: s.is_sync,
+                });
             }
         }
 
-        // Fix durations: in fMP4, mvhd/tkhd/mdhd all have duration=0.
-        // Compute real duration from sample tables and patch the copied data.
-        const mvhdData = d.slice(mvhdB.o, mvhdB.o+mvhdB.s);
-        const mvhdVer = mvhdData[8];
-        const mvhdTimescale = rd(mvhdData, mvhdVer === 0 ? 20 : 28);
-        let maxMovieDur = 0;
-
-        for (const [, tr] of trackOrder) {
-            // Sum sample durations in track timescale
-            let trackDur = 0;
-            for (const s of tr.samples) trackDur += s.dur;
-
-            // Patch mdhd duration
-            const mv = tr.mdhdData[8]; // version
-            const mdhdTsOff = mv === 0 ? 20 : 28;
-            const mdhdDurOff = mv === 0 ? 24 : 32;
-            const mdhdTs = rd(tr.mdhdData, mdhdTsOff);
-            if (mv === 0) {
-                wr(tr.mdhdData, mdhdDurOff, trackDur);
-            } else {
-                wr(tr.mdhdData, mdhdDurOff, 0); // hi 32
-                wr(tr.mdhdData, mdhdDurOff + 4, trackDur); // lo 32
-            }
-
-            // Patch tkhd duration (in mvhd timescale)
-            const tv = tr.tkhdData[8]; // version
-            const tkhdDurOff = tv === 0 ? 28 : 36;
-            const movieDur = mdhdTs > 0 ? Math.round(trackDur * mvhdTimescale / mdhdTs) : trackDur;
-            if (tv === 0) {
-                wr(tr.tkhdData, tkhdDurOff, movieDur);
-            } else {
-                wr(tr.tkhdData, tkhdDurOff, 0);
-                wr(tr.tkhdData, tkhdDurOff + 4, movieDur);
-            }
-            if (movieDur > maxMovieDur) maxMovieDur = movieDur;
-        }
-
-        // Patch mvhd duration
-        const mvhdDurOff = mvhdVer === 0 ? 24 : 32;
-        if (mvhdVer === 0) {
-            wr(mvhdData, mvhdDurOff, maxMovieDur);
-        } else {
-            wr(mvhdData, mvhdDurOff, 0);
-            wr(mvhdData, mvhdDurOff + 4, maxMovieDur);
-        }
-
-        // Build trak boxes with placeholder stco offsets (will fix after measuring moov)
-        const trakBoxes = [];
-        for (const [, tr] of trackOrder) {
-            const parts = [tr.stsdData, mkStts(tr.samples), mkStsc(), mkStsz(tr.samples), mkStco(tr._offsets)];
-            const stss = mkStss(tr.samples); if (stss) parts.push(stss);
-            const ctts = mkCtts(tr.samples); if (ctts) parts.push(ctts);
-            const stbl = box('stbl', cat(...parts));
-            const minf = box('minf', cat(...tr.minfOther, stbl));
-            const mdia = box('mdia', cat(tr.mdhdData, tr.hdlrData, minf));
-            const tp = [tr.tkhdData]; if (tr.edtsData) tp.push(tr.edtsData); tp.push(mdia);
-            trakBoxes.push(box('trak', cat(...tp)));
-        }
-        const otherMoov = childrenExcept(d, moovB.o+8, moovB.o+moovB.s, ['mvhd','trak','mvex']);
-        const moov = box('moov', cat(mvhdData, ...trakBoxes, ...otherMoov));
-
-        // Fix stco offsets: add (ftyp + moov + mdat header) to all entries
-        const mdatHdrSize = 8;
-        const baseOffset = ftypData.length + moov.length + mdatHdrSize;
-        // Walk moov recursively to find and fix stco boxes
-        (function fixStco(buf, start, end) {
-            let p = start;
-            while (p+8 <= end) {
-                const sz = (buf[p]<<24|buf[p+1]<<16|buf[p+2]<<8|buf[p+3])>>>0;
-                const t = String.fromCharCode(buf[p+4],buf[p+5],buf[p+6],buf[p+7]);
-                if (sz<8||p+sz>end) break;
-                if (['moov','trak','mdia','minf','stbl'].includes(t)) { fixStco(buf, p+8, p+sz); }
-                else if (t==='stco') {
-                    const cnt = rd(buf, p+12);
-                    for (let i=0; i<cnt; i++) { const o=p+16+i*4; wr(buf, o, rd(buf,o)+baseOffset); }
-                }
-                p += sz;
-            }
-        })(moov, 8, moov.length);
-
-        // Build mdat
-        const mdatHdr = new Uint8Array(8);
-        wr(mdatHdr, 0, mdatHdrSize + mdatPayloadSize);
-        mdatHdr[4]=0x6D; mdatHdr[5]=0x64; mdatHdr[6]=0x61; mdatHdr[7]=0x74;
-
-        // Assemble mdat payload by copying sample data from original fMP4
-        const mdatPayload = new Uint8Array(mdatPayloadSize);
-        for (const [, tr] of trackOrder) {
-            let off = tr._mdatStart;
-            for (const s of tr.samples) {
-                mdatPayload.set(d.subarray(s.dataPos, s.dataPos + s.size), off);
-                off += s.size;
-            }
-        }
-
-        return cat(ftypData, moov, mdatHdr, mdatPayload);
+        // Write
+        const ds = new DataStream();
+        ds.endianness = DataStream.BIG_ENDIAN;
+        dst.write(ds);
+        return new Uint8Array(ds.buffer);
     } catch (e) {
         console.warn('Unfragment failed:', e);
         return null;
@@ -3249,7 +3192,6 @@ function splitFMP4Segments(data) {
 async function playVideoMSE(item, fileKey) {
     const codecString = item.codecs || 'avc1.64001f,mp4a.40.2';
     const mseType = `video/mp4; codecs="${codecString}"`;
-
     const MSE = window.MediaSource || window.ManagedMediaSource;
     if (!MSE || !MSE.isTypeSupported(mseType)) {
         return playVideoBlob(item, fileKey, item.mime_type || 'video/mp4');
@@ -3292,7 +3234,24 @@ async function playVideoMSE(item, fileKey) {
     }
 
     let aborted = false;
-    viewerVideo._abortStreaming = () => { aborted = true; };
+
+    // Auto-skip gaps: when playback stalls at a gap between buffered ranges,
+    // jump to the start of the next range. This handles timestamp discontinuities
+    // from interleaved multi-track fMP4 segments (common with MOV remux).
+    function onWaiting() {
+        if (aborted || sb.buffered.length <= 1) return;
+        const ct = viewerVideo.currentTime;
+        for (let r = 0; r < sb.buffered.length - 1; r++) {
+            const gapStart = sb.buffered.end(r);
+            const gapEnd = sb.buffered.start(r + 1);
+            if (ct >= gapStart - 0.5 && ct < gapEnd) {
+                viewerVideo.currentTime = gapEnd + 0.01;
+                return;
+            }
+        }
+    }
+    viewerVideo.addEventListener('waiting', onWaiting);
+    viewerVideo._abortStreaming = () => { aborted = true; viewerVideo.removeEventListener('waiting', onWaiting); };
 
     // ManagedMediaSource (iOS) uses streaming events to control data flow
     let streamingAllowed = !isManagedMSE;
@@ -3307,7 +3266,10 @@ async function playVideoMSE(item, fileKey) {
 
     function waitForUpdate() {
         if (!sb.updating) return Promise.resolve();
-        return new Promise(r => sb.addEventListener('updateend', r, { once: true }));
+        return new Promise((resolve, reject) => {
+            sb.addEventListener('updateend', () => resolve(), { once: true });
+            sb.addEventListener('error', () => reject(new Error('SourceBuffer error')), { once: true });
+        });
     }
 
     async function fetchChunk(index) {
@@ -3327,7 +3289,7 @@ async function playVideoMSE(item, fileKey) {
         if (ms.readyState === 'ended') {
             try { ms.duration = item.duration; } catch { return; }
         }
-        await waitForUpdate();
+        try { await waitForUpdate(); } catch { return; }
         if (aborted || (gen !== undefined && gen !== fetchGeneration)) return;
         for (let attempt = 0; attempt < 5; attempt++) {
             try {
@@ -3335,15 +3297,16 @@ async function playVideoMSE(item, fileKey) {
                 await waitForUpdate();
                 return;
             } catch (e) {
-                if (e.name === 'InvalidStateError') {
-                    return; // SourceBuffer was aborted — bail
+                if (e.name === 'InvalidStateError' || e.message === 'SourceBuffer error') {
+                    console.warn('[MSE] append failed:', e.message, 'readyState:', ms.readyState);
+                    return;
                 } else if (e.name === 'QuotaExceededError') {
                     try {
                         if (sb.buffered.length > 0) {
                             const start = sb.buffered.start(0);
                             const end = sb.buffered.end(sb.buffered.length - 1);
                             sb.remove(start, start + (end - start) * 0.25);
-                            await waitForUpdate();
+                            try { await waitForUpdate(); } catch { return; }
                         }
                     } catch {}
                 } else {
@@ -3930,8 +3893,16 @@ async function downloadCurrentItem() {
 }
 
 async function downloadItem(item) {
-    const filename = item.name || 'download';
-    const mime = item.mime_type || 'application/octet-stream';
+    let filename = item.name || 'download';
+    // Add appropriate extension if missing
+    if (!/\.\w+$/.test(filename)) {
+        if (item.media_type === 'video') filename += '.mp4';
+        else if (item.mime_type) filename += '.' + (item.mime_type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+    }
+    // Remuxed videos are ISO BMFF (.mp4) regardless of original container
+    if (item.fragmented && !/\.mp4$/i.test(filename)) {
+        filename = filename.replace(/\.[^.]+$/, '.mp4');
+    }
 
     // Show progress toast
     const toast = document.createElement('div');
@@ -3969,7 +3940,9 @@ async function downloadItem(item) {
             if (unfragmented) merged = unfragmented;
         }
 
-        const blob = new Blob([merged], { type: mime });
+        // Use octet-stream so the browser respects the download filename exactly
+        // (video/quicktime causes some browsers to override .mov → .qt)
+        const blob = new Blob([merged], { type: 'application/octet-stream' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -4354,7 +4327,9 @@ function setUploadProgress(el, pct) {
 
 async function uploadFile(file, itemEl, targetFolderId) {
     if (targetFolderId === undefined) targetFolderId = currentFolderId;
-    const uploadName = uniqueFileName(file.name, targetFolderId);
+    // Strip file extension from display name
+    const baseName = file.name.replace(/\.[^.]+$/, '') || file.name;
+    const uploadName = uniqueFileName(baseName, targetFolderId);
 
     setUploadStatus(itemEl, 'Reading...');
     let fileData = new Uint8Array(await file.arrayBuffer());
