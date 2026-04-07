@@ -1314,19 +1314,28 @@ const adminCreateError = document.getElementById('admin-create-error');
 const adminCreateSuccess = document.getElementById('admin-create-success');
 const adminUserList = document.getElementById('admin-user-list');
 
-adminBtn.addEventListener('click', async () => {
+const adminLoading = document.getElementById('admin-loading');
+const adminContent = document.getElementById('admin-content');
+
+async function showAdminPanel() {
     galleryView.classList.add('hidden');
     settingsView.classList.add('hidden');
     adminView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'admin');
     updateNavActive('admin');
-    loadAdminUsers();
-    // Fetch current registration state
-    try {
-        const config = await fetch('/api/config').then(r => r.json());
-        adminRegToggle.checked = config.allowRegistration;
-    } catch {}
-});
+    adminContent.classList.add('hidden');
+    adminLoading.classList.remove('hidden');
+    await Promise.all([
+        loadAdminUsers(),
+        fetch('/api/config').then(r => r.json()).then(config => {
+            adminRegToggle.checked = config.allowRegistration;
+        }).catch(() => {}),
+    ]);
+    adminLoading.classList.add('hidden');
+    adminContent.classList.remove('hidden');
+}
+
+adminBtn.addEventListener('click', showAdminPanel);
 
 document.getElementById('admin-back-btn').addEventListener('click', () => {
     adminView.classList.add('hidden');
@@ -1530,6 +1539,7 @@ document.querySelector('.logo').addEventListener('click', () => {
     document.getElementById('admin-view')?.classList.add('hidden');
     galleryView.classList.remove('hidden');
     currentFolderId = null;
+    sessionStorage.removeItem('currentFolderId');
     renderGalleryItems();
     sessionStorage.setItem('activeView', 'gallery');
     updateNavActive('gallery');
@@ -1556,14 +1566,25 @@ function resetSettingsForm() {
     document.getElementById('settings-delete-error').classList.add('hidden');
 }
 
-settingsBtn.addEventListener('click', () => {
+const settingsLoading = document.getElementById('settings-loading');
+const settingsContent = document.getElementById('settings-content');
+
+function showSettingsPanel() {
     galleryView.classList.add('hidden');
     adminView.classList.add('hidden');
     settingsView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'settings');
     updateNavActive('settings');
     resetSettingsForm();
-});
+    settingsContent.classList.add('hidden');
+    settingsLoading.classList.remove('hidden');
+    requestAnimationFrame(() => {
+        settingsLoading.classList.add('hidden');
+        settingsContent.classList.remove('hidden');
+    });
+}
+
+settingsBtn.addEventListener('click', showSettingsPanel);
 
 document.getElementById('settings-back-btn').addEventListener('click', () => {
     settingsView.classList.add('hidden');
@@ -1737,6 +1758,7 @@ document.getElementById('settings-delete-form').addEventListener('submit', async
         btnLoading(deleteBtn);
         try {
             await api('/api/auth/account', { method: 'DELETE', json: { password } });
+            currentFolderId = null;
             sessionStorage.clear();
             showAuth();
         } catch (err) {
@@ -1791,6 +1813,7 @@ async function doLogout() {
     clearMasterKey();
     token = null;
     userId = null;
+    currentFolderId = null;
     sessionStorage.clear();
     showAuth();
 }
@@ -1800,22 +1823,12 @@ document.getElementById('logout-btn-mobile').addEventListener('click', () => { c
 
 document.getElementById('settings-btn-mobile').addEventListener('click', () => {
     closeHeaderMenu();
-    galleryView.classList.add('hidden');
-    adminView.classList.add('hidden');
-    settingsView.classList.remove('hidden');
-    sessionStorage.setItem('activeView', 'settings');
-    updateNavActive('settings');
-    resetSettingsForm();
+    showSettingsPanel();
 });
 
 document.getElementById('admin-btn-mobile').addEventListener('click', () => {
     closeHeaderMenu();
-    galleryView.classList.add('hidden');
-    settingsView.classList.add('hidden');
-    adminView.classList.remove('hidden');
-    sessionStorage.setItem('activeView', 'admin');
-    updateNavActive('admin');
-    loadAdminUsers();
+    showAdminPanel();
 });
 
 function showAuth() {
@@ -1874,13 +1887,9 @@ async function showGallery() {
     settingsView.classList.add('hidden');
 
     if (activeViewName === 'admin' && serverConfig.isAdmin) {
-        adminView.classList.remove('hidden');
-        loadAdminUsers();
-        adminRegToggle.checked = serverConfig.allowRegistration || false;
-        updateNavActive('admin');
+        showAdminPanel();
     } else if (activeViewName === 'settings') {
-        settingsView.classList.remove('hidden');
-        updateNavActive('settings');
+        showSettingsPanel();
     } else {
         galleryView.classList.remove('hidden');
         updateNavActive('gallery');
@@ -1898,7 +1907,7 @@ async function showGallery() {
 // ─── Folders ───
 // Folder tree: [{id, name, parentId}] — decrypted client-side, encrypted at rest
 let folders = [];
-let currentFolderId = null; // null = root
+let currentFolderId = sessionStorage.getItem('currentFolderId') || null; // null = root
 
 const breadcrumb = document.getElementById('breadcrumb');
 
@@ -2014,6 +2023,8 @@ function renderBreadcrumb() {
     breadcrumb.querySelectorAll('.breadcrumb-item').forEach(el => {
         el.addEventListener('click', () => {
             currentFolderId = el.dataset.folderId || null;
+            if (currentFolderId) sessionStorage.setItem('currentFolderId', currentFolderId);
+            else sessionStorage.removeItem('currentFolderId');
             renderFolders();
             renderGalleryItems();
         });
@@ -2076,6 +2087,7 @@ function createFolderElements() {
         el.addEventListener('click', (e) => {
             if (e.target.classList.contains('folder-menu-btn')) return;
             currentFolderId = f.id;
+            sessionStorage.setItem('currentFolderId', currentFolderId);
             renderFolders();
             renderGalleryItems();
         });
@@ -2189,6 +2201,8 @@ function createFolderElements() {
                     // Optimistic: remove folder + descendants from UI immediately
                     if (allFolderIds.has(currentFolderId)) {
                         currentFolderId = f.parentId;
+                        if (currentFolderId) sessionStorage.setItem('currentFolderId', currentFolderId);
+                        else sessionStorage.removeItem('currentFolderId');
                     }
                     const removedFolders = folders.filter(x => allFolderIds.has(x.id));
                     const removedMedia = [...affectedMedia];
@@ -2526,6 +2540,11 @@ async function loadMedia() {
 
         // Load folder tree and render
         await loadFolderTree();
+        // Validate restored folder ID still exists
+        if (currentFolderId && !folders.some(f => f.id === currentFolderId)) {
+            currentFolderId = null;
+            sessionStorage.removeItem('currentFolderId');
+        }
         renderFolders();
         if (!_silentRefresh) await renderGalleryItems();
 
@@ -4850,6 +4869,7 @@ initWorkers();
             // Token rejected (server restarted, expired, etc.)
             token = null;
             userId = null;
+            currentFolderId = null;
             sessionStorage.clear();
             showAuth();
             return;
@@ -4873,6 +4893,7 @@ initWorkers();
         // Token is valid but no master key — need to re-login for decryption
         token = null;
         userId = null;
+        currentFolderId = null;
         sessionStorage.clear();
     }
     // Check for a pending recovery code that should survive refresh

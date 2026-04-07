@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-rLioVnzmjHca6K3RCJ//137wUpIe8g16pmIOdBbAMFmXGlrPRYagctOklhw+wwvo" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-Wqwaa41ExBuf12LXHe8cjGaFbftvJ3B+5uBCYiNkB5S6yGQTgH4t8sTo2iH4EGQD" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -155,31 +155,34 @@
                     <div class="admin-header">
                         <h2><button id="admin-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>Admin</h2>
                     </div>
-                    <div class="admin-create">
-                        <h3>Create User</h3>
-                        <form id="admin-create-form">
-                            <input type="text" id="admin-new-username" placeholder="Username" required autocomplete="off" autocapitalize="none" autocorrect="off">
-                            <p id="admin-username-reqs" class="password-reqs hidden">Username must be at least <span data-req="ulen">3 characters</span>, at most <span data-req="umax">64 characters</span>, and may only contain <span class="met">letters and numbers</span>.</p>
-                            <input type="password" id="admin-new-password" placeholder="Password" required autocomplete="off">
-                            <p id="admin-password-reqs" class="password-reqs hidden">Password must be at least <span data-req="length">16 characters</span>, and must contain a <span data-req="letter">letter</span>, a <span data-req="number">number</span>, and a <span data-req="symbol">symbol</span>.</p>
-                            <input type="password" id="admin-new-password-confirm" placeholder="Confirm Password" required autocomplete="off">
-                            <p id="admin-confirm-hint" class="password-reqs hidden" style="color: var(--danger, #ef4444);">Passwords must match.</p>
-                            <label class="admin-checkbox"><input type="checkbox" id="admin-new-is-admin"> Admin</label>
-                            <button type="submit" class="btn btn-primary">Create User</button>
-                        </form>
-                        <p id="admin-create-error" class="error hidden"></p>
-                        <p id="admin-create-success" class="success hidden"></p>
-                    </div>
-                    <div class="admin-users">
-                        <h3>Users</h3>
-                        <div id="admin-user-list"></div>
-                    </div>
-                    <div class="admin-create">
-                        <h3>Registration</h3>
-                        <label class="admin-checkbox">
-                            <input type="checkbox" id="admin-reg-toggle">
-                            Allow new user registration
-                        </label>
+                    <div id="admin-loading" class="panel-loading"><div class="spinner"></div></div>
+                    <div id="admin-content" class="panel-content hidden">
+                        <div class="admin-create">
+                            <h3>Create User</h3>
+                            <form id="admin-create-form">
+                                <input type="text" id="admin-new-username" placeholder="Username" required autocomplete="off" autocapitalize="none" autocorrect="off">
+                                <p id="admin-username-reqs" class="password-reqs hidden">Username must be at least <span data-req="ulen">3 characters</span>, at most <span data-req="umax">64 characters</span>, and may only contain <span class="met">letters and numbers</span>.</p>
+                                <input type="password" id="admin-new-password" placeholder="Password" required autocomplete="off">
+                                <p id="admin-password-reqs" class="password-reqs hidden">Password must be at least <span data-req="length">16 characters</span>, and must contain a <span data-req="letter">letter</span>, a <span data-req="number">number</span>, and a <span data-req="symbol">symbol</span>.</p>
+                                <input type="password" id="admin-new-password-confirm" placeholder="Confirm Password" required autocomplete="off">
+                                <p id="admin-confirm-hint" class="password-reqs hidden" style="color: var(--danger, #ef4444);">Passwords must match.</p>
+                                <label class="admin-checkbox"><input type="checkbox" id="admin-new-is-admin"> Admin</label>
+                                <button type="submit" class="btn btn-primary">Create User</button>
+                            </form>
+                            <p id="admin-create-error" class="error hidden"></p>
+                            <p id="admin-create-success" class="success hidden"></p>
+                        </div>
+                        <div class="admin-users">
+                            <h3>Users</h3>
+                            <div id="admin-user-list"></div>
+                        </div>
+                        <div class="admin-create">
+                            <h3>Registration</h3>
+                            <label class="admin-checkbox">
+                                <input type="checkbox" id="admin-reg-toggle">
+                                Allow new user registration
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -190,56 +193,59 @@
                     <div class="admin-header">
                         <h2><button id="settings-back-btn" class="btn btn-ghost btn-back-circle" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>Settings</h2>
                     </div>
-                    <div class="admin-create">
-                        <h3>Change Password</h3>
-                        <form id="settings-change-pw-form">
-                            <input type="password" id="settings-old-pw" placeholder="Current Password" required autocomplete="current-password">
-                            <input type="password" id="settings-new-pw" placeholder="New Password" required autocomplete="new-password">
-                            <p id="settings-pw-reqs" class="password-reqs hidden">Password must be at least <span data-req="length">16 characters</span>, and must contain a <span data-req="letter">letter</span>, a <span data-req="number">number</span>, and a <span data-req="symbol">symbol</span>.</p>
-                            <input type="password" id="settings-new-pw-confirm" placeholder="Confirm New Password" required autocomplete="new-password">
-                            <p id="settings-confirm-hint" class="password-reqs hidden" style="color: var(--danger, #ef4444);">Passwords must match.</p>
-                            <button type="submit" class="btn btn-primary">Change Password</button>
-                        </form>
-                        <p id="settings-pw-error" class="error hidden"></p>
-                        <p id="settings-pw-success" class="success hidden"></p>
-                    </div>
-                    <div class="admin-create">
-                        <h3>Theme</h3>
-                        <div id="theme-picker" class="theme-picker">
-                            <button class="theme-swatch" data-theme="warm" title="Warm">
-                                <span class="swatch-colors"><span style="background:#202C39"></span><span style="background:#F29559"></span><span style="background:#F2D492"></span><span style="background:#B8B08D"></span></span>
-                                <span class="swatch-label">Warm</span>
-                            </button>
-                            <button class="theme-swatch" data-theme="cool" title="Cool">
-                                <span class="swatch-colors"><span style="background:#172028"></span><span style="background:#4C86A8"></span><span style="background:#E0777D"></span><span style="background:#E1DD8F"></span></span>
-                                <span class="swatch-label">Cool</span>
-                            </button>
-                            <button class="theme-swatch" data-theme="forest" title="Forest">
-                                <span class="swatch-colors"><span style="background:#153243"></span><span style="background:#284B63"></span><span style="background:#B4B8AB"></span><span style="background:#F4F9E9"></span></span>
-                                <span class="swatch-label">Forest</span>
-                            </button>
-                            <button class="theme-swatch" data-theme="neon" title="Neon">
-                                <span class="swatch-colors"><span style="background:#565554"></span><span style="background:#2E86AB"></span><span style="background:#A8C256"></span><span style="background:#F24236"></span></span>
-                                <span class="swatch-label">Neon</span>
-                            </button>
-                            <button class="theme-swatch" data-theme="ocean" title="Ocean">
-                                <span class="swatch-colors"><span style="background:#00487C"></span><span style="background:#0496FF"></span><span style="background:#4BB3FD"></span><span style="background:#3E6680"></span></span>
-                                <span class="swatch-label">Ocean</span>
-                            </button>
-                            <button class="theme-swatch" data-theme="classic" title="Classic">
-                                <span class="swatch-colors"><span style="background:#111114"></span><span style="background:#8b7cf6"></span><span style="background:#a89df8"></span><span style="background:#a0a0b0"></span></span>
-                                <span class="swatch-label">Classic</span>
-                            </button>
+                    <div id="settings-loading" class="panel-loading"><div class="spinner"></div></div>
+                    <div id="settings-content" class="panel-content hidden">
+                        <div class="admin-create">
+                            <h3>Change Password</h3>
+                            <form id="settings-change-pw-form">
+                                <input type="password" id="settings-old-pw" placeholder="Current Password" required autocomplete="current-password">
+                                <input type="password" id="settings-new-pw" placeholder="New Password" required autocomplete="new-password">
+                                <p id="settings-pw-reqs" class="password-reqs hidden">Password must be at least <span data-req="length">16 characters</span>, and must contain a <span data-req="letter">letter</span>, a <span data-req="number">number</span>, and a <span data-req="symbol">symbol</span>.</p>
+                                <input type="password" id="settings-new-pw-confirm" placeholder="Confirm New Password" required autocomplete="new-password">
+                                <p id="settings-confirm-hint" class="password-reqs hidden" style="color: var(--danger, #ef4444);">Passwords must match.</p>
+                                <button type="submit" class="btn btn-primary">Change Password</button>
+                            </form>
+                            <p id="settings-pw-error" class="error hidden"></p>
+                            <p id="settings-pw-success" class="success hidden"></p>
                         </div>
-                    </div>
-                    <div class="admin-create">
-                        <h3>Delete Account</h3>
-                        <p class="delete-warning">This will permanently delete your account and all your encrypted media. This cannot be undone.</p>
-                        <form id="settings-delete-form">
-                            <input type="password" id="settings-delete-pw" placeholder="Enter your password to confirm" required autocomplete="current-password">
-                            <button type="submit" class="btn btn-danger">Delete My Account</button>
-                        </form>
-                        <p id="settings-delete-error" class="error hidden"></p>
+                        <div class="admin-create">
+                            <h3>Theme</h3>
+                            <div id="theme-picker" class="theme-picker">
+                                <button class="theme-swatch" data-theme="warm" title="Warm">
+                                    <span class="swatch-colors"><span style="background:#202C39"></span><span style="background:#F29559"></span><span style="background:#F2D492"></span><span style="background:#B8B08D"></span></span>
+                                    <span class="swatch-label">Warm</span>
+                                </button>
+                                <button class="theme-swatch" data-theme="cool" title="Cool">
+                                    <span class="swatch-colors"><span style="background:#172028"></span><span style="background:#4C86A8"></span><span style="background:#E0777D"></span><span style="background:#E1DD8F"></span></span>
+                                    <span class="swatch-label">Cool</span>
+                                </button>
+                                <button class="theme-swatch" data-theme="forest" title="Forest">
+                                    <span class="swatch-colors"><span style="background:#153243"></span><span style="background:#284B63"></span><span style="background:#B4B8AB"></span><span style="background:#F4F9E9"></span></span>
+                                    <span class="swatch-label">Forest</span>
+                                </button>
+                                <button class="theme-swatch" data-theme="neon" title="Neon">
+                                    <span class="swatch-colors"><span style="background:#565554"></span><span style="background:#2E86AB"></span><span style="background:#A8C256"></span><span style="background:#F24236"></span></span>
+                                    <span class="swatch-label">Neon</span>
+                                </button>
+                                <button class="theme-swatch" data-theme="ocean" title="Ocean">
+                                    <span class="swatch-colors"><span style="background:#00487C"></span><span style="background:#0496FF"></span><span style="background:#4BB3FD"></span><span style="background:#3E6680"></span></span>
+                                    <span class="swatch-label">Ocean</span>
+                                </button>
+                                <button class="theme-swatch" data-theme="classic" title="Classic">
+                                    <span class="swatch-colors"><span style="background:#111114"></span><span style="background:#8b7cf6"></span><span style="background:#a89df8"></span><span style="background:#a0a0b0"></span></span>
+                                    <span class="swatch-label">Classic</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="admin-create">
+                            <h3>Delete Account</h3>
+                            <p class="delete-warning">This will permanently delete your account and all your encrypted media. This cannot be undone.</p>
+                            <form id="settings-delete-form">
+                                <input type="password" id="settings-delete-pw" placeholder="Enter your password to confirm" required autocomplete="current-password">
+                                <button type="submit" class="btn btn-danger">Delete My Account</button>
+                            </form>
+                            <p id="settings-delete-error" class="error hidden"></p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -342,6 +348,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-yLWg2+m90OYZVke2i7Hkyf2dEhsiEYZ14AS9j9W7nEefefVoMvjKgYOWnI4v6MmA" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-XuIf4Rvrb8/j3mInmdgihfwUwzOiQRrmv3XMxgZA4AOsIBc4Ijd0O6cwi/NOjND+" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-3MvRXjj+s5lYWn1VB1VG75bGMMdhozO59UnVUTdga/dJsU4c+CfpCfLpnFICBPry" crossorigin="anonymous"></script>
 </body>
 </html>
