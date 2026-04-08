@@ -2,6 +2,7 @@
 @font-face { font-family: 'Inter'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/inter-500.woff2') format('woff2'); }
 @font-face { font-family: 'Inter'; font-style: normal; font-weight: 600; font-display: swap; src: url('/fonts/inter-600.woff2') format('woff2'); }
 @font-face { font-family: 'Inter'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/inter-700.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/jetbrains-mono-700.woff2') format('woff2'); }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -138,7 +139,7 @@ header {
     z-index: 100;
 }
 main { padding-top: 0; position: relative; z-index: 1; }
-.logo { font-size: 20px; font-weight: 700; color: var(--accent); cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.logo { font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace; font-size: 20px; font-weight: 700; letter-spacing: -0.5px; color: #fff; cursor: pointer; display: flex; align-items: center; gap: 6px; }
 .logo-icon { flex-shrink: 0; }
 .nav-active { color: var(--text); background: var(--bg-hover); }
 .header-right { display: flex; gap: 8px; align-items: center; }
@@ -194,7 +195,8 @@ main { padding-top: 0; position: relative; z-index: 1; }
     max-height: 100%;
     overflow-y: auto;
 }
-.auth-title { font-size: 28px; font-weight: 700; color: var(--accent); text-align: center; margin-bottom: 16px; }
+.auth-title { font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; color: #fff; text-align: center; margin-bottom: 16px; }
+.auth-title-icon { margin-right: 7px; }
 .auth-subtitle { text-align: center; color: var(--text-dim); margin: 4px 0 32px; font-size: 14px; }
 #auth-form input, #recovery-form input, #register-form input {
     display: block;
