@@ -232,6 +232,10 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	user, err := db.GetUserByUsername(h.DB, req.Username)
 	if err != nil {
+		// Perform dummy derivation to prevent timing-based username enumeration.
+		// Without this, "user not found" returns faster than "wrong password".
+		dummySalt := make([]byte, 32)
+		crypto.DeriveKey("dummy", dummySalt)
 		http.Error(w, "Username and/or password is incorrect.", http.StatusUnauthorized)
 		return
 	}

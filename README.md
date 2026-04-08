@@ -101,7 +101,7 @@ The master key never leaves the browser. It's also encrypted with a 256-bit reco
 |-----------|-----------|---------|
 | Password hashing | Argon2id | 3 iterations, 64 MB memory, 4 threads |
 | Master key derivation | Argon2id | Separate salt from auth hash |
-| File encryption | AES-256-GCM | Chunk index as AAD (prevents reordering) |
+| File encryption | AES-256-GCM | Media ID + chunk index as AAD (prevents reordering and cross-file substitution) |
 | Key wrapping | AES-256-GCM | Random nonce, context-bound AAD (user ID or media ID) |
 | Metadata encryption | AES-256-GCM | Media ID as AAD (prevents ciphertext substitution) |
 | Session key | PBKDF2-SHA256 | 600,000 iterations |
@@ -195,10 +195,9 @@ Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOc
 
 1. Open `https://your-domain.com` and log in
 2. The setup script will display your **recovery code** -- save it somewhere safe
-3. The recovery code file is automatically deleted on the next server restart. If you want to remove it immediately: `sudo rm /var/lib/darkreel/RECOVERY_CODE`
-4. SSH in as your personal user going forward: `ssh yourname@your-server-ip`
+3. SSH in as your personal user going forward: `ssh yourname@your-server-ip`
 
-The recovery code is the only way to regain access to your encrypted data if you forget your password. No one -- including the server admin -- can recover it without this code.
+The recovery code is printed to stderr only and is never written to disk. Save it immediately -- it's the only way to regain access to your encrypted data if you forget your password. No one -- including the server admin -- can recover it without this code.
 
 ### Manual
 
@@ -386,7 +385,7 @@ The setup script handles all of this. If deploying manually:
 - Session expiration -- sessions expire after 24 hours, with periodic cleanup
 - Password change -- all existing sessions are invalidated immediately
 - Admin re-verification -- admin status is checked from the database on every admin request
-- Timing side-channel mitigation -- recovery endpoint performs dummy work for non-existent users
+- Timing side-channel mitigation -- login and recovery endpoints perform dummy work for non-existent users
 
 ### Session persistence
 

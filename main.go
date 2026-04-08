@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -58,21 +57,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  RECOVERY CODE — save this now!\n")
 		fmt.Fprintf(os.Stderr, "  %s\n", recoveryCode)
 		fmt.Fprintf(os.Stderr, "========================================\n\n")
-
-		// Write recovery code to a file so it isn't lost if stderr is missed
-		rcPath := filepath.Join(*dataDir, "RECOVERY_CODE")
-		if err := os.WriteFile(rcPath, []byte(recoveryCode+"\n"), 0600); err != nil {
-			log.Printf("Warning: could not write recovery code file: %v", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "  Recovery code also saved to: %s\n", rcPath)
-			fmt.Fprintf(os.Stderr, "  DELETE THIS FILE after saving the code elsewhere.\n\n")
-		}
-	} else {
-		// Not first run — remove recovery code file if the operator forgot to
-		rcPath := filepath.Join(*dataDir, "RECOVERY_CODE")
-		if err := os.Remove(rcPath); err == nil {
-			log.Println("Removed leftover RECOVERY_CODE file")
-		}
 	}
 
 	// Clean up orphaned data directories not referenced in DB

@@ -792,7 +792,7 @@ a:hover { text-decoration: underline; }
     <table class="algo-table">
       <tr><td>password hashing</td><td>Argon2id &mdash; 3 iterations, 64 MB, 4 threads</td></tr>
       <tr><td>master key derivation</td><td>Argon2id &mdash; separate salt from auth hash</td></tr>
-      <tr><td>file encryption</td><td>AES-256-GCM &mdash; chunk index as AAD (prevents reordering)</td></tr>
+      <tr><td>file encryption</td><td>AES-256-GCM &mdash; media ID + chunk index as AAD (prevents reordering and cross-file substitution)</td></tr>
       <tr><td>key wrapping</td><td>AES-256-GCM &mdash; random nonce, context-bound AAD (user ID or media ID)</td></tr>
       <tr><td>metadata encryption</td><td>AES-256-GCM &mdash; media ID as AAD (prevents ciphertext substitution)</td></tr>
       <tr><td>session key</td><td>PBKDF2-SHA256 &mdash; 600,000 iterations</td></tr>
@@ -1076,7 +1076,7 @@ a:hover { text-decoration: underline; }
 <span class="output">session expiry</span>        <span class="comment">24h max, periodic cleanup of stale sessions</span>
 <span class="output">password change</span>       <span class="comment">all other sessions invalidated immediately</span>
 <span class="output">admin re-check</span>        <span class="comment">admin status verified from DB on every admin request</span>
-<span class="output">timing mitigation</span>    <span class="comment">recovery endpoint does dummy work for unknown users</span>
+<span class="output">timing mitigation</span>    <span class="comment">login and recovery endpoints do dummy work for unknown users</span>
       </code>
     </div>
   </section>

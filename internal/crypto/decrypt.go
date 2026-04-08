@@ -3,7 +3,6 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"encoding/binary"
 	"fmt"
 )
 
@@ -27,7 +26,8 @@ func DecryptBlock(ciphertext, key, aad []byte) ([]byte, error) {
 }
 
 // DecryptChunk decrypts a single encrypted chunk.
-func DecryptChunk(ciphertext, key []byte, chunkIndex int) ([]byte, error) {
+// The mediaID and chunkIndex must match the values used during encryption.
+func DecryptChunk(ciphertext, key []byte, chunkIndex int, mediaID string) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -42,8 +42,7 @@ func DecryptChunk(ciphertext, key []byte, chunkIndex int) ([]byte, error) {
 	}
 
 	nonce, ct := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	aad := make([]byte, 8)
-	binary.BigEndian.PutUint64(aad, uint64(chunkIndex))
+	aad := chunkAAD(mediaID, chunkIndex)
 
 	return gcm.Open(nil, nonce, ct, aad)
 }

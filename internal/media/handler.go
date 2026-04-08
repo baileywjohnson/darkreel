@@ -383,8 +383,16 @@ func (h *Handler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	encBytes, _ := FromB64(req.MetadataEnc)
-	nonceBytes, _ := FromB64(req.MetadataNonce)
+	encBytes, err := FromB64(req.MetadataEnc)
+	if err != nil {
+		http.Error(w, "invalid metadata_enc encoding", http.StatusBadRequest)
+		return
+	}
+	nonceBytes, err := FromB64(req.MetadataNonce)
+	if err != nil {
+		http.Error(w, "invalid metadata_nonce encoding", http.StatusBadRequest)
+		return
+	}
 	if len(encBytes) == 0 || len(nonceBytes) == 0 {
 		http.Error(w, "invalid metadata", http.StatusBadRequest)
 		return
@@ -431,8 +439,16 @@ func (h *Handler) SaveFolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	encBytes, _ := FromB64(req.FolderTreeEnc)
-	nonceBytes, _ := FromB64(req.FolderTreeNonce)
+	encBytes, err := FromB64(req.FolderTreeEnc)
+	if err != nil {
+		http.Error(w, "invalid folder_tree_enc encoding", http.StatusBadRequest)
+		return
+	}
+	nonceBytes, err := FromB64(req.FolderTreeNonce)
+	if err != nil {
+		http.Error(w, "invalid folder_tree_nonce encoding", http.StatusBadRequest)
+		return
+	}
 	if len(encBytes) == 0 || len(nonceBytes) == 0 {
 		http.Error(w, "invalid folder tree", http.StatusBadRequest)
 		return

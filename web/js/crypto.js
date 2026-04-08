@@ -107,14 +107,24 @@ export async function decryptBlock(data, keyBytes, aad) {
     ));
 }
 
-// Encrypt a chunk with AAD (chunk index)
-export async function encryptChunk(plaintext, keyBytes, chunkIndex) {
+// Build chunk AAD: UTF-8(mediaId) || BigEndian(uint64(chunkIndex))
+// This binds each chunk to its specific file and position, preventing both
+// reordering and cross-file chunk substitution.
+function buildChunkAAD(mediaId, chunkIndex) {
+    const mediaIdBytes = new TextEncoder().encode(mediaId);
+    const aad = new Uint8Array(mediaIdBytes.length + 8);
+    aad.set(mediaIdBytes, 0);
+    new DataView(aad.buffer, aad.byteOffset).setBigUint64(mediaIdBytes.length, BigInt(chunkIndex));
+    return aad;
+}
+
+// Encrypt a chunk with AAD (mediaId + chunk index)
+export async function encryptChunk(plaintext, keyBytes, chunkIndex, mediaId) {
     const key = await crypto.subtle.importKey(
         'raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt']
     );
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const aad = new ArrayBuffer(8);
-    new DataView(aad).setBigUint64(0, BigInt(chunkIndex));
+    const aad = buildChunkAAD(mediaId, chunkIndex);
 
     const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
         { name: 'AES-GCM', iv, additionalData: aad }, key, plaintext
@@ -125,15 +135,14 @@ export async function encryptChunk(plaintext, keyBytes, chunkIndex) {
     return result;
 }
 
-// Decrypt a chunk with AAD
-export async function decryptChunk(data, keyBytes, chunkIndex) {
+// Decrypt a chunk with AAD (mediaId + chunk index)
+export async function decryptChunk(data, keyBytes, chunkIndex, mediaId) {
     const key = await crypto.subtle.importKey(
         'raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']
     );
     const iv = data.slice(0, 12);
     const ciphertext = data.slice(12);
-    const aad = new ArrayBuffer(8);
-    new DataView(aad).setBigUint64(0, BigInt(chunkIndex));
+    const aad = buildChunkAAD(mediaId, chunkIndex);
 
     return new Uint8Array(await crypto.subtle.decrypt(
         { name: 'AES-GCM', iv, additionalData: aad }, key, ciphertext
@@ -168,7 +177,7 @@ export async function decryptName(encData, mediaId) {
 }
 
 // Split a file into encrypted chunks
-export async function encryptFile(fileData, fileKey) {
+export async function encryptFile(fileData, fileKey, mediaId) {
     const chunks = [];
     const totalChunks = Math.ceil(fileData.length / CHUNK_SIZE);
 
@@ -176,7 +185,7 @@ export async function encryptFile(fileData, fileKey) {
         const start = i * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, fileData.length);
         const chunk = fileData.slice(start, end);
-        const encrypted = await encryptChunk(chunk, fileKey, i);
+        const encrypted = await encryptChunk(chunk, fileKey, i, mediaId);
         chunks.push(encrypted);
     }
 

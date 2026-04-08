@@ -43,15 +43,16 @@ func TestChunkEncryptDecrypt(t *testing.T) {
 	for i := range key {
 		key[i] = byte(i + 10)
 	}
+	mediaID := "550e8400-e29b-41d4-a716-446655440000"
 
 	// Test multiple chunks with different indices
 	for i := 0; i < 5; i++ {
 		plaintext := bytes.Repeat([]byte{byte(i)}, 1024)
-		enc, err := EncryptChunk(plaintext, key, i)
+		enc, err := EncryptChunk(plaintext, key, i, mediaID)
 		if err != nil {
 			t.Fatalf("chunk %d encrypt: %v", i, err)
 		}
-		dec, err := DecryptChunk(enc, key, i)
+		dec, err := DecryptChunk(enc, key, i, mediaID)
 		if err != nil {
 			t.Fatalf("chunk %d decrypt: %v", i, err)
 		}
@@ -67,15 +68,21 @@ func TestChunkWrongIndex(t *testing.T) {
 		key[i] = byte(i)
 	}
 	plaintext := []byte("test data for AAD check")
+	mediaID := "550e8400-e29b-41d4-a716-446655440000"
 
-	enc, err := EncryptChunk(plaintext, key, 0)
+	enc, err := EncryptChunk(plaintext, key, 0, mediaID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Decrypting with wrong chunk index should fail (AAD mismatch)
-	_, err = DecryptChunk(enc, key, 1)
+	_, err = DecryptChunk(enc, key, 1, mediaID)
 	if err == nil {
 		t.Fatal("expected error decrypting with wrong chunk index")
+	}
+	// Decrypting with wrong media ID should fail (AAD mismatch)
+	_, err = DecryptChunk(enc, key, 0, "different-media-id")
+	if err == nil {
+		t.Fatal("expected error decrypting with wrong media ID")
 	}
 }
 

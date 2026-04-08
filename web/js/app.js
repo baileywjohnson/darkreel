@@ -780,12 +780,16 @@ function initWorkers() {
     }
 }
 
-function workerDecrypt(type, data, keyBytes, chunkIndex, aad) {
+function workerDecrypt(type, data, keyBytes, chunkIndex, aadOrMediaId) {
     return new Promise((resolve, reject) => {
         const id = workIdCounter++;
         pendingWork[id] = { resolve, reject };
         const worker = workers[id % workers.length];
-        worker.postMessage({ type, id, data, keyBytes, chunkIndex, aad });
+        if (type === 'decryptChunk') {
+            worker.postMessage({ type, id, data, keyBytes, chunkIndex, mediaId: aadOrMediaId });
+        } else {
+            worker.postMessage({ type, id, data, keyBytes, chunkIndex, aad: aadOrMediaId });
+        }
     });
 }
 
@@ -2740,7 +2744,7 @@ async function loadThumbnail(item, img) {
         const thumbKey = await decryptFileKey(thumbKeyEnc, item.id);
 
         // Decrypt thumbnail (it's encrypted as chunk index 0)
-        const decrypted = await workerDecrypt('decryptChunk', encData, thumbKey, 0);
+        const decrypted = await workerDecrypt('decryptChunk', encData, thumbKey, 0, item.id);
 
         // If the thumbnail is the tiny JFIF placeholder (failed generation), show fallback
         if (decrypted.length <= 20) {
@@ -3410,7 +3414,7 @@ async function showImage(item, fileKey) {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         const encData = new Uint8Array(await res.arrayBuffer());
-        const dec = await workerDecrypt('decryptChunk', encData, fileKey, i);
+        const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
         chunks.push(dec);
     }
     verifyChunkCount(item, chunks.length);
@@ -3598,7 +3602,7 @@ async function playVideoMSE(item, fileKey) {
         });
         if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
         const encData = new Uint8Array(await res.arrayBuffer());
-        const dec = await workerDecrypt('decryptChunk', encData, fileKey, index);
+        const dec = await workerDecrypt('decryptChunk', encData, fileKey, index, item.id);
         chunkCache.set(index, dec);
         return dec;
     }
@@ -3820,7 +3824,7 @@ async function playVideoBlob(item, fileKey, mime) {
                 });
                 if (!res.ok) throw new Error(`Chunk ${idx} fetch failed: ${res.status}`);
                 const encData = new Uint8Array(await res.arrayBuffer());
-                decrypted[idx] = await workerDecrypt('decryptChunk', encData, fileKey, idx);
+                decrypted[idx] = await workerDecrypt('decryptChunk', encData, fileKey, idx, item.id);
                 done++;
             }
         }
@@ -4018,7 +4022,7 @@ async function rotateCurrentItem() {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const encData = new Uint8Array(await res.arrayBuffer());
-            chunks.push(await workerDecrypt('decryptChunk', encData, fileKey, i));
+            chunks.push(await workerDecrypt('decryptChunk', encData, fileKey, i, item.id));
         }
         const totalLen = chunks.reduce((s, c) => s + c.length, 0);
         const merged = new Uint8Array(totalLen);
@@ -4047,18 +4051,18 @@ async function rotateCurrentItem() {
         // Hash modification on rotated data
         const modifiedData = modifyHash(rotatedData, item.mime_type || 'image/jpeg', newHashNonce);
 
+        // Generate media ID first — needed as AAD for chunk and key encryption
+        const newMediaId = crypto.randomUUID();
+
         // Encrypt
-        const encThumb = await encryptChunk(thumbData, newThumbKey, 0);
+        const encThumb = await encryptChunk(thumbData, newThumbKey, 0, newMediaId);
         const chunkCount = Math.ceil(modifiedData.length / CHUNK_SIZE);
         const encChunks = [];
         for (let i = 0; i < chunkCount; i++) {
             const start = i * CHUNK_SIZE;
             const end = Math.min(start + CHUNK_SIZE, modifiedData.length);
-            encChunks.push(await encryptChunk(modifiedData.slice(start, end), newFileKey, i));
+            encChunks.push(await encryptChunk(modifiedData.slice(start, end), newFileKey, i, newMediaId));
         }
-
-        // Generate media ID for the re-upload (used as AAD for key encryption)
-        const newMediaId = crypto.randomUUID();
         const encFileKey = await encryptFileKey(newFileKey, newMediaId);
         const encThumbKey = await encryptFileKey(newThumbKey, newMediaId);
 
@@ -4248,7 +4252,7 @@ async function downloadItem(item) {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const encData = new Uint8Array(await res.arrayBuffer());
-            const dec = await workerDecrypt('decryptChunk', encData, fileKey, i);
+            const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
             chunks.push(dec);
         }
 
@@ -4323,7 +4327,7 @@ async function downloadFolder(folder) {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 const encData = new Uint8Array(await res.arrayBuffer());
-                const dec = await workerDecrypt('decryptChunk', encData, fileKey, i);
+                const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
                 chunks.push(dec);
             }
             verifyChunkCount(item, chunks.length);
@@ -4726,8 +4730,11 @@ async function uploadFile(file, itemEl, targetFolderId) {
     // Hash modification (skip for videos to preserve container integrity)
     const modifiedData = mediaType === 'video' ? fileData : modifyHash(fileData, file.type, hashNonce);
 
+    // Generate media ID first — needed as AAD for chunk and key encryption
+    const mediaId = crypto.randomUUID();
+
     // Encrypt thumbnail
-    const encThumb = await encryptChunk(thumbData, thumbKey, 0);
+    const encThumb = await encryptChunk(thumbData, thumbKey, 0, mediaId);
 
     // Split into segments: use pre-split fMP4 segments or fixed-size chunks
     let segments;
@@ -4744,12 +4751,9 @@ async function uploadFile(file, itemEl, targetFolderId) {
     // Encrypt segments
     const encChunks = [];
     for (let i = 0; i < chunkCount; i++) {
-        encChunks.push(await encryptChunk(segments[i], fileKey, i));
+        encChunks.push(await encryptChunk(segments[i], fileKey, i, mediaId));
         setUploadProgress(itemEl, Math.round(((i + 1) / chunkCount) * 50));
     }
-
-    // Generate media ID for AAD binding (client-generated, sent to server)
-    const mediaId = crypto.randomUUID();
 
     // Encrypt keys with master key, bound to this media item via AAD
     const encFileKey = await encryptFileKey(fileKey, mediaId);

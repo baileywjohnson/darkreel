@@ -42,9 +42,11 @@ func EncryptBlock(plaintext, key, aad []byte) ([]byte, error) {
 }
 
 // EncryptChunk encrypts a single chunk with AES-256-GCM.
-// The chunk index is used as additional authenticated data to prevent reordering.
+// The mediaID and chunk index are used as additional authenticated data to
+// bind each chunk to its specific file and position, preventing both reordering
+// and cross-file chunk substitution.
 // Returns: nonce (12 bytes) || ciphertext || tag (16 bytes)
-func EncryptChunk(plaintext, key []byte, chunkIndex int) ([]byte, error) {
+func EncryptChunk(plaintext, key []byte, chunkIndex int, mediaID string) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -59,15 +61,24 @@ func EncryptChunk(plaintext, key []byte, chunkIndex int) ([]byte, error) {
 		return nil, err
 	}
 
-	aad := make([]byte, 8)
-	binary.BigEndian.PutUint64(aad, uint64(chunkIndex))
+	aad := chunkAAD(mediaID, chunkIndex)
 
 	return gcm.Seal(nonce, nonce, plaintext, aad), nil
 }
 
+// chunkAAD builds the additional authenticated data for chunk encryption:
+// UTF-8(mediaID) || BigEndian(uint64(chunkIndex))
+func chunkAAD(mediaID string, chunkIndex int) []byte {
+	idBytes := []byte(mediaID)
+	aad := make([]byte, len(idBytes)+8)
+	copy(aad, idBytes)
+	binary.BigEndian.PutUint64(aad[len(idBytes):], uint64(chunkIndex))
+	return aad
+}
+
 // EncryptReader reads from r in ChunkSize blocks, encrypts each, and writes to w.
 // Returns the number of chunks written.
-func EncryptReader(r io.Reader, w io.Writer, key []byte) (int, error) {
+func EncryptReader(r io.Reader, w io.Writer, key []byte, mediaID string) (int, error) {
 	bufPtr := bufPool.Get().(*[]byte)
 	defer func() {
 		clear(*bufPtr) // zero plaintext before returning to pool
@@ -79,7 +90,7 @@ func EncryptReader(r io.Reader, w io.Writer, key []byte) (int, error) {
 	for {
 		n, err := io.ReadFull(r, buf)
 		if n > 0 {
-			enc, encErr := EncryptChunk(buf[:n], key, chunkIndex)
+			enc, encErr := EncryptChunk(buf[:n], key, chunkIndex, mediaID)
 			if encErr != nil {
 				return chunkIndex, fmt.Errorf("encrypt chunk %d: %w", chunkIndex, encErr)
 			}
