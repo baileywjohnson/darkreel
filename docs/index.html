@@ -1,748 +1,1131 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Darkreel — E2E Encrypted Media Storage</title>
-    <meta name="description" content="Self-hosted, end-to-end encrypted video and photo storage with streaming playback. Zero-knowledge architecture.">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Darkreel</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
+<meta name="description" content="End-to-end encrypted photo and video storage. Single Go binary. Zero-knowledge architecture. Your server stores opaque blobs. Your browser holds the keys.">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap');
 
-        :root {
-            --bg: #09090b;
-            --surface: #111114;
-            --surface-2: #18181c;
-            --border: #222228;
-            --text: #ececf1;
-            --text-2: #a0a0b0;
-            --text-3: #5a5a6e;
-            --purple: #8b7cf6;
-            --purple-dim: rgba(139, 124, 246, 0.08);
-            --green: #22c55e;
-            --amber: #f59e0b;
-            --red: #ef4444;
-            --mono: 'JetBrains Mono', monospace;
-            --sans: 'Inter', -apple-system, system-ui, sans-serif;
-        }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html { scroll-behavior: smooth; }
+:root {
+  --bg: #0a0a0c;
+  --bg-subtle: #101014;
+  --bg-code: #0d0d10;
+  --border: #1a1a22;
+  --border-bright: #2a2a35;
+  --text: #c8c8d0;
+  --text-bright: #e8e8f0;
+  --text-dim: #606070;
+  --text-label: #808090;
+  --green: #4ec970;
+  --green-dim: #2a7040;
+  --red: #e05555;
+  --amber: #d4a044;
+  --blue: #5090d0;
+  --purple: #8878c8;
+  --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
 
-        body {
-            font-family: var(--sans);
-            background: var(--bg);
-            color: var(--text);
-            line-height: 1.65;
-            -webkit-font-smoothing: antialiased;
-        }
+html {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  scroll-behavior: smooth;
+}
 
-        ::selection { background: rgba(139, 124, 246, 0.3); }
+body {
+  min-height: 100vh;
+}
 
-        a { color: var(--purple); text-decoration: none; }
-        a:hover { text-decoration: underline; }
+/* ── noise overlay ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+}
 
-        code, .mono {
-            font-family: var(--mono);
-            font-size: 0.88em;
-        }
+/* ── layout ── */
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
 
-        /* --- Nav --- */
-        nav {
-            position: fixed; top: 0; width: 100%; z-index: 100;
-            background: rgba(9, 9, 11, 0.8);
-            backdrop-filter: blur(16px) saturate(180%);
-            border-bottom: 1px solid var(--border);
-        }
-        .nav-inner {
-            max-width: 980px; margin: 0 auto; padding: 0 1.5rem;
-            height: 56px; display: flex; align-items: center; justify-content: space-between;
-        }
-        .logo { font-weight: 700; font-size: 1.1rem; color: var(--text); text-decoration: none !important; }
-        .nav-links { display: flex; gap: 1.5rem; align-items: center; }
-        .nav-links a { color: var(--text-2); font-size: 0.85rem; font-weight: 500; text-decoration: none; }
-        .nav-links a:hover { color: var(--text); }
-        .nav-gh {
-            display: inline-flex; align-items: center; gap: 0.4rem;
-            border: 1px solid var(--border); padding: 0.35rem 0.9rem; border-radius: 7px;
-            font-size: 0.82rem; color: var(--text) !important; transition: border-color 0.15s;
-        }
-        .nav-gh:hover { border-color: var(--text-3); text-decoration: none; }
-        .nav-gh svg { width: 16px; height: 16px; fill: var(--text); }
+/* centered container, content stays left-aligned */
 
-        /* --- Layout --- */
-        .container { max-width: 980px; margin: 0 auto; padding: 0 1.5rem; }
+/* ── header ── */
+.header {
+  padding: 80px 0 0;
+  position: relative;
+}
 
-        /* --- Hero --- */
-        .hero {
-            padding: 11rem 1.5rem 7rem;
-            text-align: center;
-            position: relative;
-        }
-        .hero::before {
-            content: '';
-            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-            background:
-                radial-gradient(ellipse 600px 400px at 50% 200px, rgba(139, 124, 246, 0.06), transparent),
-                radial-gradient(ellipse 400px 300px at 30% 300px, rgba(34, 197, 94, 0.03), transparent);
-            pointer-events: none;
-        }
-        .hero h1 {
-            font-size: clamp(2.5rem, 6vw, 4rem);
-            font-weight: 800;
-            letter-spacing: -0.035em;
-            line-height: 1.05;
-            margin-bottom: 1.5rem;
-        }
-        .hero h1 .dim { color: var(--text-3); }
-        .hero p {
-            font-size: 1.15rem;
-            color: var(--text-2);
-            max-width: 540px;
-            margin: 0 auto 2.5rem;
-        }
-        .hero-cta {
-            display: inline-flex; align-items: center; gap: 0.5rem;
-            background: var(--purple); color: #fff;
-            padding: 0.7rem 1.8rem; border-radius: 8px;
-            font-weight: 600; font-size: 0.95rem;
-            transition: opacity 0.15s; text-decoration: none;
-        }
-        .hero-cta:hover { opacity: 0.9; text-decoration: none; }
-        .hero-sub {
-            margin-top: 1rem;
-            font-size: 0.85rem;
-            color: var(--text-3);
-        }
-        .hero-sub code {
-            background: var(--surface);
-            padding: 0.2rem 0.5rem;
-            border-radius: 4px;
-            border: 1px solid var(--border);
-            color: var(--text-2);
-        }
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  transition: all 0.15s;
+  position: absolute;
+  top: 88px;
+  right: 0;
+}
 
-        /* --- Divider --- */
-        hr { border: none; border-top: 1px solid var(--border); margin: 0; }
+.github-link:hover {
+  color: var(--text);
+  border-color: var(--border-bright);
+  background: var(--bg-subtle);
+  text-decoration: none;
+}
 
-        /* --- Section --- */
-        .section { padding: 5rem 0; }
-        .section-head {
-            margin-bottom: 3rem;
-        }
-        .section-head h2 {
-            font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.5rem;
-        }
-        .section-head p { color: var(--text-2); font-size: 0.95rem; max-width: 520px; }
+.github-link svg {
+  flex-shrink: 0;
+}
 
-        /* --- Pitch: two-col text --- */
-        .pitch {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 4rem;
-            padding: 5rem 0;
-        }
-        .pitch h2 {
-            font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em;
-            position: sticky; top: 6rem; align-self: start;
-        }
-        .pitch-points { display: flex; flex-direction: column; gap: 1.75rem; }
-        .pitch-point h3 {
-            font-size: 0.95rem; font-weight: 600; margin-bottom: 0.3rem;
-            display: flex; align-items: center; gap: 0.5rem;
-        }
-        .pitch-point p { font-size: 0.9rem; color: var(--text-2); }
-        .pitch-point .dot {
-            width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
-        }
-        .dot-purple { background: var(--purple); }
-        .dot-green { background: var(--green); }
-        .dot-amber { background: var(--amber); }
+.logo {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+  margin-bottom: 24px;
+  user-select: none;
+}
 
-        /* --- Differentiators --- */
-        .diff-grid {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            background: var(--border);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            overflow: hidden;
-            margin-top: 2rem;
-        }
-        .diff-row {
-            display: grid;
-            grid-template-columns: 180px 1fr 1fr;
-            background: var(--surface);
-        }
-        .diff-row.diff-header {
-            background: var(--surface-2);
-        }
-        .diff-cell {
-            padding: 0.85rem 1.25rem;
-            font-size: 0.88rem;
-        }
-        .diff-cell + .diff-cell {
-            border-left: 1px solid var(--border);
-        }
-        .diff-header .diff-cell {
-            font-size: 0.72rem;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            color: var(--text-3);
-            font-weight: 600;
-        }
-        .diff-label {
-            color: var(--text-2);
-            font-weight: 500;
-        }
-        .diff-typical {
-            color: var(--text-3);
-        }
-        .diff-ours {
-            color: var(--text);
-        }
-        .diff-ours strong {
-            color: var(--green);
-            font-weight: 600;
-        }
+h1 .popcorn {
+  font-size: 0.85em;
+  margin-right: 7px;
+}
 
-        @media (max-width: 768px) {
-            .diff-row { grid-template-columns: 1fr; }
-            .diff-cell + .diff-cell { border-left: none; border-top: 1px solid var(--border); }
-            .diff-header { display: none; }
-            .diff-cell[data-label]::before { content: attr(data-label); display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); margin-bottom: 0.25rem; font-weight: 600; }
-        }
+h1 {
+  font-family: var(--mono);
+  font-size: clamp(36px, 6vw, 54px);
+  font-weight: 700;
+  color: var(--text-bright);
+  line-height: 1.1;
+  letter-spacing: -1px;
+  margin-bottom: 12px;
+}
 
-        /* --- Zero-knowledge split --- */
-        .zk {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 2px;
-            background: var(--border);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            overflow: hidden;
-        }
-        .zk-col { background: var(--surface); padding: 2rem; }
-        .zk-col h3 {
-            font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
-            color: var(--text-3); margin-bottom: 1.25rem; font-weight: 600;
-        }
-        .zk-item {
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 0.5rem 0;
-            font-size: 0.88rem;
-        }
-        .zk-item + .zk-item { border-top: 1px solid var(--border); }
-        .zk-encrypted { color: var(--green); font-weight: 500; font-size: 0.8rem; }
-        .zk-visible { color: var(--text-3); font-size: 0.8rem; }
+.tagline {
+  font-family: var(--mono);
+  font-size: clamp(14px, 2.5vw, 17px);
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+  margin-bottom: 24px;
+}
 
-        /* --- Terminal block --- */
-        .terminal {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            overflow: hidden;
-            margin: 2rem 0;
-        }
-        .terminal-bar {
-            padding: 0.65rem 1rem;
-            border-bottom: 1px solid var(--border);
-            display: flex; align-items: center; gap: 0.5rem;
-        }
-        .terminal-dot {
-            width: 10px; height: 10px; border-radius: 50%;
-        }
-        .terminal-dot:nth-child(1) { background: #ef4444; }
-        .terminal-dot:nth-child(2) { background: #f59e0b; }
-        .terminal-dot:nth-child(3) { background: #22c55e; }
-        .terminal-title {
-            flex: 1; text-align: center;
-            font-size: 0.75rem; color: var(--text-3); font-family: var(--mono);
-        }
-        .terminal-body {
-            padding: 1.25rem 1.5rem;
-            font-family: var(--mono);
-            font-size: 0.85rem;
-            line-height: 2;
-            overflow-x: auto;
-        }
-        .t-prompt { color: var(--green); }
-        .t-cmd { color: var(--text); }
-        .t-arg { color: var(--purple); }
-        .t-comment { color: var(--text-3); }
-        .t-output { color: var(--text-2); }
+h1 .cursor {
+  display: inline-block;
+  width: 3px;
+  height: 0.85em;
+  background: var(--green);
+  margin-left: 4px;
+  vertical-align: baseline;
+  animation: blink 1s step-end infinite;
+}
 
-        /* --- Crypto specs --- */
-        .specs {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 2px;
-            background: var(--border);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            overflow: hidden;
-            margin-top: 2rem;
-        }
-        .spec {
-            background: var(--surface);
-            padding: 1.25rem 1.5rem;
-        }
-        .spec-label {
-            font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
-            color: var(--text-3); margin-bottom: 0.5rem; font-weight: 600;
-        }
-        .spec-value {
-            font-family: var(--mono);
-            font-size: 0.85rem;
-            color: var(--text);
-            line-height: 1.4;
-        }
+@keyframes blink {
+  50% { opacity: 0; }
+}
 
-        /* --- Steps --- */
-        .steps { display: flex; flex-direction: column; gap: 3rem; margin-top: 2rem; }
-        .step { display: flex; gap: 1.5rem; }
-        .step-line {
-            display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
-            padding-top: 0.15rem;
-        }
-        .step-num {
-            width: 32px; height: 32px;
-            border: 1.5px solid var(--border);
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 0.8rem; font-weight: 600; color: var(--text-2);
-            flex-shrink: 0;
-        }
-        .step-connector {
-            width: 1px; flex: 1; background: var(--border);
-        }
-        .step:last-child .step-connector { display: none; }
-        .step-body h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.35rem; }
-        .step-body p { font-size: 0.9rem; color: var(--text-2); }
+.subtitle {
+  font-size: 16px;
+  color: var(--text-label);
+  max-width: none;
+  line-height: 1.7;
+}
 
-        /* --- Hardening list --- */
-        .hardening {
-            columns: 2;
-            column-gap: 1.5rem;
-            margin-top: 2rem;
-        }
-        .h-item {
-            break-inside: avoid;
-            padding: 0.6rem 0;
-            display: flex;
-            gap: 0.65rem;
-            font-size: 0.9rem;
-        }
-        .h-check { color: var(--green); flex-shrink: 0; font-weight: 700; font-size: 0.85rem; margin-top: 0.1rem; }
-        .h-item span { color: var(--text-2); }
-        .h-item strong { color: var(--text); font-weight: 600; }
+.subtitle strong {
+  color: var(--text);
+  font-weight: 500;
+}
 
-        /* --- Requirements --- */
-        .req-row {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 2px;
-            background: var(--border);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            overflow: hidden;
-            margin-top: 2rem;
-        }
-        .req-col { background: var(--surface); padding: 1.5rem; }
-        .req-col h3 {
-            font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
-            color: var(--text-3); margin-bottom: 1rem; font-weight: 600;
-        }
-        .req-line {
-            display: flex; justify-content: space-between;
-            font-size: 0.88rem;
-            padding: 0.35rem 0;
-        }
-        .req-line + .req-line { border-top: 1px solid var(--border); }
-        .req-line span:last-child { color: var(--text-2); font-family: var(--mono); font-size: 0.82rem; }
+/* ── nav ── */
+.nav {
+  display: flex;
+  gap: 6px;
+  margin-top: 40px;
+  flex-wrap: wrap;
+}
 
-        /* --- Ecosystem --- */
-        .eco-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1.25rem;
-            margin-top: 2rem;
-        }
-        .eco-card {
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 1.5rem;
-            transition: border-color 0.15s;
-            text-decoration: none;
-            color: inherit;
-            display: block;
-        }
-        .eco-card:hover { border-color: var(--text-3); text-decoration: none; }
-        .eco-card h3 {
-            font-size: 0.95rem; font-weight: 600; margin-bottom: 0.35rem;
-            font-family: var(--mono);
-        }
-        .eco-card p { font-size: 0.85rem; color: var(--text-2); }
+.nav a {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  transition: all 0.15s;
+}
 
-        /* --- Footer --- */
-        footer {
-            border-top: 1px solid var(--border);
-            padding: 3rem 0;
-            text-align: center;
-        }
-        .footer-links {
-            display: flex; gap: 1.5rem; justify-content: center;
-            margin-bottom: 1rem;
-        }
-        .footer-links a { color: var(--text-3); font-size: 0.82rem; text-decoration: none; }
-        .footer-links a:hover { color: var(--text-2); }
-        .footer-copy { color: var(--text-3); font-size: 0.8rem; }
+.nav a:hover {
+  color: var(--text);
+  border-color: var(--border-bright);
+  background: var(--bg-subtle);
+}
 
-        /* --- Responsive --- */
-        @media (max-width: 768px) {
-            .hero { padding: 8rem 1.5rem 5rem; }
-            .pitch { grid-template-columns: 1fr; gap: 2rem; }
-            .pitch h2 { position: static; }
-            .zk { grid-template-columns: 1fr; }
-            .specs { grid-template-columns: 1fr; }
-            .req-row { grid-template-columns: 1fr; }
-            .eco-grid { grid-template-columns: 1fr; }
-            .hardening { columns: 1; }
-            .nav-links a:not(.nav-gh) { display: none; }
-            .hero h1 span { top: 2px !important; }
-        }
-    </style>
+/* ── divider ── */
+.divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 60px 0;
+}
+
+.divider.sm { margin: 36px 0; }
+
+/* ── sections ── */
+section { margin-bottom: 80px; }
+
+.section-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin-bottom: 24px;
+}
+
+h2 {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 16px;
+}
+
+h3 {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+  margin-top: 32px;
+}
+
+p {
+  margin-bottom: 16px;
+}
+
+p.note {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* ── terminal block ── */
+.terminal {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 24px;
+  margin: 20px 0;
+  overflow: visible;
+  position: relative;
+}
+
+.terminal::before {
+  content: attr(data-title);
+  position: absolute;
+  top: 0;
+  left: 16px;
+  transform: translateY(-50%);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: var(--bg-code);
+  padding: 0 8px;
+}
+
+.terminal code {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text);
+  white-space: pre;
+  display: block;
+  overflow-x: auto;
+}
+
+.terminal .prompt { color: var(--green); user-select: none; }
+.terminal .comment { color: var(--text-dim); }
+.terminal .string { color: var(--amber); }
+.terminal .flag { color: var(--blue); }
+.terminal .output { color: var(--text-dim); }
+.terminal .keyword { color: var(--purple); }
+
+/* ── threat model table ── */
+.threat-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 20px 0;
+  font-size: 13.5px;
+}
+
+.threat-table th {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  text-align: left;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-bright);
+}
+
+.threat-table td {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.threat-table td:first-child {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-label);
+  padding-right: 32px;
+  white-space: nowrap;
+}
+
+.threat-table .no {
+  color: var(--green);
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.threat-table .yes {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.threat-table .never {
+  color: var(--green);
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.threat-table .detail {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* ── key hierarchy ── */
+.key-tree {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.9;
+  padding: 0 24px;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 20px 0;
+  white-space: pre;
+}
+
+.key-tree .node { color: var(--text-bright); font-weight: 500; }
+.key-tree .algo { color: var(--purple); }
+.key-tree .arrow { color: var(--text-dim); }
+.key-tree .result { color: var(--amber); }
+.key-tree .branch { color: var(--text-dim); user-select: none; }
+.key-tree .leaf { color: var(--text-label); }
+
+/* ── algo table ── */
+.algo-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 20px 0;
+  font-size: 13px;
+}
+
+.algo-table td {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.algo-table td:first-child {
+  font-family: var(--mono);
+  color: var(--text-label);
+  padding-right: 32px;
+  white-space: nowrap;
+  width: 200px;
+}
+
+.algo-table td:last-child {
+  color: var(--text);
+}
+
+/* ── feature grid ── */
+.features {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  margin: 20px 0;
+}
+
+.feature {
+  padding: 18px 20px;
+  border-left: 2px solid var(--border);
+  transition: border-color 0.15s;
+}
+
+.feature:hover {
+  border-left-color: var(--green-dim);
+}
+
+.feature-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-bright);
+  margin-bottom: 6px;
+}
+
+.feature-desc {
+  font-size: 13.5px;
+  color: var(--text-label);
+  line-height: 1.6;
+}
+
+/* ── tradeoffs ── */
+.tradeoff {
+  margin-bottom: 28px;
+  padding-left: 16px;
+  border-left: 2px solid var(--border);
+}
+
+.tradeoff-title {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber);
+  margin-bottom: 6px;
+}
+
+.tradeoff p {
+  font-size: 13.5px;
+  color: var(--text-label);
+  margin-bottom: 0;
+}
+
+/* ── API routes ── */
+.api-group {
+  margin: 24px 0;
+}
+
+.api-group-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.api-route {
+  display: flex;
+  gap: 12px;
+  padding: 5px 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.api-method {
+  width: 56px;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.api-method.get { color: var(--green); }
+.api-method.post { color: var(--blue); }
+.api-method.put { color: var(--amber); }
+.api-method.patch { color: var(--amber); }
+.api-method.delete { color: var(--red); }
+
+.api-path {
+  color: var(--text);
+  min-width: 240px;
+}
+
+.api-desc {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* ── inline tags ── */
+.tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text-label);
+  margin-right: 4px;
+}
+
+/* ── cta / deploy ── */
+.deploy-block {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--green-dim);
+  border-radius: 6px;
+  padding: 24px;
+  margin: 24px 0;
+}
+
+.deploy-block .label {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--green);
+  margin-bottom: 12px;
+}
+
+.deploy-block code {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-bright);
+  line-height: 1.8;
+}
+
+.deploy-block .comment {
+  color: var(--text-dim);
+}
+
+/* ── specs ── */
+.specs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
+  margin: 20px 0;
+}
+
+.spec {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.spec-value {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 4px;
+}
+
+.spec-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* ── links ── */
+a {
+  color: var(--blue);
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+/* ── footer ── */
+.footer {
+  padding: 48px 0 80px;
+  border-top: 1px solid var(--border);
+  margin-top: 40px;
+}
+
+.footer-links {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.footer-links a {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.footer-links a:hover { color: var(--text); }
+
+.footer-copy {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ── sidebar nav ── */
+.sidebar-nav {
+  position: fixed;
+  left: max(calc(50% - 480px), 24px);
+  top: 50%;
+  transform: translate(-100%, -50%);
+  margin-left: -32px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.sidebar-nav.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sidebar-nav a {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 4px 12px;
+  border-left: 2px solid transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.sidebar-nav a:hover {
+  color: var(--text);
+}
+
+.sidebar-nav a.active {
+  color: var(--text-bright);
+  border-left-color: var(--green);
+}
+
+/* ── responsiveness ── */
+@media (max-width: 1200px) {
+  .sidebar-nav { display: none; }
+}
+
+@media (max-width: 600px) {
+  .header { padding-top: 48px; }
+  section { margin-bottom: 56px; }
+  .divider { margin: 40px 0; }
+  .api-desc { display: none; }
+  .threat-table td:first-child { padding-right: 16px; }
+}
+</style>
 </head>
 <body>
+<div class="page">
 
-<nav>
-    <div class="nav-inner">
-        <a href="#" class="logo">🍿 <span style="position:relative;top:1px">Darkreel</span></a>
-        <div class="nav-links">
-            <a href="#how">How it works</a>
-            <a href="#quickstart">Quick start</a>
-            <a href="#security">Security</a>
-            <a href="https://github.com/baileywjohnson/darkreel" class="nav-gh">
-                <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-                Source
-            </a>
-        </div>
-    </div>
-</nav>
+  <!-- ────────────────────────── HEADER ────────────────────────── -->
+  <header class="header">
+    <a href="https://github.com/baileywjohnson/darkreel" class="github-link" target="_blank" rel="noopener">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      <span>source</span>
+    </a>
+    <h1><span class="popcorn">&#127871;</span>darkreel<span class="cursor"></span></h1>
+    <div class="tagline">encrypted media storage & streaming</div>
+    <p class="subtitle">
+      Your server stores <strong>opaque blobs</strong>. Your browser holds the keys.
+      Single Go binary. No Docker, no Postgres, no Redis, no S3.
+      All encryption and decryption happens in the browser, in memory, never on disk.
+    </p>
+    <nav class="nav">
+      <a href="#threat-model">threat model</a>
+      <a href="#features">features</a>
+      <a href="#crypto">cryptography</a>
+      <a href="#streaming">streaming</a>
+      <a href="#tradeoffs">trade-offs</a>
+      <a href="#deploy">deploy</a>
+      <a href="#api">api</a>
+      <a href="#setup-details">operations</a>
+      <a href="#related">related</a>
+    </nav>
+  </header>
 
-<!-- Hero -->
-<div class="hero">
-    <h1><span style="font-size: 0.85em;">🍿</span> <span style="position:relative;top:4px">Darkreel</span></h1>
-    <p>Self-hosted, end-to-end encrypted photo and video storage with streaming playback. Single Go binary. Zero-knowledge architecture. Open source.</p>
-    <a href="#quickstart" class="hero-cta">Deploy in 5 minutes</a>
-    <div class="hero-sub">or <code>git clone</code> and <code>go build</code></div>
-</div>
+  <hr class="divider">
 
-<div class="container">
-<hr>
+  <!-- ────────────────────────── THREAT MODEL ────────────────────────── -->
+  <section id="threat-model">
+    <div class="section-label">01 &mdash; threat model</div>
+    <h2>what the server sees</h2>
 
-<!-- How it works -->
-<div class="pitch" id="how">
-    <h2>Architecture</h2>
-    <div class="pitch-points">
-        <div class="pitch-point">
-            <h3><span class="dot dot-purple"></span> Client-side encryption</h3>
-            <p>AES-256-GCM encryption happens in the browser before data leaves your device. Each file gets a random key, wrapped with a master key derived from your password via Argon2id. The server stores only ciphertext.</p>
-        </div>
-        <div class="pitch-point">
-            <h3><span class="dot dot-green"></span> Streaming without decrypting server-side</h3>
-            <p>Videos are remuxed to fMP4 on upload (ffmpeg in the CLI, mp4box.js in the browser — 144 KB, no WASM). Container restructuring only, no re-encoding. Chunks are decrypted in a Web Worker and streamed via MSE/ManagedMediaSource. Playback starts after the first chunk. Downloads convert back to standard MP4.</p>
-        </div>
-        <div class="pitch-point">
-            <h3><span class="dot dot-amber"></span> Metadata is encrypted too</h3>
-            <p>File names, MIME types, sizes, dimensions, durations — encrypted into a single blob. Folder structures are also encrypted. Upload timestamps are coarsened to year + week to limit metadata leakage.</p>
-        </div>
-        <div class="pitch-point">
-            <h3><span class="dot dot-purple"></span> Chunk padding</h3>
-            <p>Every chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random fill. Original file sizes are unrecoverable even with full disk access.</p>
-        </div>
-        <div class="pitch-point">
-            <h3><span class="dot dot-green"></span> Supported formats</h3>
-            <p><strong>Video:</strong> MP4, MOV, WEBM, MKV, M4V<br>
-            <strong>Image:</strong> JPG, PNG, GIF, WEBP<br>
-            <span style="color: var(--text-3); font-size: 0.9em;">Note: Only MP4 and MOV videos support streaming playback when uploaded in the browser. CLI uploads via ffmpeg support all video formats with full streaming.</span></p>
-        </div>
-        <div class="pitch-point">
-            <h3><span class="dot dot-green"></span> Secure deletion, not just unlinking</h3>
-            <p>Deleted files are overwritten 3 times with random data, fsynced, then unlinked. On spinning disks this provides strong assurance. On SSDs it's best-effort due to wear leveling — an inherent hardware limitation.</p>
-        </div>
-    </div>
-</div>
-
-<hr>
-
-<!-- What's different -->
-<div class="section">
-    <div class="section-head">
-        <h2>Design</h2>
-        <p>Darkreel handles metadata, storage, deletion and more in a way that is private and secure by design.</p>
+    <div class="terminal">
+      <code>
+<span class="output">data/</span>
+<span class="output">  darkreel.db</span>                      <span class="comment"># rows of ciphertext</span>
+<span class="output">  f47ac10b-58cc/</span>
+<span class="output">    a3d9c8e2-7b14/</span>
+<span class="output">      000000.enc</span>   <span class="string">[4.00 MB]</span>       <span class="comment"># could be anything</span>
+<span class="output">      000001.enc</span>   <span class="string">[2.00 MB]</span>       <span class="comment"># padded to bucket size</span>
+<span class="output">      000002.enc</span>   <span class="string">[1.00 MB]</span>       <span class="comment"># random fill hides real size</span>
+<span class="output">      thumb.enc</span>    <span class="string">[256 KB]</span>        <span class="comment"># encrypted thumbnail</span>
+      </code>
     </div>
 
-    <div class="diff-grid">
-        <div class="diff-row diff-header">
-            <div class="diff-cell"></div>
-            <div class="diff-cell">Typical encrypted storage</div>
-            <div class="diff-cell">Darkreel</div>
-        </div>
-        <div class="diff-row">
-            <div class="diff-cell diff-label">File sizes on disk</div>
-            <div class="diff-cell diff-typical" data-label="Typical">Encrypted blobs reveal original sizes — a 4.2 MB blob is a ~4.2 MB file</div>
-            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>Every chunk padded to bucketed sizes (1/2/4/8/16 MB)</strong> with random fill. An observer sees a handful of uniform sizes.</div>
-        </div>
-        <div class="diff-row">
-            <div class="diff-cell diff-label">Deletion</div>
-            <div class="diff-cell diff-typical" data-label="Typical">Calls <code>delete()</code> — data remains on disk until overwritten by chance</div>
-            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>3-pass random overwrite</strong>, fsync to disk, then unlink. Deleted means destroyed.</div>
-        </div>
-        <div class="diff-row">
-            <div class="diff-cell diff-label">Timestamps</div>
-            <div class="diff-cell diff-typical" data-label="Typical">Full-precision timestamps stored — reveals usage patterns, time zones, activity windows</div>
-            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>Coarsened to year + week number</strong>. Deliberately discards precision the server doesn't need.</div>
-        </div>
-        <div class="diff-row">
-            <div class="diff-cell diff-label">Resource usage</div>
-            <div class="diff-cell diff-typical" data-label="Typical">Multiple containers, external databases, 1-6 GB RAM</div>
-            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>Single binary, embedded SQLite, ~14 MB RAM</strong>. Runs on a $6/mo VPS.</div>
-        </div>
-        <div class="diff-row">
-            <div class="diff-cell diff-label">Server setup</div>
-            <div class="diff-cell diff-typical" data-label="Typical">Docker Compose file, manual TLS, no security hardening</div>
-            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>One script</strong>: auto TLS, firewall, fail2ban, SSH hardening, daily backups.</div>
-        </div>
-        <div class="diff-row">
-            <div class="diff-cell diff-label">Video playback</div>
-            <div class="diff-cell diff-typical" data-label="Typical">Download entire file, then decrypt and play</div>
-            <div class="diff-cell diff-ours" data-label="Darkreel"><strong>Fragmented MP4 + MSE streaming</strong>. Playback starts after the first chunk. Downloads convert to standard MP4.</div>
-        </div>
+    <p>Every file timestamp on disk reads <code>2024-01-01T00:00:00Z</code>. Every chunk is padded
+    to 1, 2, 4, 8, or 16 MB with random data. Upload dates are coarsened to year + week number.
+    An attacker with root on your server sees uniform blobs with no meaningful metadata.</p>
+
+    <table class="threat-table">
+      <tr><th>data</th><th>visible to server</th></tr>
+      <tr><td>file content</td><td><span class="no">no</span> <span class="detail">&mdash; AES-256-GCM, per-file key</span></td></tr>
+      <tr><td>file names</td><td><span class="no">no</span> <span class="detail">&mdash; encrypted metadata blob</span></td></tr>
+      <tr><td>file types / MIME</td><td><span class="no">no</span> <span class="detail">&mdash; encrypted metadata blob</span></td></tr>
+      <tr><td>file sizes</td><td><span class="no">no</span> <span class="detail">&mdash; chunk padding + encrypted metadata</span></td></tr>
+      <tr><td>dimensions / duration</td><td><span class="no">no</span> <span class="detail">&mdash; encrypted metadata blob</span></td></tr>
+      <tr><td>thumbnails</td><td><span class="no">no</span> <span class="detail">&mdash; separate encrypted key</span></td></tr>
+      <tr><td>folder structure</td><td><span class="no">no</span> <span class="detail">&mdash; encrypted blob</span></td></tr>
+      <tr><td>passwords</td><td><span class="never">never</span> <span class="detail">&mdash; Argon2id hash only</span></td></tr>
+      <tr><td>master key</td><td><span class="never">never</span> <span class="detail">&mdash; encrypted, browser-only</span></td></tr>
+      <tr><td>usernames</td><td><span class="yes">yes</span></td></tr>
+      <tr><td>file count per user</td><td><span class="yes">yes</span> <span class="detail">&mdash; database row count</span></td></tr>
+      <tr><td>total storage</td><td><span class="yes">~approx</span> <span class="detail">&mdash; padding obscures per-file</span></td></tr>
+      <tr><td>upload time</td><td><span class="yes">year + week</span> <span class="detail">&mdash; coarsened</span></td></tr>
+    </table>
+  </section>
+
+  <!-- ────────────────────────── FEATURES ────────────────────────── -->
+  <section id="features">
+    <div class="section-label">02 &mdash; features</div>
+    <h2>what you get</h2>
+
+    <div class="features">
+      <div class="feature">
+        <div class="feature-name">end-to-end encryption</div>
+        <div class="feature-desc">AES-256-GCM everything. Per-file keys wrapped with your master key. The server is a dumb blob store.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">zero-knowledge metadata</div>
+        <div class="feature-desc">File names, types, sizes, dimensions, durations &mdash; encrypted into a single blob per file. The server can't read any of it.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">encrypted streaming</div>
+        <div class="feature-desc">Videos stream via MSE with chunk-level decryption in a Web Worker. No server-side decryption. Starts after one chunk.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">size fingerprinting resistance</div>
+        <div class="feature-desc">Every chunk padded to bucketed sizes with random data. Original file sizes are unrecoverable from disk.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">secure deletion</div>
+        <div class="feature-desc">3-pass random overwrite, fsync, then unlink. Best-effort on SSDs due to wear leveling.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">multi-user</div>
+        <div class="feature-desc">Isolated encrypted libraries. Each user gets their own master key. Admin panel for user management.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">encrypted folders</div>
+        <div class="feature-desc">Organize media into folders. The structure is encrypted &mdash; only you can see it.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">recovery codes</div>
+        <div class="feature-desc">256-bit code generated at account creation. If you lose your password, this is the only way back in. Lose both and your data is gone.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">single binary</div>
+        <div class="feature-desc">Go + embedded SQLite + embedded web UI. No runtime dependencies. No containers. No external services.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">self-hosted</div>
+        <div class="feature-desc">Runs on your hardware. A $6/month VPS is enough. Your data never touches a third-party service.</div>
+      </div>
     </div>
-</div>
+  </section>
 
-<hr>
+  <!-- ────────────────────────── CRYPTOGRAPHY ────────────────────────── -->
+  <section id="crypto">
+    <div class="section-label">03 &mdash; cryptography</div>
+    <h2>key hierarchy</h2>
 
-<!-- Zero knowledge -->
-<div class="section" id="privacy">
-    <div class="section-head">
-        <h2>Threat model</h2>
-        <p>The server is assumed compromised. An attacker with full disk and database access learns the following — and nothing else.</p>
+    <div class="key-tree">
+<span class="node">Password</span>
+<span class="branch"> ├─ </span><span class="algo">Argon2id</span><span class="arrow">(password, authSalt)</span>  <span class="branch">→</span>  <span class="result">password hash</span>  <span class="leaf">login verification</span>
+<span class="branch"> └─ </span><span class="algo">Argon2id</span><span class="arrow">(password, kdfSalt)</span>   <span class="branch">→</span>  <span class="result">KDF key</span>
+<span class="branch">     └─ </span><span class="algo">AES-256-GCM</span> <span class="arrow">decrypt</span>       <span class="branch">→</span>  <span class="result">master key</span>  <span class="leaf">browser memory only</span>
+<span class="branch">         ├─ </span><span class="leaf">wraps per-file encryption keys</span>
+<span class="branch">         ├─ </span><span class="leaf">wraps per-file thumbnail keys</span>
+<span class="branch">         ├─ </span><span class="leaf">encrypts metadata blobs</span>
+<span class="branch">         └─ </span><span class="leaf">encrypts folder structure</span>
     </div>
 
-    <div class="zk">
-        <div class="zk-col">
-            <h3>Server cannot see</h3>
-            <div class="zk-item"><span>File content</span> <span class="zk-encrypted">encrypted</span></div>
-            <div class="zk-item"><span>File name, type</span> <span class="zk-encrypted">encrypted</span></div>
-            <div class="zk-item"><span>File size, dimensions</span> <span class="zk-encrypted">encrypted + padded</span></div>
-            <div class="zk-item"><span>Thumbnails</span> <span class="zk-encrypted">encrypted</span></div>
-            <div class="zk-item"><span>Folder structure</span> <span class="zk-encrypted">encrypted</span></div>
-            <div class="zk-item"><span>Passwords</span> <span class="zk-encrypted">never stored</span></div>
-            <div class="zk-item"><span>Master key</span> <span class="zk-encrypted">never stored</span></div>
-        </div>
-        <div class="zk-col">
-            <h3>Server can see</h3>
-            <div class="zk-item"><span>Number of files</span> <span class="zk-visible">row count</span></div>
-            <div class="zk-item"><span>Approx. storage used</span> <span class="zk-visible">disk usage</span></div>
-            <div class="zk-item"><span>Upload time</span> <span class="zk-visible">year + week only</span></div>
-            <div class="zk-item"><span>Usernames</span> <span class="zk-visible">for auth</span></div>
-        </div>
+    <p>The master key never leaves the browser. It's also encrypted with a 256-bit recovery code
+    generated at account creation &mdash; shown once, never stored in plaintext.</p>
+
+    <h3>algorithms</h3>
+
+    <table class="algo-table">
+      <tr><td>password hashing</td><td>Argon2id &mdash; 3 iterations, 64 MB, 4 threads</td></tr>
+      <tr><td>master key derivation</td><td>Argon2id &mdash; separate salt from auth hash</td></tr>
+      <tr><td>file encryption</td><td>AES-256-GCM &mdash; chunk index as AAD (prevents reordering)</td></tr>
+      <tr><td>key wrapping</td><td>AES-256-GCM &mdash; random nonce per operation</td></tr>
+      <tr><td>session key</td><td>PBKDF2-SHA256 &mdash; 600,000 iterations</td></tr>
+      <tr><td>chunk padding</td><td>random fill to 1 / 2 / 4 / 8 / 16 MB buckets</td></tr>
+      <tr><td>deletion</td><td>3-pass random overwrite &rarr; fsync &rarr; unlink</td></tr>
+    </table>
+
+    <h3>on-disk format</h3>
+
+    <div class="terminal">
+      <code>
+<span class="comment">// encrypted chunk</span>
+<span class="output">[nonce: 12 bytes] [ciphertext] [GCM tag: 16 bytes]</span>
+<span class="comment">// chunk index bound as AAD — reorder and decryption fails</span>
+
+<span class="comment">// padded chunk on disk</span>
+<span class="output">[real length: 4B big-endian] [encrypted data] [random padding → bucket]</span>
+      </code>
+    </div>
+  </section>
+
+  <!-- ────────────────────────── STREAMING ────────────────────────── -->
+  <section id="streaming">
+    <div class="section-label">04 &mdash; streaming</div>
+    <h2>encrypted video playback</h2>
+
+    <p>Videos are remuxed to fragmented MP4 on upload &mdash; no re-encoding.
+    The CLI uses ffmpeg (handles everything: WEBM, MKV, AVI, etc.).
+    The browser uses mp4box.js (144 KB, no WASM, handles MP4/MOV).</p>
+
+    <div class="terminal">
+      <code>
+<span class="comment">upload:</span>
+<span class="output">  container → extract samples → fMP4 segments (~2s)</span>
+<span class="output">    → merge into ~1 MB chunks → AES-256-GCM encrypt</span>
+<span class="output">    → pad to bucket size → upload</span>
+
+<span class="comment">playback:</span>
+<span class="output">  fetch chunk (prefetch-ahead) → Web Worker decrypt</span>
+<span class="output">    → MediaSource Extensions → &lt;video&gt;</span>
+<span class="output">    → playback starts after first chunk</span>
+
+<span class="comment">download:</span>
+<span class="output">  fetch all chunks → decrypt → fMP4 → standard MP4</span>
+      </code>
+    </div>
+
+    <p>iOS Safari 17.1+ uses ManagedMediaSource. Non-remuxable formats
+    uploaded via browser are stored as-is and played via blob URL.</p>
+
+    <h3>formats</h3>
+    <p>
+      <span class="tag">MP4</span>
+      <span class="tag">MOV</span>
+      <span class="tag">WEBM</span>
+      <span class="tag">MKV</span>
+      <span class="tag">M4V</span>
+      <span class="tag">JPG</span>
+      <span class="tag">PNG</span>
+      <span class="tag">GIF</span>
+      <span class="tag">WEBP</span>
+    </p>
+    <p class="note">MP4 and MOV get streaming playback in the browser. CLI uploads via ffmpeg support all video formats with full streaming.</p>
+  </section>
+
+  <!-- ────────────────────────── TRADE-OFFS ────────────────────────── -->
+  <section id="tradeoffs">
+    <div class="section-label">05 &mdash; trade-offs</div>
+    <h2>choices</h2>
+
+    <div class="tradeoff">
+      <div class="tradeoff-title">chunk padding wastes disk space</div>
+      <p>A 3 MB file becomes 4 MB on disk. A 5 MB file becomes 8 MB. This is the cost of
+      preventing size fingerprinting. If an observer can correlate chunk sizes to known files,
+      encryption is weakened.</p>
+    </div>
+
+    <div class="tradeoff">
+      <div class="tradeoff-title">timestamps are coarsened</div>
+      <p>Upload dates are stored as year + week only. Precise timestamps reveal usage patterns.
+      That precision is deliberately discarded.</p>
+    </div>
+
+    <div class="tradeoff">
+      <div class="tradeoff-title">no server-side thumbnails</div>
+      <p>The server can't see your files, so it can't generate thumbnails.
+      The browser encrypts them before upload with a separate per-file key.</p>
+    </div>
+
+    <div class="tradeoff">
+      <div class="tradeoff-title">no recovery without codes</div>
+      <p>Lose your password and your recovery code? Your data is cryptographically gone.
+      No backdoor, no admin recovery, no "forgot password" email. This is correct
+      behavior for a zero-knowledge system.</p>
+    </div>
+
+    <div class="tradeoff">
+      <div class="tradeoff-title">SSD deletion is best-effort</div>
+      <p>The 3-pass overwrite works on HDDs. On SSDs, wear leveling may retain old data.
+      Full-disk encryption on the host closes this gap if it matters to your threat model.</p>
+    </div>
+  </section>
+
+  <!-- ────────────────────────── DEPLOY ────────────────────────── -->
+  <section id="deploy">
+    <div class="section-label">06 &mdash; deploy</div>
+    <h2>one command on a fresh VPS</h2>
+
+    <div class="deploy-block">
+      <div class="label">full setup</div>
+      <code>
+        git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel<br>
+        sudo ./setup.sh<br>
+        <span class="comment"># firewall, fail2ban, SSH hardening, TLS via Caddy,</span><br>
+        <span class="comment"># systemd service, daily backups — all handled</span>
+      </code>
+    </div>
+
+    <p>Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS. The script asks for your domain
+    (verified against server IP), an admin password, and optionally a personal SSH user.
+    Safe to re-run.</p>
+
+    <h3>manual</h3>
+
+    <div class="terminal">
+      <code>
+<span class="prompt">$ </span>git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel
+<span class="prompt">$ </span>bash build.sh
+<span class="prompt">$ </span><span class="flag">DARKREEL_ADMIN_PASSWORD</span>=<span class="string">'YourStr0ng!Password'</span> ./darkreel
+<span class="output">listening on :8080</span>
+<span class="comment"># put Caddy or nginx in front for TLS</span>
+      </code>
     </div>
 
     <div class="specs">
-        <div class="spec">
-            <div class="spec-label">Password hashing</div>
-            <div class="spec-value">Argon2id<br>3 iter, 64 MB, 4 threads</div>
-        </div>
-        <div class="spec">
-            <div class="spec-label">File encryption</div>
-            <div class="spec-value">AES-256-GCM<br>1 MB chunks, index as AAD</div>
-        </div>
-        <div class="spec">
-            <div class="spec-label">Key wrapping</div>
-            <div class="spec-value">AES-256-GCM<br>random nonce per op</div>
-        </div>
-        <div class="spec">
-            <div class="spec-label">Session key</div>
-            <div class="spec-value">PBKDF2-SHA256<br>600,000 iterations</div>
-        </div>
-        <div class="spec">
-            <div class="spec-label">Chunk storage</div>
-            <div class="spec-value">Bucketed 1/2/4/8/16 MB<br>random-padded</div>
-        </div>
-        <div class="spec">
-            <div class="spec-label">Secure deletion</div>
-            <div class="spec-value">3-pass overwrite<br>fsync, then unlink</div>
-        </div>
-    </div>
-</div>
-
-<hr>
-
-<!-- Quick start -->
-<div class="section" id="quickstart">
-    <div class="section-head">
-        <h2>Get running on a VPS</h2>
-        <p>One script, one binary, automatic HTTPS. No Docker, no Node.js, no external databases.</p>
+      <div class="spec"><div class="spec-value">~14MB</div><div class="spec-label">RAM usage</div></div>
+      <div class="spec"><div class="spec-value">1</div><div class="spec-label">binary</div></div>
+      <div class="spec"><div class="spec-value">0</div><div class="spec-label">dependencies</div></div>
+      <div class="spec"><div class="spec-value">$6/mo</div><div class="spec-label">min. VPS cost</div></div>
     </div>
 
-    <div class="steps">
-        <div class="step">
-            <div class="step-line"><div class="step-num">1</div><div class="step-connector"></div></div>
-            <div class="step-body">
-                <h3>Get a server</h3>
-                <p>Any Linux VPS. A $6/month DigitalOcean droplet or ~$4/month Hetzner VPS is more than enough. Point a domain at its IP.</p>
-            </div>
-        </div>
-        <div class="step">
-            <div class="step-line"><div class="step-num">2</div><div class="step-connector"></div></div>
-            <div class="step-body">
-                <h3>Run setup</h3>
-                <p>SSH in and run three commands. The script handles system updates, firewall, fail2ban, SSH hardening, Go, Caddy (automatic TLS), systemd service, and daily database backups.</p>
-                <div class="terminal">
-                    <div class="terminal-bar">
-                        <div class="terminal-dot"></div>
-                        <div class="terminal-dot"></div>
-                        <div class="terminal-dot"></div>
-                        <div class="terminal-title">root@vps ~</div>
-                    </div>
-                    <div class="terminal-body">
-<span class="t-prompt">$</span> <span class="t-cmd">git clone</span> <span class="t-arg">https://github.com/baileywjohnson/darkreel.git</span>
-<span class="t-prompt">$</span> <span class="t-cmd">cd</span> <span class="t-arg">darkreel</span>
-<span class="t-prompt">$</span> <span class="t-cmd">sudo</span> <span class="t-arg">./setup.sh</span>
-<span class="t-output">
-[+] Domain: media.example.com
-[+] DNS check passed: media.example.com -> 137.184.86.254
-[+] System updated
-[+] UFW firewall enabled (SSH, HTTP, HTTPS only)
-[+] fail2ban enabled
-[+] Caddy configured (automatic HTTPS via Let's Encrypt)
-[+] Daily database backup configured (3 AM, 7-day retention)
+    <h3>configuration</h3>
 
-<span style="color: var(--green); font-weight: 700;">Darkreel is running!</span>
-</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="step">
-            <div class="step-line"><div class="step-num">3</div><div class="step-connector"></div></div>
-            <div class="step-body">
-                <h3>Save your recovery code</h3>
-                <p>The script displays a 256-bit recovery code. Save it offline. It's the only way to recover your data if you forget your password. No one — including the server admin — can decrypt your files without it.</p>
-            </div>
-        </div>
-        <div class="step">
-            <div class="step-line"><div class="step-num">4</div></div>
-            <div class="step-body">
-                <h3>Upload</h3>
-                <p>Open your domain, log in, and start uploading. Photos and videos are encrypted in your browser before they ever reach the server.</p>
-            </div>
-        </div>
+    <div class="terminal">
+      <code>
+<span class="prompt">$ </span>./darkreel <span class="flag">-addr</span> :8080 <span class="flag">-data</span> ./data
+
+<span class="comment"># Environment variables</span>
+<span class="flag">DARKREEL_ADMIN_USERNAME</span>=admin         <span class="comment"># first-run only</span>
+<span class="flag">DARKREEL_ADMIN_PASSWORD</span>=...           <span class="comment"># required on first run</span>
+<span class="flag">PERSIST_SESSION</span>=false                 <span class="comment"># sessionStorage cache (less secure)</span>
+<span class="flag">ALLOW_REGISTRATION</span>=false              <span class="comment"># public registration</span>
+      </code>
+    </div>
+  </section>
+
+  <!-- ────────────────────────── API ────────────────────────── -->
+  <section id="api">
+    <div class="section-label">07 &mdash; api</div>
+    <h2>endpoints</h2>
+    <p>All endpoints except <code>/health</code> and <code>/api/config</code> require a JWT.
+    JWTs contain user ID, session ID, and admin flag.</p>
+
+    <div class="api-group">
+      <div class="api-group-title">auth</div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/register</span><span class="api-desc">register, returns recovery code</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/login</span><span class="api-desc">returns JWT + encrypted master key</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/logout</span><span class="api-desc">immediate session invalidation</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/recover</span><span class="api-desc">reset password with recovery code</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/change-password</span><span class="api-desc">re-encrypts master key</span></div>
+      <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/auth/account</span><span class="api-desc">delete account and all media</span></div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/config</span><span class="api-desc">server config (no auth)</span></div>
     </div>
 
-    <div class="req-row" style="margin-top: 3.5rem;">
-        <div class="req-col">
-            <h3>Minimum</h3>
-            <div class="req-line"><span>CPU</span> <span>1 vCPU</span></div>
-            <div class="req-line"><span>RAM</span> <span>512 MB</span></div>
-            <div class="req-line"><span>Disk</span> <span>10 GB</span></div>
-            <div class="req-line"><span>OS</span> <span>Linux amd64/arm64</span></div>
-        </div>
-        <div class="req-col">
-            <h3>Recommended</h3>
-            <div class="req-line"><span>CPU</span> <span>2+ vCPU</span></div>
-            <div class="req-line"><span>RAM</span> <span>1+ GB</span></div>
-            <div class="req-line"><span>Disk</span> <span>as needed</span></div>
-            <div class="req-line"><span>OS</span> <span>Ubuntu 22.04+</span></div>
-        </div>
-        <div class="req-col">
-            <h3>Estimated cost</h3>
-            <div class="req-line"><span>DigitalOcean</span> <span>$6/mo</span></div>
-            <div class="req-line"><span>Hetzner</span> <span>~$4/mo</span></div>
-            <div class="req-line"><span>Domain</span> <span>~$10/yr</span></div>
-            <div class="req-line"><span>TLS</span> <span>free</span></div>
-        </div>
-    </div>
-</div>
-
-<hr>
-
-<!-- Security -->
-<div class="section" id="security">
-    <div class="section-head">
-        <h2>Hardened by default</h2>
-        <p>The setup script doesn't just install Darkreel — it locks down the entire server.</p>
+    <div class="api-group">
+      <div class="api-group-title">media</div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media</span><span class="api-desc">list media (paginated)</span></div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/:id</span><span class="api-desc">get metadata</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/media/upload</span><span class="api-desc">multipart: metadata + thumbnail + chunks</span></div>
+      <div class="api-route"><span class="api-method patch">PATCH</span><span class="api-path">/api/media/:id</span><span class="api-desc">update metadata</span></div>
+      <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/media/:id</span><span class="api-desc">secure delete (3-pass shred)</span></div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/:id/chunk/:idx</span><span class="api-desc">download encrypted chunk</span></div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/:id/thumbnail</span><span class="api-desc">download encrypted thumbnail</span></div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/:id/download</span><span class="api-desc">all chunks concatenated</span></div>
     </div>
 
-    <div class="hardening">
-        <div class="h-item"><span class="h-check">+</span> <span><strong>Automatic TLS</strong> — Caddy + Let's Encrypt, zero config</span></div>
-        <div class="h-item"><span class="h-check">+</span> <span><strong>Firewall</strong> — UFW: SSH, 80, 443 only</span></div>
-        <div class="h-item"><span class="h-check">+</span> <span><strong>fail2ban</strong> — auto-bans brute force SSH</span></div>
-        <div class="h-item"><span class="h-check">+</span> <span><strong>Rate limiting</strong> — 5 auth attempts/min per IP</span></div>
-        <div class="h-item"><span class="h-check">+</span> <span><strong>Auto OS updates</strong> — unattended-upgrades</span></div>
-        <div class="h-item"><span class="h-check">+</span> <span><strong>Process sandbox</strong> — NoNewPrivileges, ProtectSystem</span></div>
-        <div class="h-item"><span class="h-check">+</span> <span><strong>SSH hardened</strong> — no root login, key-only auth</span></div>
-        <div class="h-item"><span class="h-check">+</span> <span><strong>Session validation</strong> — logout is immediate</span></div>
-        <div class="h-item"><span class="h-check">+</span> <span><strong>Daily backups</strong> — SQLite snapshots, 7-day retention</span></div>
-        <div class="h-item"><span class="h-check">+</span> <span><strong>Auto-updates</strong> — optional, checksum-verified releases</span></div>
-        <div class="h-item"><span class="h-check">+</span> <span><strong>SRI hashes</strong> — frontend tamper protection</span></div>
-        <div class="h-item"><span class="h-check">+</span> <span><strong>Security headers</strong> — CSP, HSTS, X-Frame-Options</span></div>
+    <div class="api-group">
+      <div class="api-group-title">folders</div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/folders</span><span class="api-desc">get encrypted folder tree</span></div>
+      <div class="api-route"><span class="api-method put">PUT</span><span class="api-path">/api/folders</span><span class="api-desc">save encrypted folder tree</span></div>
     </div>
-</div>
 
-<hr>
+    <div class="api-group">
+      <div class="api-group-title">admin</div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/admin/users</span><span class="api-desc">list users</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/admin/users</span><span class="api-desc">create user</span></div>
+      <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/admin/users/:id</span><span class="api-desc">delete user + all media</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/admin/registration</span><span class="api-desc">toggle registration</span></div>
+    </div>
 
-<!-- Other features -->
-<div class="section">
-    <div class="section-head">
-        <h2>Also</h2>
+    <div class="api-group">
+      <div class="api-group-title">health</div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/health</span><span class="api-desc">→ {"status":"ok"}</span></div>
     </div>
-    <div class="hardening" style="margin-top: 0;">
-        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>Multi-user</strong> — isolated encrypted libraries, admin panel</span></div>
-        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>Encrypted folders</strong> — only you see the structure</span></div>
-        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>Recovery codes</strong> — 256-bit, shown once, your last resort</span></div>
-        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>Single binary</strong> — Go + embedded frontend, no runtime deps</span></div>
-        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>SQLite</strong> — no Postgres, no Redis, no external services</span></div>
-        <div class="h-item"><span class="h-check" style="color: var(--purple);">+</span> <span><strong>Upload to 50 GB</strong> — chunked, no size surprises</span></div>
-    </div>
-</div>
+  </section>
 
-<hr>
+  <!-- ────────────────────────── SETUP DETAILS ────────────────────────── -->
+  <section id="setup-details">
+    <div class="section-label">08 &mdash; operations</div>
+    <h2>backups</h2>
 
-<!-- Ecosystem -->
-<div class="section">
-    <div class="section-head">
-        <h2>Part of a toolkit</h2>
+    <p><strong>The database is load-bearing.</strong> Every encrypted file key lives in
+    <code>darkreel.db</code>. Lose the database and every file on disk becomes permanently
+    undecryptable &mdash; even with the correct password.</p>
+
+    <div class="terminal">
+      <code>
+<span class="comment"># hot backup (server stays running, WAL-safe)</span>
+<span class="prompt">$ </span>sqlite3 /var/lib/darkreel/darkreel.db <span class="string">".backup /path/to/backup.db"</span>
+
+<span class="comment"># full backup (stop for consistency)</span>
+<span class="prompt">$ </span>sudo systemctl stop darkreel
+<span class="prompt">$ </span>tar czf darkreel-backup.tar.gz /var/lib/darkreel/
+<span class="prompt">$ </span>sudo systemctl start darkreel
+      </code>
     </div>
-    <div class="eco-grid">
-        <a href="https://github.com/baileywjohnson/darkreel-cli" class="eco-card">
-            <h3>darkreel-cli</h3>
-            <p>Command-line upload tool. Client-side encryption, batch uploads, thumbnail generation. Use it to script uploads or integrate with other tools.</p>
-        </a>
-        <a href="https://github.com/baileywjohnson/ppvda" class="eco-card">
-            <h3>ppvda</h3>
-            <p>Privacy-focused video downloader. Extracts videos from web pages via headless Chromium, downloads through Mullvad VPN, encrypts and uploads to Darkreel.</p>
-        </a>
+
+    <p>Backups are safe to store off-site &mdash; media is encrypted on disk, keys are encrypted
+    in the database. An attacker with a backup can't decrypt anything without a user's password.</p>
+
+    <h2>upgrading</h2>
+
+    <p>Migrations run automatically on startup.</p>
+
+    <div class="terminal">
+      <code>
+<span class="prompt">$ </span>cd /opt/darkreel && git pull && bash build.sh
+<span class="prompt">$ </span>sudo cp darkreel /usr/local/bin/darkreel
+<span class="prompt">$ </span>sudo systemctl restart darkreel
+
+<span class="comment"># or use the auto-updater (checks GitHub releases, verifies SHA-256)</span>
+<span class="prompt">$ </span>sudo ./update.sh <span class="flag">--install</span>    <span class="comment"># daily cron at 4 AM</span>
+      </code>
     </div>
-</div>
+
+    <h2>system requirements</h2>
+
+    <div class="specs">
+      <div class="spec"><div class="spec-value">1</div><div class="spec-label">vCPU min</div></div>
+      <div class="spec"><div class="spec-value">512MB</div><div class="spec-label">RAM min</div></div>
+      <div class="spec"><div class="spec-value">10GB</div><div class="spec-label">disk min</div></div>
+      <div class="spec"><div class="spec-value">amd64</div><div class="spec-label">or arm64</div></div>
+    </div>
+
+    <h2>security hardening</h2>
+
+    <p>The setup script handles all of this automatically. Checklist for deploying manually:</p>
+
+    <div class="terminal">
+      <code>
+<span class="output">TLS termination</span>       <span class="comment">Caddy or nginx — darkreel doesn't handle TLS</span>
+<span class="output">UFW firewall</span>          <span class="comment">SSH, HTTP, HTTPS only</span>
+<span class="output">fail2ban</span>              <span class="comment">auto-ban after failed SSH attempts</span>
+<span class="output">SSH hardening</span>         <span class="comment">root login disabled, key-only auth</span>
+<span class="output">systemd sandbox</span>       <span class="comment">NoNewPrivileges, ProtectSystem=strict, PrivateTmp</span>
+<span class="output">dedicated user</span>        <span class="comment">darkreel user with minimal permissions</span>
+<span class="output">SRI hashes</span>            <span class="comment">frontend JS/CSS integrity verified by browser</span>
+<span class="output">rate limiting</span>         <span class="comment">5 auth attempts/min/IP</span>
+<span class="output">security headers</span>      <span class="comment">nosniff, DENY framing, no-referrer, CSP, HSTS</span>
+<span class="output">COOP/COEP</span>             <span class="comment">defense-in-depth for SharedArrayBuffer</span>
+      </code>
+    </div>
+  </section>
+
+  <!-- ────────────────────────── RELATED ────────────────────────── -->
+  <section id="related">
+    <div class="section-label">09 &mdash; related</div>
+    <h2>ecosystem</h2>
+    <p>
+      <a href="https://github.com/baileywjohnson/darkreel-cli"><strong>darkreel-cli</strong></a>
+      &mdash; command-line upload tool. ffmpeg-based remuxing for all video formats.
+    </p>
+    <p>
+      <a href="https://github.com/baileywjohnson/ppvda"><strong>PPVDA</strong></a>
+      &mdash; privacy-focused video downloader with Darkreel integration.
+    </p>
+  </section>
+
+  <!-- ────────────────────────── FOOTER ────────────────────────── -->
+  <footer class="footer">
+    <div class="footer-links">
+      <a href="https://github.com/baileywjohnson/darkreel">source</a>
+      <a href="https://github.com/baileywjohnson/darkreel/issues">issues</a>
+      <a href="https://github.com/baileywjohnson/darkreel/releases">releases</a>
+    </div>
+    <div class="footer-copy">MIT &mdash; darkreel</div>
+  </footer>
 
 </div>
 
-<footer>
-    <div class="container">
-        <div class="footer-links">
-            <a href="https://github.com/baileywjohnson/darkreel">GitHub</a>
-            <a href="https://github.com/baileywjohnson/darkreel/issues">Issues</a>
-            <a href="https://github.com/baileywjohnson/darkreel/blob/main/LICENSE">MIT License</a>
-        </div>
-        <div class="footer-copy">Darkreel — open source, end-to-end encrypted media storage.</div>
-    </div>
-</footer>
+<nav class="sidebar-nav" id="sidebar">
+  <a href="#threat-model">threat model</a>
+  <a href="#features">features</a>
+  <a href="#crypto">cryptography</a>
+  <a href="#streaming">streaming</a>
+  <a href="#tradeoffs">trade-offs</a>
+  <a href="#deploy">deploy</a>
+  <a href="#api">api</a>
+  <a href="#setup-details">operations</a>
+  <a href="#related">related</a>
+</nav>
 
+<script>
+(function() {
+  const sidebar = document.getElementById('sidebar');
+  const links = sidebar.querySelectorAll('a');
+  const sections = Array.from(links).map(a => document.querySelector(a.getAttribute('href')));
+
+  function update() {
+    const show = window.scrollY > 400;
+    sidebar.classList.toggle('visible', show);
+
+    if (!show) return;
+
+    let current = 0;
+    const atBottom = (window.innerHeight + window.scrollY) >= document.body.scrollHeight - 50;
+    if (atBottom) {
+      current = sections.length - 1;
+    } else {
+      for (let i = 0; i < sections.length; i++) {
+        if (sections[i].getBoundingClientRect().top <= 200) current = i;
+      }
+    }
+    links.forEach((a, i) => a.classList.toggle('active', i === current));
+  }
+
+  window.addEventListener('scroll', update, { passive: true });
+  update();
+})();
+</script>
 </body>
 </html>
