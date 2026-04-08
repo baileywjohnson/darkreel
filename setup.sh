@@ -364,10 +364,17 @@ if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
     echo -e "  ${YELLOW}Save this code somewhere safe — it is the only way to regain${NC}"
     echo -e "  ${YELLOW}access to your encrypted data if you forget your password.${NC}"
     echo ""
-    echo -e "  The code is in ${RC_FILE}"
-    echo -e "  ${BOLD}Delete that file after you've saved the code:${NC}"
-    echo -e "  sudo rm ${RC_FILE}"
-    echo ""
+    read -rp "  Have you saved the recovery code? Delete it from disk now? [y/N]: " delete_rc
+    if [ "$delete_rc" = "y" ] || [ "$delete_rc" = "Y" ]; then
+      rm -f "$RC_FILE"
+      info "Recovery code file deleted from disk"
+    else
+      echo ""
+      echo -e "  The code is in ${RC_FILE}"
+      echo -e "  ${BOLD}Delete that file after you've saved the code:${NC}"
+      echo -e "  sudo rm ${RC_FILE}"
+      echo ""
+    fi
   else
     echo -e "  ${YELLOW}IMPORTANT:${NC} Check the logs for your recovery code:"
     echo -e "  ${BOLD}sudo journalctl -u darkreel --no-pager | grep -i recovery${NC}"
