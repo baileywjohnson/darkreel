@@ -14,14 +14,12 @@ jobs:
           - goos: linux
             goarch: arm64
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -34,7 +32,7 @@ jobs:
           go build -trimpath -ldflags="-s -w" -o darkreel-${{ matrix.goos }}-${{ matrix.goarch }} .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: darkreel-${{ matrix.goos }}-${{ matrix.goarch }}
           path: darkreel-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -42,13 +40,11 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
       contents: write
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
 
       - name: Create checksums and sign
         env:

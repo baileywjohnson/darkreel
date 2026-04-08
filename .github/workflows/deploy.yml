@@ -7,14 +7,12 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -43,11 +41,15 @@ jobs:
           VPS_HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          # Use known host key from secrets to prevent MITM on first connect
+          # Use known host key from secrets to prevent MITM on first connect.
+          # The secret value should be the full ssh-keyscan output line, e.g.:
+          #   hostname ssh-ed25519 AAAAC3...
           echo "$VPS_HOST_KEY" >> ~/.ssh/known_hosts
-          SSH_OPTS="-o StrictHostKeyChecking=yes -i ~/.ssh/deploy_key"
+          chmod 644 ~/.ssh/known_hosts
+          SSH_OPTS="-o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -i ~/.ssh/deploy_key"
 
           # Copy binary, hash, and signature to VPS
           scp $SSH_OPTS darkreel darkreel.sha256 darkreel.sig deploy@"$VPS_HOST":~/
