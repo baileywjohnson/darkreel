@@ -14,16 +14,10 @@ func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := ""
 
-		// Check Authorization header first
+		// Only accept tokens from the Authorization header (not cookies)
+		// to prevent CSRF attacks on state-changing endpoints.
 		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
 			tokenStr = strings.TrimPrefix(auth, "Bearer ")
-		}
-
-		// Fall back to cookie
-		if tokenStr == "" {
-			if cookie, err := r.Cookie("token"); err == nil {
-				tokenStr = cookie.Value
-			}
 		}
 
 		if tokenStr == "" {

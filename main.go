@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/baileywjohnson/darkreel/internal/auth"
 	"github.com/baileywjohnson/darkreel/internal/db"
@@ -81,6 +84,9 @@ func main() {
 		log.Printf("Cleaned up %d orphaned media directories", removed)
 	}
 
+	// Start session cleanup goroutine (removes expired sessions every minute)
+	auth.Sessions.StartCleanup()
+
 	srv := &server.Server{
 		DB:                database,
 		Storage:           store,
@@ -90,17 +96,21 @@ func main() {
 		AllowRegistration: os.Getenv("ALLOW_REGISTRATION") == "true", // default false
 	}
 
-	// Graceful shutdown
+	// Graceful shutdown: drain in-flight requests, then close DB
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
-		log.Println("Shutting down...")
-		database.Close()
-		os.Exit(0)
+		log.Println("Shutting down — draining connections...")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("HTTP shutdown error: %v", err)
+		}
 	}()
 
-	if err := srv.Run(); err != nil {
+	if err := srv.Run(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+	log.Println("Shutdown complete")
 }

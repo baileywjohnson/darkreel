@@ -668,6 +668,7 @@ a:hover { text-decoration: underline; }
       <a href="#deploy">deploy</a>
       <a href="#api">api</a>
       <a href="#setup-details">operations</a>
+      <a href="#hardening">hardening</a>
       <a href="#related">related</a>
     </nav>
   </header>
@@ -772,15 +773,19 @@ a:hover { text-decoration: underline; }
 <span class="node">Password</span>
 <span class="branch"> ├─ </span><span class="algo">Argon2id</span><span class="arrow">(password, authSalt)</span>  <span class="branch">→</span>  <span class="result">password hash</span>  <span class="leaf">login verification</span>
 <span class="branch"> └─ </span><span class="algo">Argon2id</span><span class="arrow">(password, kdfSalt)</span>   <span class="branch">→</span>  <span class="result">KDF key</span>
-<span class="branch">     └─ </span><span class="algo">AES-256-GCM</span> <span class="arrow">decrypt</span>       <span class="branch">→</span>  <span class="result">master key</span>  <span class="leaf">browser memory only</span>
-<span class="branch">         ├─ </span><span class="leaf">wraps per-file encryption keys</span>
-<span class="branch">         ├─ </span><span class="leaf">wraps per-file thumbnail keys</span>
-<span class="branch">         ├─ </span><span class="leaf">encrypts metadata blobs</span>
-<span class="branch">         └─ </span><span class="leaf">encrypts folder structure</span>
+<span class="branch">     └─ </span><span class="algo">AES-256-GCM</span> <span class="arrow">decrypt</span> <span class="leaf">(AAD: userID)</span>  <span class="branch">→</span>  <span class="result">master key</span>  <span class="leaf">browser memory only</span>
+<span class="branch">         ├─ </span><span class="leaf">wraps per-file encryption keys</span>    <span class="leaf">(AAD: mediaID)</span>
+<span class="branch">         ├─ </span><span class="leaf">wraps per-file thumbnail keys</span>     <span class="leaf">(AAD: mediaID)</span>
+<span class="branch">         ├─ </span><span class="leaf">encrypts metadata blobs</span>           <span class="leaf">(AAD: mediaID)</span>
+<span class="branch">         └─ </span><span class="leaf">encrypts folder structure</span>         <span class="leaf">(AAD: userID)</span>
     </div>
 
     <p>The master key never leaves the browser. It's also encrypted with a 256-bit recovery code
-    generated at account creation &mdash; shown once, never stored in plaintext.</p>
+    (AAD: userID) generated at account creation &mdash; shown once, never stored in plaintext.</p>
+
+    <p>All block-level encryption uses Additional Authenticated Data (AAD) to bind ciphertext
+    to its context. An attacker with database access cannot swap encrypted keys or metadata between
+    users or media items &mdash; decryption fails if the AAD doesn't match.</p>
 
     <h3>algorithms</h3>
 
@@ -788,7 +793,8 @@ a:hover { text-decoration: underline; }
       <tr><td>password hashing</td><td>Argon2id &mdash; 3 iterations, 64 MB, 4 threads</td></tr>
       <tr><td>master key derivation</td><td>Argon2id &mdash; separate salt from auth hash</td></tr>
       <tr><td>file encryption</td><td>AES-256-GCM &mdash; chunk index as AAD (prevents reordering)</td></tr>
-      <tr><td>key wrapping</td><td>AES-256-GCM &mdash; random nonce per operation</td></tr>
+      <tr><td>key wrapping</td><td>AES-256-GCM &mdash; random nonce, context-bound AAD (user ID or media ID)</td></tr>
+      <tr><td>metadata encryption</td><td>AES-256-GCM &mdash; media ID as AAD (prevents ciphertext substitution)</td></tr>
       <tr><td>session key</td><td>PBKDF2-SHA256 &mdash; 600,000 iterations</td></tr>
       <tr><td>chunk padding</td><td>random fill to 1 / 2 / 4 / 8 / 16 MB buckets</td></tr>
       <tr><td>deletion</td><td>3-pass random overwrite &rarr; fsync &rarr; unlink</td></tr>
@@ -886,7 +892,16 @@ a:hover { text-decoration: underline; }
     <div class="tradeoff">
       <div class="tradeoff-title">SSD deletion is best-effort</div>
       <p>The 3-pass overwrite works on HDDs. On SSDs, wear leveling may retain old data.
-      Full-disk encryption on the host closes this gap if it matters to your threat model.</p>
+      LUKS full-disk encryption on the data partition closes this gap &mdash; see
+      <a href="#hardening">hardening</a>.</p>
+    </div>
+
+    <div class="tradeoff">
+      <div class="tradeoff-title">session persistence is a trade-off</div>
+      <p>With <code>PERSIST_SESSION=true</code> (the default), the master key is cached in
+      sessionStorage so page refreshes don't require re-login. A tight CSP and SRI on all
+      scripts make XSS difficult, but a malicious browser extension could read it. Set
+      <code>PERSIST_SESSION=false</code> to keep the key in memory only.</p>
     </div>
   </section>
 
@@ -937,7 +952,7 @@ a:hover { text-decoration: underline; }
 <span class="comment"># Environment variables</span>
 <span class="flag">DARKREEL_ADMIN_USERNAME</span>=admin         <span class="comment"># first-run only</span>
 <span class="flag">DARKREEL_ADMIN_PASSWORD</span>=...           <span class="comment"># required on first run</span>
-<span class="flag">PERSIST_SESSION</span>=false                 <span class="comment"># sessionStorage cache (less secure)</span>
+<span class="flag">PERSIST_SESSION</span>=true                  <span class="comment"># master key in sessionStorage (default: on)</span>
 <span class="flag">ALLOW_REGISTRATION</span>=false              <span class="comment"># public registration</span>
       </code>
     </div>
@@ -956,7 +971,7 @@ a:hover { text-decoration: underline; }
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/login</span><span class="api-desc">returns JWT + encrypted master key</span></div>
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/logout</span><span class="api-desc">immediate session invalidation</span></div>
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/recover</span><span class="api-desc">reset password with recovery code</span></div>
-      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/change-password</span><span class="api-desc">re-encrypts master key</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/change-password</span><span class="api-desc">re-encrypts master key, invalidates all other sessions</span></div>
       <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/auth/account</span><span class="api-desc">delete account and all media</span></div>
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/config</span><span class="api-desc">server config (no auth)</span></div>
     </div>
@@ -1053,17 +1068,65 @@ a:hover { text-decoration: underline; }
 <span class="output">SSH hardening</span>         <span class="comment">root login disabled, key-only auth</span>
 <span class="output">systemd sandbox</span>       <span class="comment">NoNewPrivileges, ProtectSystem=strict, PrivateTmp</span>
 <span class="output">dedicated user</span>        <span class="comment">darkreel user with minimal permissions</span>
-<span class="output">SRI hashes</span>            <span class="comment">frontend JS/CSS integrity verified by browser</span>
-<span class="output">rate limiting</span>         <span class="comment">5 auth attempts/min/IP</span>
-<span class="output">security headers</span>      <span class="comment">nosniff, DENY framing, no-referrer, CSP, HSTS</span>
+<span class="output">SRI hashes</span>            <span class="comment">all JS/CSS integrity-verified, including dynamic loads</span>
+<span class="output">rate limiting</span>         <span class="comment">5 auth attempts/min/IP (X-Real-IP behind proxy)</span>
+<span class="output">security headers</span>      <span class="comment">CSP, HSTS, Permissions-Policy, Cache-Control: no-store</span>
 <span class="output">COOP/COEP</span>             <span class="comment">defense-in-depth for SharedArrayBuffer</span>
+<span class="output">graceful shutdown</span>     <span class="comment">drains in-flight requests before closing database</span>
+<span class="output">session expiry</span>        <span class="comment">24h max, periodic cleanup of stale sessions</span>
+<span class="output">password change</span>       <span class="comment">all other sessions invalidated immediately</span>
+<span class="output">admin re-check</span>        <span class="comment">admin status verified from DB on every admin request</span>
+<span class="output">timing mitigation</span>    <span class="comment">recovery endpoint does dummy work for unknown users</span>
       </code>
     </div>
   </section>
 
+  <!-- ────────────────────────── HARDENING ────────────────────────── -->
+  <section id="hardening">
+    <div class="section-label">09 &mdash; hardening</div>
+    <h2>disk encryption (LUKS)</h2>
+
+    <p>The 3-pass secure deletion is unreliable on SSDs due to wear leveling. If your threat
+    model includes physical disk seizure or forensic recovery, encrypt the data partition:</p>
+
+    <div class="terminal">
+      <code>
+<span class="comment"># set up LUKS before installing Darkreel</span>
+<span class="prompt">$ </span>sudo cryptsetup luksFormat /dev/sdX
+<span class="prompt">$ </span>sudo cryptsetup open /dev/sdX darkreel-data
+<span class="prompt">$ </span>sudo mkfs.ext4 /dev/mapper/darkreel-data
+<span class="prompt">$ </span>sudo mount /dev/mapper/darkreel-data /var/lib/darkreel
+      </code>
+    </div>
+
+    <p>With LUKS, all data at rest is encrypted at the block level. Shredding becomes
+    irrelevant &mdash; destroying the LUKS key makes all data unrecoverable regardless
+    of SSD wear leveling. Recommended for production VPS deployments.</p>
+
+    <h2>session persistence</h2>
+
+    <p><code>PERSIST_SESSION</code> (default: <code>true</code>) controls whether the master
+    encryption key is cached in <code>sessionStorage</code> between page refreshes.</p>
+
+    <div class="terminal">
+      <code>
+<span class="output">PERSIST_SESSION=true</span>    <span class="comment">master key survives refresh (default)</span>
+<span class="output">                       </span>    <span class="comment">XSS or malicious extension could read it</span>
+<span class="output">                       </span>    <span class="comment">CSP + SRI make XSS difficult, not impossible</span>
+
+<span class="output">PERSIST_SESSION=false</span>   <span class="comment">key only in JS memory, cleared on refresh</span>
+<span class="output">                       </span>    <span class="comment">users re-enter password on every page load</span>
+<span class="output">                       </span>    <span class="comment">more secure, less convenient</span>
+      </code>
+    </div>
+
+    <p>To disable: set <code>PERSIST_SESSION=false</code> in <code>/etc/darkreel/env</code>
+    and restart the service.</p>
+  </section>
+
   <!-- ────────────────────────── RELATED ────────────────────────── -->
   <section id="related">
-    <div class="section-label">09 &mdash; related</div>
+    <div class="section-label">10 &mdash; related</div>
     <h2>ecosystem</h2>
     <p>
       <a href="https://github.com/baileywjohnson/darkreel-cli"><strong>darkreel-cli</strong></a>
@@ -1096,6 +1159,7 @@ a:hover { text-decoration: underline; }
   <a href="#deploy">deploy</a>
   <a href="#api">api</a>
   <a href="#setup-details">operations</a>
+  <a href="#hardening">hardening</a>
   <a href="#related">related</a>
 </nav>
 

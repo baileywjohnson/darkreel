@@ -21,6 +21,7 @@
   <a href="#features">Features</a> •
   <a href="#cryptography">Cryptography</a> •
   <a href="#deploy">Deploy</a> •
+  <a href="#hardening">Hardening</a> •
   <a href="#api">API</a>
 </p>
 
@@ -85,14 +86,14 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 Password
  ├─ Argon2id(password, authSalt)  →  password hash  (login verification)
  └─ Argon2id(password, kdfSalt)   →  KDF key
-     └─ AES-256-GCM decrypt       →  master key     (browser memory only)
-         ├─ wraps per-file encryption keys
-         ├─ wraps per-file thumbnail keys
-         ├─ encrypts metadata blobs
-         └─ encrypts folder structure
+     └─ AES-256-GCM decrypt (AAD: userID)  →  master key  (browser memory only)
+         ├─ wraps per-file encryption keys    (AAD: mediaID)
+         ├─ wraps per-file thumbnail keys     (AAD: mediaID)
+         ├─ encrypts metadata blobs           (AAD: mediaID)
+         └─ encrypts folder structure         (AAD: userID)
 ```
 
-The master key never leaves the browser. It's also encrypted with a 256-bit recovery code generated at account creation -- shown once, never stored in plaintext.
+The master key never leaves the browser. It's also encrypted with a 256-bit recovery code (AAD: userID) generated at account creation -- shown once, never stored in plaintext.
 
 ### Algorithms
 
@@ -101,10 +102,22 @@ The master key never leaves the browser. It's also encrypted with a 256-bit reco
 | Password hashing | Argon2id | 3 iterations, 64 MB memory, 4 threads |
 | Master key derivation | Argon2id | Separate salt from auth hash |
 | File encryption | AES-256-GCM | Chunk index as AAD (prevents reordering) |
-| Key wrapping | AES-256-GCM | Random nonce per operation |
+| Key wrapping | AES-256-GCM | Random nonce, context-bound AAD (user ID or media ID) |
+| Metadata encryption | AES-256-GCM | Media ID as AAD (prevents ciphertext substitution) |
 | Session key | PBKDF2-SHA256 | 600,000 iterations |
 | Chunk padding | Random fill | Bucketed to 1/2/4/8/16 MB per chunk |
 | Secure deletion | 3-pass shred | Random overwrite, fsync, then unlink |
+
+### AAD binding
+
+All block-level encryption uses Additional Authenticated Data (AAD) to cryptographically bind ciphertext to its context:
+
+- **Master key wrapping** (KDF key, session key, recovery code) uses the **user ID** as AAD
+- **File key and thumbnail key wrapping** uses the **media ID** as AAD
+- **Metadata encryption** uses the **media ID** as AAD
+- **Folder tree encryption** uses the **user ID** as AAD
+
+This prevents ciphertext substitution attacks -- an attacker with database access cannot swap encrypted keys or metadata between users or media items. Decryption will fail if the AAD doesn't match.
 
 ### On-disk format
 
@@ -150,7 +163,7 @@ These are deliberate:
 
 - **No recovery without codes.** Lose your password and your recovery code? Your data is cryptographically gone. No backdoor, no admin recovery, no "forgot password" email. This is correct behavior for a zero-knowledge system.
 
-- **SSD deletion is best-effort.** The 3-pass overwrite works on HDDs. On SSDs, wear leveling may retain old data. Full-disk encryption on the host (LUKS, etc.) closes this gap if it matters to your threat model.
+- **SSD deletion is best-effort.** The 3-pass overwrite works on HDDs. On SSDs, wear leveling may retain old data. See [Disk encryption (LUKS)](#disk-encryption-luks) for the recommended mitigation.
 
 ## Deploy
 
@@ -182,7 +195,7 @@ Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOc
 
 1. Open `https://your-domain.com` and log in
 2. The setup script will display your **recovery code** -- save it somewhere safe
-3. Delete the recovery code file: `sudo rm /var/lib/darkreel/RECOVERY_CODE`
+3. The script will offer to delete the recovery code file from disk automatically. If you skip this, delete it manually: `sudo rm /var/lib/darkreel/RECOVERY_CODE`
 4. SSH in as your personal user going forward: `ssh yourname@your-server-ip`
 
 The recovery code is the only way to regain access to your encrypted data if you forget your password. No one -- including the server admin -- can recover it without this code.
@@ -211,7 +224,7 @@ DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 |----------|---------|-------------|
 | `DARKREEL_ADMIN_USERNAME` | `admin` | Admin username (first-run bootstrap only) |
 | `DARKREEL_ADMIN_PASSWORD` | **(required on first run)** | Admin password (first-run bootstrap only) |
-| `PERSIST_SESSION` | `false` | Cache master key in sessionStorage (survives page refresh, less secure) |
+| `PERSIST_SESSION` | `true` | Cache master key in sessionStorage (survives page refresh). Set to `false` for higher security -- see [Session persistence](#session-persistence) |
 | `ALLOW_REGISTRATION` | `false` | Allow new user registration via the web UI |
 
 Password: 16-128 characters, at least one letter, number, and symbol. Username: 3-64 alphanumeric characters.
@@ -260,7 +273,7 @@ All endpoints except `/health` and `/api/config` require a JWT. JWTs contain use
 | POST | `/api/auth/login` | Login (returns JWT + encrypted master key) |
 | POST | `/api/auth/logout` | Logout (immediate session invalidation) |
 | POST | `/api/auth/recover` | Reset password with recovery code |
-| POST | `/api/auth/change-password` | Change password (re-encrypts master key) |
+| POST | `/api/auth/change-password` | Change password (re-encrypts master key, invalidates all other sessions) |
 | DELETE | `/api/auth/account` | Delete account and all media |
 | GET | `/api/config` | Server config (registration, session persistence) |
 
@@ -270,7 +283,7 @@ All endpoints except `/health` and `/api/config` require a JWT. JWTs contain use
 |--------|------|-------------|
 | GET | `/api/media` | List media (paginated) |
 | GET | `/api/media/:id` | Get media metadata |
-| POST | `/api/media/upload` | Upload (multipart: metadata + thumbnail + chunks) |
+| POST | `/api/media/upload` | Upload (multipart: metadata + thumbnail + chunks). Media ID is client-generated (UUID) for AAD binding. |
 | PATCH | `/api/media/:id` | Update metadata (e.g., folder assignment) |
 | DELETE | `/api/media/:id` | Secure delete (3-pass shred) |
 | GET | `/api/media/:id/chunk/:index` | Download encrypted chunk |
@@ -364,10 +377,50 @@ The setup script handles all of this. If deploying manually:
 - SSH hardened -- root login disabled, key-only auth
 - systemd sandboxing -- `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`
 - Dedicated `darkreel` user -- minimal permissions
-- SRI hashes -- frontend JS/CSS integrity verified by browser
-- Rate limiting -- 5 auth attempts/min/IP
-- Security headers -- `nosniff`, `DENY` framing, `no-referrer`, strict CSP, HSTS
+- SRI hashes -- frontend JS/CSS integrity verified by browser (including dynamically loaded mp4box.js)
+- Rate limiting -- 5 auth attempts/min/IP (uses `X-Real-IP` behind reverse proxy)
+- Security headers -- `nosniff`, `DENY` framing, `no-referrer`, strict CSP, HSTS, `Permissions-Policy`
 - COOP/COEP -- defense-in-depth for SharedArrayBuffer
+- Cache-Control -- `no-store` on all API responses to prevent caching of sensitive data
+- Graceful shutdown -- in-flight requests drain before the database closes
+- Session expiration -- sessions expire after 24 hours, with periodic cleanup
+- Password change -- all existing sessions are invalidated immediately
+- Admin re-verification -- admin status is checked from the database on every admin request
+- Timing side-channel mitigation -- recovery endpoint performs dummy work for non-existent users
+
+### Session persistence
+
+`PERSIST_SESSION` (default: `true`) controls whether the master encryption key is cached in the browser's `sessionStorage` between page refreshes. This is a convenience vs. security trade-off:
+
+| Setting | Behavior | Security |
+|---------|----------|----------|
+| `true` (default) | Master key survives page refresh. Users stay logged in until they close the tab or their session expires. | If an attacker achieves XSS or has a malicious browser extension, they could read the key from `sessionStorage`. The tight CSP (`script-src 'self'` + SRI on all scripts) makes XSS difficult, but not impossible. |
+| `false` | Master key is cleared on every page refresh. Users must re-enter their password to decrypt their library. | The key only exists in JavaScript memory during the active session. No persistent storage. More secure, but less convenient. |
+
+To disable:
+
+```bash
+# In /etc/darkreel/env (or your environment config)
+PERSIST_SESSION=false
+```
+
+Then restart: `sudo systemctl restart darkreel`
+
+### Disk encryption (LUKS)
+
+The 3-pass secure deletion works on traditional HDDs but is unreliable on SSDs due to wear leveling -- the SSD controller may retain old data in spare sectors even after overwriting. If your threat model includes physical disk seizure or forensic recovery:
+
+```bash
+# Set up LUKS on the data partition (do this BEFORE installing Darkreel)
+sudo cryptsetup luksFormat /dev/sdX
+sudo cryptsetup open /dev/sdX darkreel-data
+sudo mkfs.ext4 /dev/mapper/darkreel-data
+sudo mount /dev/mapper/darkreel-data /var/lib/darkreel
+```
+
+With LUKS, all data at rest is encrypted at the block level. Shredding becomes irrelevant because the underlying blocks are already encrypted -- destroying the LUKS key makes all data unrecoverable regardless of SSD wear leveling.
+
+This is the recommended setup for production deployments on VPS providers where you don't control the physical hardware.
 
 ### Recovery codes
 
@@ -389,7 +442,7 @@ If you lose both your password and recovery code, your data is permanently inacc
 
 | Limit | Value |
 |-------|-------|
-| Max thumbnail | 2 MB |
+| Max thumbnail | 256 KB |
 | Max chunk | 20 MB |
 | Max chunks per file | 50,000 |
 | Max total upload | 100 GB |

@@ -272,6 +272,12 @@ info "Caddy configured for $DOMAIN (automatic HTTPS via Let's Encrypt)"
 cat > /etc/darkreel/env <<EOF
 DARKREEL_ADMIN_USERNAME=${ADMIN_USER}
 DARKREEL_ADMIN_PASSWORD=${ADMIN_PASS}
+ALLOW_REGISTRATION=false
+# PERSIST_SESSION controls whether the client stores the master key in
+# sessionStorage so it survives page refreshes without re-login.
+# Enabled by default. Set to "false" to disable (more secure, but users
+# must re-enter their password on every page refresh).
+PERSIST_SESSION=true
 EOF
 chmod 600 /etc/darkreel/env
 chown darkreel:darkreel /etc/darkreel/env
@@ -358,10 +364,17 @@ if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
     echo -e "  ${YELLOW}Save this code somewhere safe — it is the only way to regain${NC}"
     echo -e "  ${YELLOW}access to your encrypted data if you forget your password.${NC}"
     echo ""
-    echo -e "  The code is in ${RC_FILE}"
-    echo -e "  ${BOLD}Delete that file after you've saved the code:${NC}"
-    echo -e "  sudo rm ${RC_FILE}"
-    echo ""
+    read -rp "  Have you saved the recovery code? Delete it from disk now? [y/N]: " delete_rc
+    if [ "$delete_rc" = "y" ] || [ "$delete_rc" = "Y" ]; then
+      rm -f "$RC_FILE"
+      info "Recovery code file deleted from disk"
+    else
+      echo ""
+      echo -e "  The code is in ${RC_FILE}"
+      echo -e "  ${BOLD}Delete that file after you've saved the code:${NC}"
+      echo -e "  sudo rm ${RC_FILE}"
+      echo ""
+    fi
   else
     echo -e "  ${YELLOW}IMPORTANT:${NC} Check the logs for your recovery code:"
     echo -e "  ${BOLD}sudo journalctl -u darkreel --no-pager | grep -i recovery${NC}"

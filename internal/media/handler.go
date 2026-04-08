@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -68,7 +69,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 const (
-	maxThumbnailSize = 2 << 20   // 2 MB
+	maxThumbnailSize = 256 * 1024 // must match storage.paddedThumbSize to prevent truncation
 	maxChunkSize     = 20 << 20  // 20 MB (large fMP4 segments + GCM overhead)
 	maxChunkCount    = 50000     // ~50 GB at 1MB chunks
 	maxRequestSize   = 100 << 30 // 100 GB hard limit
@@ -161,6 +162,12 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 		part.Close()
 
+		if len(chunkData) == 0 {
+			h.Storage.RemoveMedia(userID, mediaID)
+			http.Error(w, "empty chunk not allowed", http.StatusBadRequest)
+			return
+		}
+
 		if err := h.Storage.WriteChunk(userID, mediaID, chunkIndex, chunkData); err != nil {
 			h.Storage.RemoveMedia(userID, mediaID)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -175,11 +182,36 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileKeyBytes, _ := FromB64(meta.FileKeyEnc)
-	thumbKeyBytes, _ := FromB64(meta.ThumbKeyEnc)
-	hashNonceBytes, _ := FromB64(meta.HashNonce)
-	metadataEncBytes, _ := FromB64(meta.MetadataEnc)
-	metadataNonceBytes, _ := FromB64(meta.MetadataNonce)
+	fileKeyBytes, err := FromB64(meta.FileKeyEnc)
+	if err != nil {
+		h.Storage.RemoveMedia(userID, mediaID)
+		http.Error(w, "invalid file_key_enc", http.StatusBadRequest)
+		return
+	}
+	thumbKeyBytes, err := FromB64(meta.ThumbKeyEnc)
+	if err != nil {
+		h.Storage.RemoveMedia(userID, mediaID)
+		http.Error(w, "invalid thumb_key_enc", http.StatusBadRequest)
+		return
+	}
+	hashNonceBytes, err := FromB64(meta.HashNonce)
+	if err != nil {
+		h.Storage.RemoveMedia(userID, mediaID)
+		http.Error(w, "invalid hash_nonce", http.StatusBadRequest)
+		return
+	}
+	metadataEncBytes, err := FromB64(meta.MetadataEnc)
+	if err != nil {
+		h.Storage.RemoveMedia(userID, mediaID)
+		http.Error(w, "invalid metadata_enc", http.StatusBadRequest)
+		return
+	}
+	metadataNonceBytes, err := FromB64(meta.MetadataNonce)
+	if err != nil {
+		h.Storage.RemoveMedia(userID, mediaID)
+		http.Error(w, "invalid metadata_nonce", http.StatusBadRequest)
+		return
+	}
 
 	mediaItem := &db.MediaItem{
 		ID:            mediaID,
@@ -268,13 +300,15 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Storage.RemoveMedia(userID, mediaID); err != nil {
+	// Delete DB record first, then shred storage. If the server crashes between
+	// these steps, orphaned storage is cleaned up at startup.
+	if err := db.DeleteMedia(h.DB, mediaID, userID); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	if err := db.DeleteMedia(h.DB, mediaID, userID); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	if err := h.Storage.RemoveMedia(userID, mediaID); err != nil {
+		log.Printf("Warning: failed to remove storage for %s/%s: %v", userID, mediaID, err)
 		return
 	}
 

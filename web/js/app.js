@@ -13,6 +13,8 @@ import {
 // no SharedArrayBuffer, no WASM, works on all browsers instantly.
 //
 let _mp4boxLoaded = false;
+// SRI hash for mp4box.min.js — updated by build.sh
+const MP4BOX_SRI = 'sha384-9oK16t6TCKqCB5OpB/LwRkNa48prlRFQPTYw8tb9uj699JvQ1wjxIq7YO8Z4hn3a';
 
 async function loadMP4Box() {
     if (_mp4boxLoaded) return true;
@@ -21,6 +23,10 @@ async function loadMP4Box() {
         await new Promise((resolve, reject) => {
             const script = document.createElement('script');
             script.src = '/js/vendor/mp4box.min.js';
+            if (MP4BOX_SRI) {
+                script.integrity = MP4BOX_SRI;
+                script.crossOrigin = 'anonymous';
+            }
             script.onload = resolve;
             script.onerror = reject;
             document.head.appendChild(script);
@@ -736,12 +742,6 @@ async function unfragmentMP4(fmp4) {
         console.warn('Unfragment failed:', e);
         return null;
     }
-}
-
-function escapeHTML(str) {
-    const el = document.createElement('span');
-    el.textContent = str;
-    return el.innerHTML;
 }
 
 // ─── State ───
@@ -3785,7 +3785,7 @@ async function playVideoMSE(item, fileKey) {
         if (aborted) return;
 
         // Start: fetch init segment, then stream from chunk 1
-        viewerTitle.innerHTML = `${escapeHTML(item.name || 'Video')} <span class="viewer-spinner"></span>`;
+        viewerTitle.innerHTML = `${escapeHtml(item.name || 'Video')} <span class="viewer-spinner"></span>`;
         await ensureInit();
         if (aborted) return;
 
@@ -3798,7 +3798,7 @@ async function playVideoMSE(item, fileKey) {
 }
 
 async function playVideoBlob(item, fileKey, mime) {
-    viewerTitle.innerHTML = `${escapeHTML(item.name || 'Video')} <span class="viewer-spinner"></span>`;
+    viewerTitle.innerHTML = `${escapeHtml(item.name || 'Video')} <span class="viewer-spinner"></span>`;
 
     let aborted = false;
     viewerVideo._abortStreaming = () => { aborted = true; };

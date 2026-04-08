@@ -2,11 +2,15 @@ package auth
 
 import (
 	"sync"
+	"time"
 )
+
+const sessionMaxAge = 24 * time.Hour // matches JWT expiry
 
 type sessionEntry struct {
 	UserID    string
 	MasterKey []byte
+	CreatedAt time.Time
 }
 
 // SessionStore holds master keys in memory, indexed by session ID.
@@ -20,12 +24,32 @@ var Sessions = &SessionStore{
 	sessions: make(map[string]*sessionEntry),
 }
 
+// StartCleanup launches a background goroutine that removes expired sessions.
+func (s *SessionStore) StartCleanup() {
+	go func() {
+		for {
+			time.Sleep(time.Minute)
+			s.mu.Lock()
+			now := time.Now()
+			for sid, entry := range s.sessions {
+				if now.Sub(entry.CreatedAt) > sessionMaxAge {
+					for i := range entry.MasterKey {
+						entry.MasterKey[i] = 0
+					}
+					delete(s.sessions, sid)
+				}
+			}
+			s.mu.Unlock()
+		}
+	}()
+}
+
 func (s *SessionStore) Set(sessionID, userID string, masterKey []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := make([]byte, len(masterKey))
 	copy(key, masterKey)
-	s.sessions[sessionID] = &sessionEntry{UserID: userID, MasterKey: key}
+	s.sessions[sessionID] = &sessionEntry{UserID: userID, MasterKey: key, CreatedAt: time.Now()}
 }
 
 func (s *SessionStore) Get(sessionID string) ([]byte, bool) {
@@ -33,6 +57,10 @@ func (s *SessionStore) Get(sessionID string) ([]byte, bool) {
 	defer s.mu.RUnlock()
 	entry, ok := s.sessions[sessionID]
 	if !ok {
+		return nil, false
+	}
+	// Expired sessions are rejected immediately
+	if time.Since(entry.CreatedAt) > sessionMaxAge {
 		return nil, false
 	}
 	cp := make([]byte, len(entry.MasterKey))
