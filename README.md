@@ -195,7 +195,7 @@ Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOc
 
 1. Open `https://your-domain.com` and log in
 2. The setup script will display your **recovery code** -- save it somewhere safe
-3. The script will offer to delete the recovery code file from disk automatically. If you skip this, delete it manually: `sudo rm /var/lib/darkreel/RECOVERY_CODE`
+3. The recovery code file is automatically deleted on the next server restart. If you want to remove it immediately: `sudo rm /var/lib/darkreel/RECOVERY_CODE`
 4. SSH in as your personal user going forward: `ssh yourname@your-server-ip`
 
 The recovery code is the only way to regain access to your encrypted data if you forget your password. No one -- including the server admin -- can recover it without this code.
@@ -350,7 +350,7 @@ sudo cp darkreel /usr/local/bin/darkreel
 sudo systemctl restart darkreel
 ```
 
-Or use the auto-updater -- checks GitHub for tagged releases, verifies SHA-256, restarts the service:
+Or use the auto-updater -- checks GitHub for tagged releases, verifies SHA-256 checksum and Ed25519 signature, restarts the service:
 
 ```bash
 sudo ./update.sh              # check once

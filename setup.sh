@@ -205,7 +205,7 @@ fi
 # --- Install Go ---
 if ! command -v go &>/dev/null; then
   info "Installing Go..."
-  GO_VERSION="1.23.4"
+  GO_VERSION="1.26.2"
   ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
   curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /usr/local -xzf -
   export PATH="/usr/local/go/bin:$PATH"
