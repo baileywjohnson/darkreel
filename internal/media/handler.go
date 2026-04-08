@@ -21,6 +21,16 @@ type Handler struct {
 	Storage *storage.Layout
 }
 
+// validID returns the URL param if it is a valid UUID, or writes a 400 and returns "".
+func validID(w http.ResponseWriter, r *http.Request, param string) string {
+	id := chi.URLParam(r, param)
+	if _, err := uuid.Parse(id); err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return ""
+	}
+	return id
+}
+
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
 
@@ -56,7 +66,10 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
-	mediaID := chi.URLParam(r, "id")
+	mediaID := validID(w, r, "id")
+	if mediaID == "" {
+		return
+	}
 
 	item, err := db.GetMedia(h.DB, mediaID, userID)
 	if err != nil {
@@ -96,7 +109,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var meta UploadMeta
-	if err := json.NewDecoder(part).Decode(&meta); err != nil {
+	if err := json.NewDecoder(io.LimitReader(part, 1<<20)).Decode(&meta); err != nil { // 1 MB max for metadata JSON
 		http.Error(w, "invalid metadata", http.StatusBadRequest)
 		return
 	}
@@ -237,7 +250,10 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetChunk(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
-	mediaID := chi.URLParam(r, "id")
+	mediaID := validID(w, r, "id")
+	if mediaID == "" {
+		return
+	}
 	indexStr := chi.URLParam(r, "index")
 	index, err := strconv.Atoi(indexStr)
 	if err != nil || index < 0 {
@@ -271,7 +287,10 @@ func (h *Handler) GetChunk(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetThumbnail(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
-	mediaID := chi.URLParam(r, "id")
+	mediaID := validID(w, r, "id")
+	if mediaID == "" {
+		return
+	}
 
 	// Verify ownership
 	if _, err := db.GetMedia(h.DB, mediaID, userID); err != nil {
@@ -293,7 +312,10 @@ func (h *Handler) GetThumbnail(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
-	mediaID := chi.URLParam(r, "id")
+	mediaID := validID(w, r, "id")
+	if mediaID == "" {
+		return
+	}
 
 	if _, err := db.GetMedia(h.DB, mediaID, userID); err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -317,7 +339,10 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
-	mediaID := chi.URLParam(r, "id")
+	mediaID := validID(w, r, "id")
+	if mediaID == "" {
+		return
+	}
 
 	item, err := db.GetMedia(h.DB, mediaID, userID)
 	if err != nil {
@@ -343,7 +368,10 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 // (e.g., to assign a folder). The server never decrypts it.
 func (h *Handler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
-	mediaID := chi.URLParam(r, "id")
+	mediaID := validID(w, r, "id")
+	if mediaID == "" {
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 	var req struct {

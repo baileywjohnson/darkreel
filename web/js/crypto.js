@@ -42,29 +42,6 @@ export async function deriveSessionKey(password, kdfSaltB64) {
     );
 }
 
-export async function setMasterKeyFromServer(encryptedMasterKeyB64, password) {
-    // The server sends the master key encrypted with PBKDF2(password, "darkreel-session-key")
-    // For our initial implementation, we trust the login flow:
-    // Server derives masterKey via Argon2id and stores it in session.
-    // Client also needs masterKey for encryption. Since we can't run Argon2id in browser easily,
-    // the server will return the master key encrypted with a key derived from the password.
-    // This is secure because the password is only ever sent over TLS and the encrypted key
-    // is useless without the password.
-
-    const sessionKey = await deriveSessionKey(password);
-    const data = base64ToBuffer(encryptedMasterKeyB64);
-    const iv = data.slice(0, 12);
-    const ciphertext = data.slice(12);
-
-    _masterKeyRaw = new Uint8Array(await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv }, sessionKey, ciphertext
-    ));
-
-    _masterKey = await crypto.subtle.importKey(
-        'raw', _masterKeyRaw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
-    );
-}
-
 export async function setMasterKeyDirect(masterKeyBytes) {
     _masterKeyRaw = new Uint8Array(masterKeyBytes);
     _masterKey = await crypto.subtle.importKey(

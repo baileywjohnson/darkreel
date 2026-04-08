@@ -83,10 +83,12 @@ fi
 
 info "Update available: ${CURRENT:-unknown} -> $LATEST"
 
-# --- Download binary and checksums ---
+# --- Download binary, checksums, and signature ---
 ASSET="darkreel-linux-${ARCH}"
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST}/${ASSET}"
 CHECKSUM_URL="https://github.com/${REPO}/releases/download/${LATEST}/checksums.txt"
+SIG_URL="https://github.com/${REPO}/releases/download/${LATEST}/${ASSET}.sig"
+SIGNING_PUB="/etc/darkreel/signing.pub"
 
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -94,6 +96,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 info "Downloading $ASSET..."
 curl -fsSL -o "${TMP_DIR}/${ASSET}" "$DOWNLOAD_URL" || error "Download failed"
 curl -fsSL -o "${TMP_DIR}/checksums.txt" "$CHECKSUM_URL" || error "Checksum download failed"
+curl -fsSL -o "${TMP_DIR}/${ASSET}.sig" "$SIG_URL" || error "Signature download failed"
 
 # --- Verify checksum ---
 EXPECTED=$(grep "$ASSET" "${TMP_DIR}/checksums.txt" | awk '{print $1}')
@@ -108,6 +111,21 @@ if [ "$EXPECTED" != "$ACTUAL" ]; then
 fi
 
 info "Checksum verified"
+
+# --- Verify Ed25519 signature ---
+if [ -f "$SIGNING_PUB" ]; then
+  echo -n "$ACTUAL" > "${TMP_DIR}/${ASSET}.hash"
+  if openssl pkeyutl -verify -pubin \
+    -inkey "$SIGNING_PUB" \
+    -rawin -in "${TMP_DIR}/${ASSET}.hash" -sigfile "${TMP_DIR}/${ASSET}.sig" 2>/dev/null; then
+    info "Ed25519 signature verified"
+  else
+    error "Signature verification FAILED — binary may be tampered with"
+  fi
+else
+  warn "No signing public key at $SIGNING_PUB — skipping signature verification"
+  warn "Run setup.sh to configure signature verification"
+fi
 
 # --- Install ---
 chmod +x "${TMP_DIR}/${ASSET}"

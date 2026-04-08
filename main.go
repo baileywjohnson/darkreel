@@ -67,6 +67,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "  Recovery code also saved to: %s\n", rcPath)
 			fmt.Fprintf(os.Stderr, "  DELETE THIS FILE after saving the code elsewhere.\n\n")
 		}
+	} else {
+		// Not first run — remove recovery code file if the operator forgot to
+		rcPath := filepath.Join(*dataDir, "RECOVERY_CODE")
+		if err := os.Remove(rcPath); err == nil {
+			log.Println("Removed leftover RECOVERY_CODE file")
+		}
 	}
 
 	// Clean up orphaned data directories not referenced in DB

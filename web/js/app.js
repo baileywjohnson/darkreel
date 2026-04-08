@@ -1507,7 +1507,7 @@ async function loadAdminUsers() {
                     ${escapeHtml(u.username)}
                     ${u.is_admin ? '<span class="admin-badge">Admin</span>' : ''}
                 </div>
-                ${u.id === userId ? '<span style="font-size:12px;color:var(--text-dim)">You</span>' : '<button class="btn btn-danger" data-delete-uid="' + u.id + '">Delete</button>'}
+                ${u.id === userId ? '<span style="font-size:12px;color:var(--text-dim)">You</span>' : '<button class="btn btn-danger" data-delete-uid="' + escapeHtml(u.id) + '">Delete</button>'}
             </div>
         `).join('');
 
@@ -2008,7 +2008,7 @@ function renderBreadcrumb() {
         if (folder.id === currentFolderId) {
             fullHtml += `<span class="breadcrumb-current">${escapeHtml(folder.name)}</span>`;
         } else {
-            fullHtml += `<span class="breadcrumb-item" data-folder-id="${folder.id}">${escapeHtml(folder.name)}</span>`;
+            fullHtml += `<span class="breadcrumb-item" data-folder-id="${escapeHtml(folder.id)}">${escapeHtml(folder.name)}</span>`;
         }
     }
 
@@ -2018,7 +2018,7 @@ function renderBreadcrumb() {
         compactHtml += '<span class="breadcrumb-current">All Media</span>';
     } else {
         const parentId = path.length >= 2 ? path[path.length - 2].id : '';
-        compactHtml += `<span class="breadcrumb-item" data-folder-id="${parentId}">..</span>`;
+        compactHtml += `<span class="breadcrumb-item" data-folder-id="${escapeHtml(parentId)}">..</span>`;
         compactHtml += '<span class="breadcrumb-sep">/</span>';
         const current = path[path.length - 1];
         compactHtml += `<span class="breadcrumb-current">${escapeHtml(current.name)}</span>`;
@@ -2756,7 +2756,9 @@ async function loadThumbnail(item, img) {
         }
 
         const blob = new Blob([decrypted], { type: 'image/jpeg' });
-        img.src = URL.createObjectURL(blob);
+        const url = URL.createObjectURL(blob);
+        img.onload = () => URL.revokeObjectURL(url);
+        img.src = url;
     } catch (e) {
         console.error('Failed to load thumbnail:', e);
     }
@@ -4230,7 +4232,7 @@ async function downloadItem(item) {
     // Show progress toast
     const toast = document.createElement('div');
     toast.className = 'download-toast';
-    toast.innerHTML = `<span class="download-toast-text">Downloading: ${filename}</span><span class="download-toast-progress">0/${item.chunk_count}</span>`;
+    toast.innerHTML = `<span class="download-toast-text">Downloading: ${escapeHtml(filename)}</span><span class="download-toast-progress">0/${item.chunk_count}</span>`;
     document.body.appendChild(toast);
 
     try {

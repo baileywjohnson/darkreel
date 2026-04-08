@@ -159,6 +159,10 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 // DeleteUser deletes a user and all their media (admin only).
 func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	targetID := chi.URLParam(r, "id")
+	if _, err := uuid.Parse(targetID); err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
 	claims := GetClaims(r)
 
 	if claims != nil && claims.UserID == targetID {
