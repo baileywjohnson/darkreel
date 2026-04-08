@@ -98,6 +98,7 @@ func BootstrapAdmin(database *sql.DB, username, password string) (string, error)
 	// Zero sensitive material
 	for i := range masterKey { masterKey[i] = 0 }
 	for i := range kdfKey { kdfKey[i] = 0 }
+	defer func() { for i := range recoveryCode { recoveryCode[i] = 0 } }()
 
 	user := &db.User{
 		ID:           userID,
@@ -196,6 +197,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 
 	for i := range masterKey { masterKey[i] = 0 }
 	for i := range kdfKey { kdfKey[i] = 0 }
+	defer func() { for i := range recoveryCode { recoveryCode[i] = 0 } }()
 
 	user := &db.User{
 		ID:           userID,
@@ -382,6 +384,13 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate all existing sessions (including attacker sessions)
+	Sessions.DeleteAllForUser(user.ID)
+
+	// Create a fresh session for the current user
+	newSessionID := GenerateSessionID()
+	Sessions.Set(newSessionID, user.ID, masterKey)
+
 	// Re-encrypt master key with new session key for the client
 	newSessionKey := crypto.DeriveSessionKey(req.NewPassword, newKdfSalt)
 	newEncMKForClient, err := crypto.EncryptBlock(masterKey, newSessionKey, userIDBytes)
@@ -396,8 +405,8 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		masterKey[i] = 0
 	}
 
-	// Generate new token (session stays alive, no re-login needed)
-	newToken, err := GenerateToken(user.ID, claims.SessionID, claims.IsAdmin)
+	// Generate new token with fresh session ID
+	newToken, err := GenerateToken(user.ID, newSessionID, claims.IsAdmin)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -489,6 +498,7 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 	// Decrypt master key with recovery code
 	userIDBytes := []byte(user.ID)
 	masterKey, err := crypto.DecryptMasterKeyWithRecovery(user.RecoveryMK, recoveryCode, userIDBytes)
+	for i := range recoveryCode { recoveryCode[i] = 0 }
 	if err != nil {
 		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
 		return
@@ -558,9 +568,12 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 		masterKey[i] = 0
 	}
 
+	recoveryCodeB64 := base64.URLEncoding.EncodeToString(newRecoveryCode)
+	for i := range newRecoveryCode { newRecoveryCode[i] = 0 }
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"success":       true,
-		"recovery_code": base64.URLEncoding.EncodeToString(newRecoveryCode),
+		"recovery_code": recoveryCodeB64,
 	})
 }

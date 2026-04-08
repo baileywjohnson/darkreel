@@ -78,7 +78,7 @@ func modifyPNG(data []byte, nonce []byte) ([]byte, error) {
 	}
 
 	// Build tEXt chunk: keyword\0value
-	keyword := "darkreel"
+	keyword := "Comment"
 	textData := append([]byte(keyword), 0)
 	textData = append(textData, nonce...)
 	chunk := buildPNGChunk("tEXt", textData)

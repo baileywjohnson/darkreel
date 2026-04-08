@@ -121,6 +121,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	for i := range kdfKey {
 		kdfKey[i] = 0
 	}
+	defer func() { for i := range recoveryCode { recoveryCode[i] = 0 } }()
 
 	user := &db.User{
 		ID:           userID,

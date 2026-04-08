@@ -290,30 +290,38 @@ export function modifyHash(data, mimeType, nonce) {
     if (lower.includes('mp4') || lower.includes('m4v') || lower.includes('quicktime') || lower.includes('mov')) {
         return modifyMP4(data, nonce);
     }
-    // For other types, append marker
-    const marker = new TextEncoder().encode('DARKREEL:');
-    const result = new Uint8Array(data.length + marker.length + nonce.length);
+    // For other types, append nonce directly (no identifying marker)
+    const result = new Uint8Array(data.length + nonce.length);
     result.set(data, 0);
-    result.set(marker, data.length);
-    result.set(nonce, data.length + marker.length);
+    result.set(nonce, data.length);
     return result;
 }
 
 function modifyMP4(data, nonce) {
-    // Append a 'free' box: 4-byte big-endian size + 'free' + nonce payload
+    // Insert a 'free' box after ftyp (matches server-side implementation).
+    // If no ftyp is found, insert at the beginning.
+    let pos = 0;
+    if (data.length >= 8) {
+        const type = String.fromCharCode(data[4], data[5], data[6], data[7]);
+        if (type === 'ftyp') {
+            pos = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
+        }
+    }
     const boxSize = 8 + nonce.length;
+    const freeBox = new Uint8Array(boxSize);
+    freeBox[0] = (boxSize >> 24) & 0xFF;
+    freeBox[1] = (boxSize >> 16) & 0xFF;
+    freeBox[2] = (boxSize >> 8) & 0xFF;
+    freeBox[3] = boxSize & 0xFF;
+    freeBox[4] = 0x66; // 'f'
+    freeBox[5] = 0x72; // 'r'
+    freeBox[6] = 0x65; // 'e'
+    freeBox[7] = 0x65; // 'e'
+    freeBox.set(nonce, 8);
     const result = new Uint8Array(data.length + boxSize);
-    result.set(data, 0);
-    const offset = data.length;
-    result[offset]     = (boxSize >> 24) & 0xFF;
-    result[offset + 1] = (boxSize >> 16) & 0xFF;
-    result[offset + 2] = (boxSize >> 8) & 0xFF;
-    result[offset + 3] = boxSize & 0xFF;
-    result[offset + 4] = 0x66; // 'f'
-    result[offset + 5] = 0x72; // 'r'
-    result[offset + 6] = 0x65; // 'e'
-    result[offset + 7] = 0x65; // 'e'
-    result.set(nonce, offset + 8);
+    result.set(data.subarray(0, pos), 0);
+    result.set(freeBox, pos);
+    result.set(data.subarray(pos), pos + boxSize);
     return result;
 }
 
@@ -348,7 +356,7 @@ function modifyPNG(data, nonce) {
     }
 
     // Build tEXt chunk
-    const keyword = new TextEncoder().encode('darkreel\0');
+    const keyword = new TextEncoder().encode('Comment\0');
     const chunkData = new Uint8Array(keyword.length + nonce.length);
     chunkData.set(keyword, 0);
     chunkData.set(nonce, keyword.length);

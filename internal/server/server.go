@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"encoding/json"
 	"io/fs"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,12 +26,25 @@ type Server struct {
 	Addr              string
 	PersistSession    bool
 	AllowRegistration bool
+	httpServer        *http.Server
 }
 
 func (s *Server) Run() error {
 	r := s.routes()
+	s.httpServer = &http.Server{
+		Addr:    s.Addr,
+		Handler: r,
+	}
 	log.Printf("Darkreel listening on %s", s.Addr)
-	return http.ListenAndServe(s.Addr, r)
+	return s.httpServer.ListenAndServe()
+}
+
+// Shutdown gracefully drains in-flight requests before returning.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpServer != nil {
+		return s.httpServer.Shutdown(ctx)
+	}
+	return nil
 }
 
 func (s *Server) routes() chi.Router {
@@ -167,11 +182,15 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-		// COEP + COOP enable SharedArrayBuffer (not currently needed since mp4box.js
-		// replaced ffmpeg WASM, but kept for future use and defense-in-depth).
+		// COEP + COOP enable SharedArrayBuffer for future use and defense-in-depth.
 		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+		// Prevent caching of API responses containing sensitive data
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store, private")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
