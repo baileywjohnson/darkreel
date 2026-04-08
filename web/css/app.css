@@ -7,19 +7,19 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root, [data-theme="classic"] {
-    --bg: #09090b;
-    --bg-card: #111114;
-    --bg-hover: #18181c;
-    --border: #222228;
-    --text: #ececf1;
-    --text-dim: #a0a0b0;
-    --accent: #8b7cf6;
-    --accent-hover: #a89df8;
-    --accent-rgb: 139,124,246;
-    --danger: #ef4444;
+    --bg: #0a0a0c;
+    --bg-card: #101014;
+    --bg-hover: #1a1a22;
+    --border: #2a2a35;
+    --text: #c8c8d0;
+    --text-dim: #606070;
+    --accent: #4ec970;
+    --accent-hover: #5dd97f;
+    --accent-rgb: 78,201,112;
+    --danger: #e05555;
     --radius: 8px;
     --radius-lg: 12px;
-    --surface: #18181c;
+    --surface: #1a1a22;
 }
 [data-theme="cool"] {
     --bg: #0c1014;
