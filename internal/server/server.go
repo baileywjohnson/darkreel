@@ -51,6 +51,7 @@ func (s *Server) routes() chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Recoverer)
+	r.Use(middleware.RealIP) // trust X-Forwarded-For/X-Real-IP from reverse proxy (Caddy)
 	r.Use(middleware.Compress(5))
 	r.Use(securityHeaders)
 	r.Use(RateLimit(6000, time.Minute)) // Global: 6000 req/min per IP (high for chunk streaming)
@@ -130,7 +131,7 @@ func (s *Server) routes() chi.Router {
 	// Admin routes (authenticated + admin only)
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware)
-		r.Use(auth.AdminMiddleware)
+		r.Use(auth.AdminMiddleware(s.DB))
 
 		r.Get("/api/admin/users", authHandler.ListUsers)
 		r.Post("/api/admin/users", authHandler.CreateUser)

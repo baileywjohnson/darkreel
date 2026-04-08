@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const maxVisitors = 10000 // cap to prevent memory exhaustion under DDoS
+
 type rateLimiter struct {
 	mu       sync.Mutex
 	visitors map[string]*visitor
@@ -15,8 +17,8 @@ type rateLimiter struct {
 }
 
 type visitor struct {
-	count    int
-	resetAt  time.Time
+	count   int
+	resetAt time.Time
 }
 
 func newRateLimiter(max int, window time.Duration) *rateLimiter {
@@ -29,17 +31,21 @@ func newRateLimiter(max int, window time.Duration) *rateLimiter {
 	go func() {
 		for {
 			time.Sleep(time.Minute)
-			rl.mu.Lock()
-			now := time.Now()
-			for ip, v := range rl.visitors {
-				if now.After(v.resetAt) {
-					delete(rl.visitors, ip)
-				}
-			}
-			rl.mu.Unlock()
+			rl.cleanup()
 		}
 	}()
 	return rl
+}
+
+func (rl *rateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	for ip, v := range rl.visitors {
+		if now.After(v.resetAt) {
+			delete(rl.visitors, ip)
+		}
+	}
 }
 
 func (rl *rateLimiter) allow(ip string) bool {
@@ -49,6 +55,14 @@ func (rl *rateLimiter) allow(ip string) bool {
 	now := time.Now()
 	v, ok := rl.visitors[ip]
 	if !ok || now.After(v.resetAt) {
+		// Evict expired entries if map is at capacity
+		if len(rl.visitors) >= maxVisitors {
+			for k, entry := range rl.visitors {
+				if now.After(entry.resetAt) {
+					delete(rl.visitors, k)
+				}
+			}
+		}
 		rl.visitors[ip] = &visitor{count: 1, resetAt: now.Add(rl.window)}
 		return true
 	}

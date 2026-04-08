@@ -484,6 +484,12 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 
 	user, err := db.GetUserByUsername(h.DB, req.Username)
 	if err != nil || user.RecoveryMK == nil {
+		// Perform dummy decryption to prevent timing-based username enumeration.
+		// Without this, "user not found" returns faster than "wrong recovery code".
+		dummyKey := make([]byte, 32)
+		dummySalt := make([]byte, 32)
+		crypto.DeriveKey("dummy", dummySalt)
+		for i := range dummyKey { dummyKey[i] = 0 }
 		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
 		return
 	}

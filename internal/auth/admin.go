@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -11,16 +12,24 @@ import (
 	"github.com/google/uuid"
 )
 
-// AdminMiddleware checks that the authenticated user is an admin.
-func AdminMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claims := GetClaims(r)
-		if claims == nil || !claims.IsAdmin {
-			http.Error(w, "admin access required", http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+// AdminMiddleware returns middleware that verifies admin status from the database
+// on every request, so revoked admin privileges take effect immediately.
+func AdminMiddleware(database *sql.DB) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims := GetClaims(r)
+			if claims == nil {
+				http.Error(w, "admin access required", http.StatusForbidden)
+				return
+			}
+			user, err := db.GetUserByID(database, claims.UserID)
+			if err != nil || !user.IsAdmin {
+				http.Error(w, "admin access required", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // ListUsers returns all users (admin only).

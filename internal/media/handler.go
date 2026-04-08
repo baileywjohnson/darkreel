@@ -69,7 +69,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 const (
-	maxThumbnailSize = 2 << 20   // 2 MB
+	maxThumbnailSize = 256 * 1024 // must match storage.paddedThumbSize to prevent truncation
 	maxChunkSize     = 20 << 20  // 20 MB (large fMP4 segments + GCM overhead)
 	maxChunkCount    = 50000     // ~50 GB at 1MB chunks
 	maxRequestSize   = 100 << 30 // 100 GB hard limit

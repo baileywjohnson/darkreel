@@ -69,7 +69,10 @@ func EncryptChunk(plaintext, key []byte, chunkIndex int) ([]byte, error) {
 // Returns the number of chunks written.
 func EncryptReader(r io.Reader, w io.Writer, key []byte) (int, error) {
 	bufPtr := bufPool.Get().(*[]byte)
-	defer bufPool.Put(bufPtr)
+	defer func() {
+		clear(*bufPtr) // zero plaintext before returning to pool
+		bufPool.Put(bufPtr)
+	}()
 	buf := *bufPtr
 
 	chunkIndex := 0

@@ -84,6 +84,9 @@ func main() {
 		log.Printf("Cleaned up %d orphaned media directories", removed)
 	}
 
+	// Start session cleanup goroutine (removes expired sessions every minute)
+	auth.Sessions.StartCleanup()
+
 	srv := &server.Server{
 		DB:                database,
 		Storage:           store,

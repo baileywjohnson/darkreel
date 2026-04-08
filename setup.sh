@@ -272,6 +272,12 @@ info "Caddy configured for $DOMAIN (automatic HTTPS via Let's Encrypt)"
 cat > /etc/darkreel/env <<EOF
 DARKREEL_ADMIN_USERNAME=${ADMIN_USER}
 DARKREEL_ADMIN_PASSWORD=${ADMIN_PASS}
+ALLOW_REGISTRATION=false
+# PERSIST_SESSION controls whether the client stores the master key in
+# sessionStorage so it survives page refreshes without re-login.
+# Enabled by default. Set to "false" to disable (more secure, but users
+# must re-enter their password on every page refresh).
+PERSIST_SESSION=true
 EOF
 chmod 600 /etc/darkreel/env
 chown darkreel:darkreel /etc/darkreel/env
