@@ -234,8 +234,9 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Perform dummy derivation to prevent timing-based username enumeration.
 		// Without this, "user not found" returns faster than "wrong password".
-		dummySalt := make([]byte, 32)
-		crypto.DeriveKey("dummy", dummySalt)
+		// Use random salt so timing matches real Argon2id operations.
+		dummySalt, _ := crypto.GenerateSalt()
+		crypto.DeriveKey(req.Password, dummySalt)
 		http.Error(w, "Username and/or password is incorrect.", http.StatusUnauthorized)
 		return
 	}
@@ -452,6 +453,19 @@ func (h *Handler) DeleteOwnAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Prevent deleting the last admin — would leave the system unrecoverable
+	if user.IsAdmin {
+		adminCount, err := db.GetAdminCount(h.DB)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if adminCount <= 1 {
+			http.Error(w, "cannot delete the last admin account", http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Delete all media
 	mediaIDs, err := db.ListMediaIDsByUser(h.DB, user.ID)
 	if err == nil {
@@ -488,28 +502,28 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 
 	user, err := db.GetUserByUsername(h.DB, req.Username)
 	if err != nil || user.RecoveryMK == nil {
-		// Perform dummy decryption to prevent timing-based username enumeration.
+		// Perform dummy derivation + decryption to prevent timing-based username enumeration.
 		// Without this, "user not found" returns faster than "wrong recovery code".
-		dummyKey := make([]byte, 32)
-		dummySalt := make([]byte, 32)
-		crypto.DeriveKey("dummy", dummySalt)
-		for i := range dummyKey { dummyKey[i] = 0 }
+		dummySalt, _ := crypto.GenerateSalt()
+		crypto.DeriveKey(req.NewPassword, dummySalt)
+		dummyCiphertext := make([]byte, 60) // realistic ciphertext length
+		crypto.DecryptMasterKeyWithRecovery(dummyCiphertext, make([]byte, 32), []byte("dummy"))
 		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
 		return
 	}
 
-	// Decode recovery code
-	recoveryCode, err := base64.URLEncoding.DecodeString(req.RecoveryCode)
-	if err != nil || len(recoveryCode) != 32 {
-		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
-		return
+	// Decode recovery code — always attempt decryption to prevent timing leaks.
+	// If decode fails, use a dummy code so the decrypt call takes the same time.
+	recoveryCode, decodeErr := base64.URLEncoding.DecodeString(req.RecoveryCode)
+	if decodeErr != nil || len(recoveryCode) != 32 {
+		recoveryCode = make([]byte, 32) // dummy code for constant-time path
 	}
 
 	// Decrypt master key with recovery code
 	userIDBytes := []byte(user.ID)
 	masterKey, err := crypto.DecryptMasterKeyWithRecovery(user.RecoveryMK, recoveryCode, userIDBytes)
 	for i := range recoveryCode { recoveryCode[i] = 0 }
-	if err != nil {
+	if decodeErr != nil || err != nil {
 		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
 		return
 	}

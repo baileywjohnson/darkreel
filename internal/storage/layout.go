@@ -47,11 +47,13 @@ func (l *Layout) CleanupOrphans(validPaths map[string]bool) (int, error) {
 	}
 
 	for _, userEntry := range topEntries {
-		if !userEntry.IsDir() {
-			continue // skip files like darkreel.db
+		// Use Lstat to detect symlinks — never follow them
+		userDir := filepath.Join(l.BaseDir, userEntry.Name())
+		info, err := os.Lstat(userDir)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			continue
 		}
 		userID := userEntry.Name()
-		userDir := filepath.Join(l.BaseDir, userID)
 
 		// Check if this user directory has any valid media
 		mediaEntries, err := os.ReadDir(userDir)
@@ -61,7 +63,10 @@ func (l *Layout) CleanupOrphans(validPaths map[string]bool) (int, error) {
 
 		hasValid := false
 		for _, mediaEntry := range mediaEntries {
-			if !mediaEntry.IsDir() {
+			// Skip symlinks inside user directories too
+			mediaDir := filepath.Join(userDir, mediaEntry.Name())
+			mInfo, err := os.Lstat(mediaDir)
+			if err != nil || !mInfo.IsDir() || mInfo.Mode()&os.ModeSymlink != 0 {
 				continue
 			}
 			key := userID + "/" + mediaEntry.Name()
@@ -69,7 +74,6 @@ func (l *Layout) CleanupOrphans(validPaths map[string]bool) (int, error) {
 				hasValid = true
 			} else {
 				// Orphaned media directory — shred and remove
-				mediaDir := filepath.Join(userDir, mediaEntry.Name())
 				files, _ := os.ReadDir(mediaDir)
 				for _, f := range files {
 					if !f.IsDir() {

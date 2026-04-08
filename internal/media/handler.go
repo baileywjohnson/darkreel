@@ -268,7 +268,8 @@ func (h *Handler) GetChunk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if index >= item.ChunkCount {
-		http.Error(w, "chunk index out of range", http.StatusBadRequest)
+		// Use same error as missing media to avoid leaking whether the item exists
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
@@ -357,6 +358,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < item.ChunkCount; i++ {
 		rc, _, err := h.Storage.ReadChunkStream(userID, mediaID, i)
 		if err != nil {
+			log.Printf("Warning: download truncated for %s/%s at chunk %d/%d: %v", userID, mediaID, i, item.ChunkCount, err)
 			return // connection already started, can't send error
 		}
 		io.Copy(w, rc)

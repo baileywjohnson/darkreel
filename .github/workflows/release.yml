@@ -60,14 +60,12 @@ jobs:
           sha256sum darkreel-* > checksums.txt
           cat checksums.txt
 
-          # Sign each binary with Ed25519 (matches deploy.yml)
-          echo "$SIGNING_KEY" > signing.key
+          # Sign each binary with Ed25519 — key passed via fd, never written to disk
           for bin in darkreel-linux-*; do
             sha256sum "$bin" | awk '{print $1}' | tr -d '\n' > "$bin.hash"
-            openssl pkeyutl -sign -inkey signing.key -rawin -in "$bin.hash" -out "$bin.sig"
+            openssl pkeyutl -sign -inkey <(printf '%s' "$SIGNING_KEY") -rawin -in "$bin.hash" -out "$bin.sig"
             rm -f "$bin.hash"
           done
-          rm -f signing.key
 
       - name: Create release
         uses: softprops/action-gh-release@v2

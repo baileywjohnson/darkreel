@@ -27,12 +27,11 @@ jobs:
           # Rebuild with release flags (build.sh uses default flags)
           go build -trimpath -ldflags="-s -w" -o darkreel .
 
-          # Create hash and sign it with Ed25519
+          # Create hash and sign it with Ed25519 — key passed via fd, never written to disk
           sha256sum darkreel > darkreel.sha256
           awk '{print $1}' darkreel.sha256 | tr -d '\n' > darkreel.hash
-          echo "$SIGNING_KEY" > signing.key
-          openssl pkeyutl -sign -inkey signing.key -rawin -in darkreel.hash -out darkreel.sig
-          rm -f signing.key darkreel.hash
+          openssl pkeyutl -sign -inkey <(printf '%s' "$SIGNING_KEY") -rawin -in darkreel.hash -out darkreel.sig
+          rm -f darkreel.hash
 
           echo "Binary hash:"
           cat darkreel.sha256
@@ -41,11 +40,14 @@ jobs:
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           SSH_KEY: ${{ secrets.VPS_DEPLOY_KEY }}
+          VPS_HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          SSH_OPTS="-o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key"
+          # Use known host key from secrets to prevent MITM on first connect
+          echo "$VPS_HOST_KEY" >> ~/.ssh/known_hosts
+          SSH_OPTS="-o StrictHostKeyChecking=yes -i ~/.ssh/deploy_key"
 
           # Copy binary, hash, and signature to VPS
           scp $SSH_OPTS darkreel darkreel.sha256 darkreel.sig deploy@"$VPS_HOST":~/

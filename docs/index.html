@@ -1029,8 +1029,9 @@ a:hover { text-decoration: underline; }
       </code>
     </div>
 
-    <p>Backups are safe to store off-site &mdash; media is encrypted on disk, keys are encrypted
-    in the database. An attacker with a backup can't decrypt anything without a user's password.</p>
+    <p>The setup script configures daily encrypted backups (AES-256-CBC with a dedicated key, 30-day retention).
+    Backups are safe to store off-site &mdash; media is encrypted on disk, and database backups are
+    additionally encrypted at rest. An attacker with a backup can't decrypt anything without a user's password.</p>
 
     <h2>upgrading</h2>
 
@@ -1066,7 +1067,7 @@ a:hover { text-decoration: underline; }
 <span class="output">UFW firewall</span>          <span class="comment">SSH, HTTP, HTTPS only</span>
 <span class="output">fail2ban</span>              <span class="comment">auto-ban after failed SSH attempts</span>
 <span class="output">SSH hardening</span>         <span class="comment">root login disabled, key-only auth</span>
-<span class="output">systemd sandbox</span>       <span class="comment">NoNewPrivileges, ProtectSystem=strict, PrivateTmp</span>
+<span class="output">systemd sandbox</span>       <span class="comment">15+ directives: capabilities, syscall filter, namespaces, and more</span>
 <span class="output">dedicated user</span>        <span class="comment">darkreel user with minimal permissions</span>
 <span class="output">SRI hashes</span>            <span class="comment">all JS/CSS integrity-verified, including dynamic loads</span>
 <span class="output">rate limiting</span>         <span class="comment">5 auth attempts/min/IP (X-Real-IP behind proxy)</span>
@@ -1077,6 +1078,9 @@ a:hover { text-decoration: underline; }
 <span class="output">password change</span>       <span class="comment">all other sessions invalidated immediately</span>
 <span class="output">admin re-check</span>        <span class="comment">admin status verified from DB on every admin request</span>
 <span class="output">timing mitigation</span>    <span class="comment">login and recovery endpoints do dummy work for unknown users</span>
+<span class="output">BREACH mitigation</span>    <span class="comment">compression disabled on auth endpoints that return secrets</span>
+<span class="output">last-admin guard</span>     <span class="comment">prevents deletion of the last admin account</span>
+<span class="output">encrypted backups</span>    <span class="comment">AES-256-CBC with dedicated key, 30-day retention</span>
       </code>
     </div>
   </section>

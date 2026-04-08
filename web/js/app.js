@@ -1818,6 +1818,16 @@ function closeHeaderMenu() {
 async function doLogout() {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
     clearMasterKey();
+    // Terminate decryption workers to release any retained key material
+    for (const w of workers) w.terminate();
+    workers.length = 0;
+    // Reject any pending decryption promises
+    for (const id of Object.keys(pendingWork)) {
+        pendingWork[id].reject(new Error('logged out'));
+        delete pendingWork[id];
+    }
+    // Re-create fresh workers for next session
+    initWorkers();
     token = null;
     userId = null;
     currentFolderId = null;

@@ -24,6 +24,9 @@ echo "  crypto.js:  ${CRYPTO_HASH}"
 echo "  mp4box.js:  ${MP4BOX_HASH}"
 echo "  app.js:     ${APP_HASH}"
 
+# Verify module checksums against go.sum before building
+go mod verify
+
 # Build Go binary
 go build -o darkreel .
 echo "Build complete: ./darkreel"

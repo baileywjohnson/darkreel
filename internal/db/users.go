@@ -84,6 +84,12 @@ func GetUserCount(db *sql.DB) (int, error) {
 	return count, err
 }
 
+func GetAdminCount(db *sql.DB) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE is_admin = 1`).Scan(&count)
+	return count, err
+}
+
 func ListUserIDs(db *sql.DB) ([]string, error) {
 	rows, err := db.Query(`SELECT id FROM users`)
 	if err != nil {

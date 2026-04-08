@@ -127,10 +127,11 @@ else
   warn "Run setup.sh to configure signature verification"
 fi
 
-# --- Install ---
+# --- Install (atomic: copy to temp location, then mv to avoid partial writes) ---
 chmod +x "${TMP_DIR}/${ASSET}"
+cp "${TMP_DIR}/${ASSET}" "${INSTALL_DIR}/${BINARY}.new"
 systemctl stop "$SERVICE"
-cp "${TMP_DIR}/${ASSET}" "${INSTALL_DIR}/${BINARY}"
+mv "${INSTALL_DIR}/${BINARY}.new" "${INSTALL_DIR}/${BINARY}"
 systemctl start "$SERVICE"
 
 # --- Record version ---

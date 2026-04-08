@@ -188,8 +188,8 @@ Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOc
 | Go | Installs Go if not present | Required to build from source |
 | Caddy | Installed and configured | Automatic HTTPS via Let's Encrypt, reverse proxies to Darkreel |
 | Darkreel | Built, installed to `/usr/local/bin/` | The application itself |
-| systemd service | Hardened service (NoNewPrivileges, ProtectSystem, PrivateTmp) | Runs as dedicated `darkreel` user, restricted filesystem access |
-| Database backups | Daily cron job at 3 AM, 7-day retention | SQLite `.backup` for consistent snapshots while the server runs |
+| systemd service | Hardened service with 15+ security directives | Runs as dedicated `darkreel` user with capability bounding, syscall filtering, namespace restrictions, and more |
+| Database backups | Daily cron job at 3 AM, encrypted, 30-day retention | SQLite `.backup` → AES-256-CBC encrypted with a dedicated key |
 
 ### When it's done
 
@@ -240,11 +240,28 @@ Type=simple
 User=darkreel
 Group=darkreel
 ExecStart=/usr/local/bin/darkreel -addr 127.0.0.1:8080 -data /var/lib/darkreel
-Environment=DARKREEL_ADMIN_PASSWORD=YourStr0ng!Password
+EnvironmentFile=/etc/darkreel/env
 Restart=always
+RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
+ProtectHome=true
 ReadWritePaths=/var/lib/darkreel
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+UMask=0077
+LockPersonality=true
+MemoryDenyWriteExecute=true
 
 [Install]
 WantedBy=multi-user.target
@@ -333,10 +350,16 @@ Backups are safe to store off-site -- media is encrypted on disk, keys are encry
 
 #### SQLite backup with cron
 
+The setup script configures encrypted backups automatically. For manual setups:
+
 ```bash
+# Generate a backup encryption key (store this separately!)
+openssl rand -hex 32 > /etc/darkreel/backup.key
+chmod 600 /etc/darkreel/backup.key
+
 # /etc/cron.d/darkreel-backup
-# Daily backup at 3 AM, keep 7 days
-0 3 * * * root sqlite3 /var/lib/darkreel/darkreel.db ".backup '/var/lib/darkreel/backups/darkreel-$(date +\%Y\%m\%d).db'" && find /var/lib/darkreel/backups -name "darkreel-*.db" -mtime +7 -delete
+# Daily encrypted backup at 3 AM, keep 30 days
+0 3 * * * darkreel /bin/bash -c 'BACKUP_TMP=$(mktemp) && sqlite3 /var/lib/darkreel/darkreel.db ".backup $BACKUP_TMP" && openssl enc -aes-256-cbc -salt -pbkdf2 -in "$BACKUP_TMP" -out "/var/lib/darkreel/backups/darkreel-$(date +\%Y\%m\%d).db.enc" -pass file:/etc/darkreel/backup.key && rm -f "$BACKUP_TMP" && find /var/lib/darkreel/backups -name "darkreel-*.db.enc" -mtime +30 -delete'
 ```
 
 ### Upgrading
@@ -374,7 +397,7 @@ The setup script handles all of this. If deploying manually:
 - UFW firewall -- SSH, HTTP, HTTPS only
 - fail2ban -- auto-ban after failed SSH attempts
 - SSH hardened -- root login disabled, key-only auth
-- systemd sandboxing -- `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`
+- systemd sandboxing -- `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `PrivateDevices`, `CapabilityBoundingSet=`, `SystemCallFilter`, and more
 - Dedicated `darkreel` user -- minimal permissions
 - SRI hashes -- frontend JS/CSS integrity verified by browser (including dynamically loaded mp4box.js)
 - Rate limiting -- 5 auth attempts/min/IP (uses `X-Real-IP` behind reverse proxy)
@@ -386,6 +409,9 @@ The setup script handles all of this. If deploying manually:
 - Password change -- all existing sessions are invalidated immediately
 - Admin re-verification -- admin status is checked from the database on every admin request
 - Timing side-channel mitigation -- login and recovery endpoints perform dummy work for non-existent users
+- BREACH mitigation -- HTTP compression disabled on auth endpoints that return secrets
+- Last-admin protection -- the system prevents deletion of the last admin account
+- Encrypted backups -- database backups encrypted with AES-256-CBC using a dedicated key
 
 ### Session persistence
 

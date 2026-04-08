@@ -170,6 +170,24 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Prevent deleting the last admin
+	targetUser, err := db.GetUserByID(h.DB, targetID)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	if targetUser.IsAdmin {
+		adminCount, err := db.GetAdminCount(h.DB)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if adminCount <= 1 {
+			http.Error(w, "cannot delete the last admin account", http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Delete all media for this user
 	mediaIDs, err := db.ListMediaIDsByUser(h.DB, targetID)
 	if err == nil {

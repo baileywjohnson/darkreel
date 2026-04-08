@@ -52,7 +52,11 @@ func (s *Server) routes() chi.Router {
 
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP) // trust X-Forwarded-For/X-Real-IP from reverse proxy (Caddy)
-	r.Use(middleware.Compress(5))
+	// Compression applied selectively — disabled on /api/auth/* routes to
+	// prevent BREACH-style attacks against responses containing secrets
+	// (encrypted master keys, KDF salts). Encrypted media chunks are random
+	// bytes and don't compress anyway.
+	r.Use(selectiveCompress(5))
 	r.Use(securityHeaders)
 	r.Use(RateLimit(6000, time.Minute)) // Global: 6000 req/min per IP (high for chunk streaming)
 
@@ -175,6 +179,23 @@ func (s *Server) routes() chi.Router {
 	})
 
 	return r
+}
+
+// selectiveCompress applies HTTP compression to all routes except /api/auth/*,
+// which carry secrets (encrypted master keys, KDF salts) that are vulnerable
+// to BREACH-style compression side-channel attacks.
+func selectiveCompress(level int) func(http.Handler) http.Handler {
+	compressor := middleware.Compress(level)
+	return func(next http.Handler) http.Handler {
+		compressed := compressor(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/auth/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			compressed.ServeHTTP(w, r)
+		})
+	}
 }
 
 func securityHeaders(next http.Handler) http.Handler {

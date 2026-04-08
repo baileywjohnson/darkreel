@@ -59,19 +59,32 @@ func main() {
 		fmt.Fprintf(os.Stderr, "========================================\n\n")
 	}
 
-	// Clean up orphaned data directories not referenced in DB
+	// Clean up orphaned data directories not referenced in DB.
+	// Abort if DB queries fail — incomplete valid-paths would cause data loss.
 	validPaths := make(map[string]bool)
-	userIDs, _ := db.ListUserIDs(database)
-	for _, uid := range userIDs {
-		mediaIDs, _ := db.ListMediaIDsByUser(database, uid)
-		for _, mid := range mediaIDs {
-			validPaths[uid+"/"+mid] = true
+	userIDs, err := db.ListUserIDs(database)
+	if err != nil {
+		log.Printf("Warning: orphan cleanup skipped — failed to list users: %v", err)
+	} else {
+		allOK := true
+		for _, uid := range userIDs {
+			mediaIDs, err := db.ListMediaIDsByUser(database, uid)
+			if err != nil {
+				log.Printf("Warning: orphan cleanup skipped — failed to list media for user %s: %v", uid, err)
+				allOK = false
+				break
+			}
+			for _, mid := range mediaIDs {
+				validPaths[uid+"/"+mid] = true
+			}
 		}
-	}
-	if removed, err := store.CleanupOrphans(validPaths); err != nil {
-		log.Printf("Warning: orphan cleanup failed: %v", err)
-	} else if removed > 0 {
-		log.Printf("Cleaned up %d orphaned media directories", removed)
+		if allOK {
+			if removed, err := store.CleanupOrphans(validPaths); err != nil {
+				log.Printf("Warning: orphan cleanup failed: %v", err)
+			} else if removed > 0 {
+				log.Printf("Cleaned up %d orphaned media directories", removed)
+			}
+		}
 	}
 
 	// Start session cleanup goroutine (removes expired sessions every minute)

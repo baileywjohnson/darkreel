@@ -269,6 +269,10 @@ EOF
 info "Caddy configured for $DOMAIN (automatic HTTPS via Let's Encrypt)"
 
 # --- Write environment file (restricted permissions) ---
+# The admin password is only needed for the first-run bootstrap.
+# After first boot, Darkreel stores the Argon2id hash in the DB and
+# never reads this variable again. We write it for bootstrap, then
+# remove it from the env file after the service starts successfully.
 cat > /etc/darkreel/env <<EOF
 DARKREEL_ADMIN_USERNAME=${ADMIN_USER}
 DARKREEL_ADMIN_PASSWORD=${ADMIN_PASS}
@@ -305,20 +309,47 @@ ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=${DATA_DIR}
 PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+UMask=0077
+LockPersonality=true
+MemoryDenyWriteExecute=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# --- Set up daily database backups ---
+# --- Set up daily database backups (encrypted, 30-day retention) ---
 mkdir -p "${DATA_DIR}/backups"
 chown darkreel:darkreel "${DATA_DIR}/backups"
+chmod 700 "${DATA_DIR}/backups"
 
-cat > /etc/cron.d/darkreel-backup <<EOF
-# Daily Darkreel database backup at 3 AM, keep 7 days
-0 3 * * * darkreel sqlite3 ${DATA_DIR}/darkreel.db ".backup '${DATA_DIR}/backups/darkreel-\$(date +\\%Y\\%m\\%d).db'" && find ${DATA_DIR}/backups -name "darkreel-*.db" -mtime +7 -delete
-EOF
-info "Daily database backup configured (3 AM, 7-day retention)"
+# Generate a backup encryption key if one doesn't exist
+BACKUP_KEY_FILE="/etc/darkreel/backup.key"
+if [ ! -f "$BACKUP_KEY_FILE" ]; then
+  openssl rand -hex 32 > "$BACKUP_KEY_FILE"
+  chmod 600 "$BACKUP_KEY_FILE"
+  chown darkreel:darkreel "$BACKUP_KEY_FILE"
+  info "Backup encryption key generated at $BACKUP_KEY_FILE"
+  warn "Back up this key separately — without it, encrypted backups cannot be restored."
+fi
+
+cat > /etc/cron.d/darkreel-backup <<'CRONEOF'
+# Daily Darkreel database backup at 3 AM, encrypted, 30-day retention
+0 3 * * * darkreel /bin/bash -c 'BACKUP_TMP=$(mktemp) && sqlite3 DATADIR/darkreel.db ".backup $BACKUP_TMP" && openssl enc -aes-256-cbc -salt -pbkdf2 -in "$BACKUP_TMP" -out "DATADIR/backups/darkreel-$(date +\%Y\%m\%d).db.enc" -pass file:/etc/darkreel/backup.key && rm -f "$BACKUP_TMP" && find DATADIR/backups -name "darkreel-*.db.enc" -mtime +30 -delete'
+CRONEOF
+# Replace DATADIR placeholder with actual path (avoids nested variable expansion in heredoc)
+sed -i "s|DATADIR|${DATA_DIR}|g" /etc/cron.d/darkreel-backup
+info "Daily encrypted database backup configured (3 AM, 30-day retention)"
 
 # --- Auto-updates ---
 if [ "$AUTO_UPDATE" = "y" ] || [ "$AUTO_UPDATE" = "Y" ]; then
@@ -346,6 +377,11 @@ for i in $(seq 1 15); do
 done
 
 if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
+  # Bootstrap succeeded — strip the plaintext admin password from the env file.
+  # The password is now stored only as an Argon2id hash in the database.
+  sed -i '/^DARKREEL_ADMIN_PASSWORD=/d' /etc/darkreel/env
+  info "Admin password removed from /etc/darkreel/env (stored as hash in DB)"
+
   echo ""
   echo -e "${GREEN}${BOLD}Darkreel is running!${NC}"
   echo ""
@@ -354,30 +390,21 @@ if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
   echo -e "  ${BOLD}Data dir:${NC}  ${DATA_DIR}"
   echo ""
 
-  # Show recovery code from the file Darkreel writes on first run
-  RC_FILE="${DATA_DIR}/RECOVERY_CODE"
-  if [ -f "$RC_FILE" ]; then
-    RC=$(cat "$RC_FILE")
+  # Show recovery code from the service logs — never written to disk.
+  RC=$(journalctl -u darkreel --no-pager -o cat 2>/dev/null | grep -oP '(?<=  )[\w+/=_-]{40,}' | head -1)
+  if [ -n "$RC" ]; then
     echo -e "  ${YELLOW}${BOLD}RECOVERY CODE:${NC}"
     echo -e "  ${BOLD}${RC}${NC}"
     echo ""
     echo -e "  ${YELLOW}Save this code somewhere safe — it is the only way to regain${NC}"
     echo -e "  ${YELLOW}access to your encrypted data if you forget your password.${NC}"
     echo ""
-    read -rp "  Have you saved the recovery code? Delete it from disk now? [y/N]: " delete_rc
-    if [ "$delete_rc" = "y" ] || [ "$delete_rc" = "Y" ]; then
-      rm -f "$RC_FILE"
-      info "Recovery code file deleted from disk"
-    else
-      echo ""
-      echo -e "  The code is in ${RC_FILE}"
-      echo -e "  ${BOLD}Delete that file after you've saved the code:${NC}"
-      echo -e "  sudo rm ${RC_FILE}"
-      echo ""
-    fi
+    echo -e "  ${YELLOW}The code is shown in the service logs. Clear them after saving:${NC}"
+    echo -e "  ${BOLD}sudo journalctl --rotate && sudo journalctl --vacuum-time=1s${NC}"
+    echo ""
   else
     echo -e "  ${YELLOW}IMPORTANT:${NC} Check the logs for your recovery code:"
-    echo -e "  ${BOLD}sudo journalctl -u darkreel --no-pager | grep -i recovery${NC}"
+    echo -e "  ${BOLD}sudo journalctl -u darkreel --no-pager | grep -A2 'RECOVERY CODE'${NC}"
     echo ""
   fi
 

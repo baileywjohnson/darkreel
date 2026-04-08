@@ -28,6 +28,13 @@ func Open(dataDir string) (*sql.DB, error) {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
+	// Ensure DB file is owner-readable only (may pre-exist with looser perms).
+	// Done after migrate so the file is guaranteed to exist.
+	if err := os.Chmod(dbPath, 0600); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("chmod database: %w", err)
+	}
+
 	return db, nil
 }
 
