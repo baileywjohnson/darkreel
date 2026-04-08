@@ -106,7 +106,16 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mediaID := uuid.New().String()
+	// Client generates media ID so it can use it as AAD during encryption
+	if meta.MediaID == "" {
+		http.Error(w, "media_id is required", http.StatusBadRequest)
+		return
+	}
+	if _, err := uuid.Parse(meta.MediaID); err != nil {
+		http.Error(w, "media_id must be a valid UUID", http.StatusBadRequest)
+		return
+	}
+	mediaID := meta.MediaID
 	if err := h.Storage.EnsureMediaDir(userID, mediaID); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

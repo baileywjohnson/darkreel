@@ -21,8 +21,11 @@ var bufPool = sync.Pool{
 }
 
 // EncryptBlock encrypts a small block (e.g., a file key) with AES-256-GCM.
+// The aad parameter provides additional authenticated data that binds the
+// ciphertext to its context (e.g., user ID for master key wrapping, media ID
+// for file key wrapping), preventing ciphertext substitution attacks.
 // Returns: nonce (12 bytes) || ciphertext || tag (16 bytes)
-func EncryptBlock(plaintext, key []byte) ([]byte, error) {
+func EncryptBlock(plaintext, key, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -35,7 +38,7 @@ func EncryptBlock(plaintext, key []byte) ([]byte, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+	return gcm.Seal(nonce, nonce, plaintext, aad), nil
 }
 
 // EncryptChunk encrypts a single chunk with AES-256-GCM.

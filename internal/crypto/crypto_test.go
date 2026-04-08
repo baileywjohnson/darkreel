@@ -11,17 +11,30 @@ func TestBlockEncryptDecrypt(t *testing.T) {
 		key[i] = byte(i)
 	}
 	plaintext := []byte("hello darkreel encryption")
+	aad := []byte("test-context-id")
 
-	enc, err := EncryptBlock(plaintext, key)
+	enc, err := EncryptBlock(plaintext, key, aad)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dec, err := DecryptBlock(enc, key)
+	dec, err := DecryptBlock(enc, key, aad)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(plaintext, dec) {
 		t.Fatalf("round-trip failed: got %q, want %q", dec, plaintext)
+	}
+
+	// Decrypting with wrong AAD should fail
+	_, err = DecryptBlock(enc, key, []byte("wrong-context"))
+	if err == nil {
+		t.Fatal("expected error decrypting with wrong AAD")
+	}
+
+	// Decrypting with nil AAD should fail (was encrypted with non-nil AAD)
+	_, err = DecryptBlock(enc, key, nil)
+	if err == nil {
+		t.Fatal("expected error decrypting with nil AAD when encrypted with non-nil AAD")
 	}
 }
 
@@ -71,22 +84,29 @@ func TestKeyEncryptDecrypt(t *testing.T) {
 	for i := range masterKey {
 		masterKey[i] = byte(i + 20)
 	}
+	mediaID := []byte("550e8400-e29b-41d4-a716-446655440000")
 
 	fileKey, err := GenerateFileKey()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	enc, err := EncryptKey(fileKey, masterKey)
+	enc, err := EncryptKey(fileKey, masterKey, mediaID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dec, err := DecryptKey(enc, masterKey)
+	dec, err := DecryptKey(enc, masterKey, mediaID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(fileKey, dec) {
 		t.Fatal("key round-trip failed")
+	}
+
+	// Decrypting with wrong media ID should fail
+	_, err = DecryptKey(enc, masterKey, []byte("different-media-id"))
+	if err == nil {
+		t.Fatal("expected error decrypting file key with wrong media ID")
 	}
 }
 

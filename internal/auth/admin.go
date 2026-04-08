@@ -87,6 +87,10 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate user ID first — needed as AAD for master key encryption
+	userID := uuid.New().String()
+	userIDBytes := []byte(userID)
+
 	masterKey, err := crypto.GenerateFileKey()
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -94,7 +98,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	kdfKey := crypto.DeriveKey(req.Password, kdfSalt)
-	encryptedMK, err := crypto.EncryptBlock(masterKey, kdfKey)
+	encryptedMK, err := crypto.EncryptBlock(masterKey, kdfKey, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -105,7 +109,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	recoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, recoveryCode)
+	recoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, recoveryCode, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -119,7 +123,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := &db.User{
-		ID:           uuid.New().String(),
+		ID:           userID,
 		Username:     req.Username,
 		PasswordHash: crypto.HashPassword(req.Password, authSalt),
 		AuthSalt:     authSalt,

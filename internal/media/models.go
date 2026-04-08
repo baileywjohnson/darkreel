@@ -19,6 +19,7 @@ type APIMediaItem struct {
 // UploadMeta is the metadata sent by the client when initiating an upload.
 // The sensitive fields are inside metadata_enc (encrypted by the client).
 type UploadMeta struct {
+	MediaID       string `json:"media_id"`        // client-generated UUID, used as AAD for key encryption
 	ChunkCount    int    `json:"chunk_count"`
 	FileKeyEnc    string `json:"file_key_enc"`    // base64
 	ThumbKeyEnc   string `json:"thumb_key_enc"`   // base64

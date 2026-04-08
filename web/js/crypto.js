@@ -96,15 +96,19 @@ export function generateHashNonce() {
     return crypto.getRandomValues(new Uint8Array(32));
 }
 
-// Encrypt a block (small data like a file key) with AES-256-GCM
+// Encrypt a block (small data like a file key) with AES-256-GCM.
+// The aad parameter binds the ciphertext to its context (e.g., media ID for
+// file keys, user ID for master key wrapping), preventing substitution attacks.
 // Returns: nonce (12 bytes) || ciphertext+tag
-export async function encryptBlock(plaintext, keyBytes) {
+export async function encryptBlock(plaintext, keyBytes, aad) {
     const key = await crypto.subtle.importKey(
         'raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt']
     );
     const iv = crypto.getRandomValues(new Uint8Array(12));
+    const params = { name: 'AES-GCM', iv };
+    if (aad) params.additionalData = aad;
     const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv }, key, plaintext
+        params, key, plaintext
     ));
     const result = new Uint8Array(12 + ciphertext.length);
     result.set(iv, 0);
@@ -112,15 +116,17 @@ export async function encryptBlock(plaintext, keyBytes) {
     return result;
 }
 
-// Decrypt a block
-export async function decryptBlock(data, keyBytes) {
+// Decrypt a block. The aad parameter must match the value used during encryption.
+export async function decryptBlock(data, keyBytes, aad) {
     const key = await crypto.subtle.importKey(
         'raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']
     );
     const iv = data.slice(0, 12);
     const ciphertext = data.slice(12);
+    const params = { name: 'AES-GCM', iv };
+    if (aad) params.additionalData = aad;
     return new Uint8Array(await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv }, key, ciphertext
+        params, key, ciphertext
     ));
 }
 
@@ -157,26 +163,30 @@ export async function decryptChunk(data, keyBytes, chunkIndex) {
     ));
 }
 
-// Encrypt a file key with the master key
-export async function encryptFileKey(fileKey) {
-    return encryptBlock(fileKey, _masterKeyRaw);
+// Encrypt a file key with the master key. mediaId binds the key to its media item.
+export async function encryptFileKey(fileKey, mediaId) {
+    const aad = new TextEncoder().encode(mediaId);
+    return encryptBlock(fileKey, _masterKeyRaw, aad);
 }
 
-// Decrypt a file key with the master key
-export async function decryptFileKey(encryptedFileKey) {
-    return decryptBlock(encryptedFileKey, _masterKeyRaw);
+// Decrypt a file key with the master key. mediaId must match the value used during encryption.
+export async function decryptFileKey(encryptedFileKey, mediaId) {
+    const aad = new TextEncoder().encode(mediaId);
+    return decryptBlock(encryptedFileKey, _masterKeyRaw, aad);
 }
 
-// Encrypt a filename
-export async function encryptName(name) {
+// Encrypt a filename. mediaId binds the name to its media item.
+export async function encryptName(name, mediaId) {
     const enc = new TextEncoder();
-    return encryptBlock(enc.encode(name), _masterKeyRaw);
+    const aad = enc.encode(mediaId);
+    return encryptBlock(enc.encode(name), _masterKeyRaw, aad);
 }
 
-// Decrypt a filename
-export async function decryptName(encData) {
+// Decrypt a filename. mediaId must match the value used during encryption.
+export async function decryptName(encData, mediaId) {
     const dec = new TextDecoder();
-    const plaintext = await decryptBlock(encData, _masterKeyRaw);
+    const aad = new TextEncoder().encode(mediaId);
+    const plaintext = await decryptBlock(encData, _masterKeyRaw, aad);
     return dec.decode(plaintext);
 }
 

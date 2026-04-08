@@ -54,13 +54,16 @@ func GenerateFileKey() ([]byte, error) {
 }
 
 // EncryptKey encrypts a file key with the user's master key using AES-256-GCM.
-func EncryptKey(fileKey, masterKey []byte) ([]byte, error) {
-	return EncryptBlock(fileKey, masterKey)
+// The mediaID binds the encrypted key to a specific media item, preventing
+// ciphertext substitution between items.
+func EncryptKey(fileKey, masterKey, mediaID []byte) ([]byte, error) {
+	return EncryptBlock(fileKey, masterKey, mediaID)
 }
 
 // DecryptKey decrypts a file key with the user's master key.
-func DecryptKey(encryptedKey, masterKey []byte) ([]byte, error) {
-	return DecryptBlock(encryptedKey, masterKey)
+// The mediaID must match the value used during encryption.
+func DecryptKey(encryptedKey, masterKey, mediaID []byte) ([]byte, error) {
+	return DecryptBlock(encryptedKey, masterKey, mediaID)
 }
 
 // DeriveSessionKey derives a 256-bit key using PBKDF2 with SHA-256.
@@ -81,11 +84,13 @@ func GenerateRecoveryCode() ([]byte, error) {
 }
 
 // EncryptMasterKeyForRecovery encrypts the master key with a recovery code.
-func EncryptMasterKeyForRecovery(masterKey, recoveryCode []byte) ([]byte, error) {
-	return EncryptBlock(masterKey, recoveryCode)
+// The userID binds the encrypted key to a specific user.
+func EncryptMasterKeyForRecovery(masterKey, recoveryCode, userID []byte) ([]byte, error) {
+	return EncryptBlock(masterKey, recoveryCode, userID)
 }
 
 // DecryptMasterKeyWithRecovery decrypts the master key using a recovery code.
-func DecryptMasterKeyWithRecovery(encryptedMK, recoveryCode []byte) ([]byte, error) {
-	return DecryptBlock(encryptedMK, recoveryCode)
+// The userID must match the value used during encryption.
+func DecryptMasterKeyWithRecovery(encryptedMK, recoveryCode, userID []byte) ([]byte, error) {
+	return DecryptBlock(encryptedMK, recoveryCode, userID)
 }

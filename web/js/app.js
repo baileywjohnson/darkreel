@@ -780,12 +780,12 @@ function initWorkers() {
     }
 }
 
-function workerDecrypt(type, data, keyBytes, chunkIndex) {
+function workerDecrypt(type, data, keyBytes, chunkIndex, aad) {
     return new Promise((resolve, reject) => {
         const id = workIdCounter++;
         pendingWork[id] = { resolve, reject };
         const worker = workers[id % workers.length];
-        worker.postMessage({ type, id, data, keyBytes, chunkIndex });
+        worker.postMessage({ type, id, data, keyBytes, chunkIndex, aad });
     });
 }
 
@@ -857,8 +857,10 @@ async function handleLogin(overrideUsername, overridePassword) {
         kdfSalt = res.kdf_salt;
 
         // Receive encrypted master key and decrypt it using per-user KDF salt
+        // User ID is used as AAD to bind the encrypted key to this user
         if (res.encrypted_master_key) {
             const encMK = base64ToBuffer(res.encrypted_master_key);
+            const userIdAad = new TextEncoder().encode(res.user_id);
             const sessionKeyMaterial = await crypto.subtle.importKey(
                 'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits', 'deriveKey']
             );
@@ -868,7 +870,7 @@ async function handleLogin(overrideUsername, overridePassword) {
             );
             const iv = encMK.slice(0, 12);
             const ct = encMK.slice(12);
-            const mk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, sessionKey, ct));
+            const mk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: userIdAad }, sessionKey, ct));
             await setMasterKeyDirect(mk);
         }
 
@@ -1715,6 +1717,7 @@ document.getElementById('settings-change-pw-form').addEventListener('submit', as
         if (res.encrypted_master_key) {
             if (res.kdf_salt) kdfSalt = res.kdf_salt;
             const encMK = base64ToBuffer(res.encrypted_master_key);
+            const userIdAad = new TextEncoder().encode(userId);
             const sessionKeyMaterial = await crypto.subtle.importKey(
                 'raw', new TextEncoder().encode(newPw), 'PBKDF2', false, ['deriveBits', 'deriveKey']
             );
@@ -1724,7 +1727,7 @@ document.getElementById('settings-change-pw-form').addEventListener('submit', as
             );
             const iv = encMK.slice(0, 12);
             const ct = encMK.slice(12);
-            const mk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, sessionKey, ct));
+            const mk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: userIdAad }, sessionKey, ct));
             await setMasterKeyDirect(mk);
             if (serverConfig.persistSession) {
                 sessionStorage.setItem('masterKey', bufferToBase64(getMasterKeyRaw()));
@@ -1920,7 +1923,8 @@ async function loadFolderTree() {
             const combined = new Uint8Array(nonce.length + encData.length);
             combined.set(nonce, 0);
             combined.set(encData, nonce.length);
-            const decrypted = await decryptBlock(combined, getMasterKeyRaw());
+            const userIdAad = new TextEncoder().encode(userId);
+            const decrypted = await decryptBlock(combined, getMasterKeyRaw(), userIdAad);
             folders = JSON.parse(new TextDecoder().decode(decrypted));
         } else {
             folders = [];
@@ -1932,7 +1936,8 @@ async function loadFolderTree() {
 
 async function saveFolderTree() {
     const data = new TextEncoder().encode(JSON.stringify(folders));
-    const enc = await encryptBlock(data, getMasterKeyRaw());
+    const userIdAad = new TextEncoder().encode(userId);
+    const enc = await encryptBlock(data, getMasterKeyRaw(), userIdAad);
     const nonce = enc.slice(0, 12);
     const ciphertext = enc.slice(12);
     await api('/api/folders', {
@@ -2522,7 +2527,8 @@ async function loadMedia() {
                     const combined = new Uint8Array(nonce.length + encData.length);
                     combined.set(nonce, 0);
                     combined.set(encData, nonce.length);
-                    const decrypted = await decryptBlock(combined, getMasterKeyRaw());
+                    const mediaIdAad = new TextEncoder().encode(item.id);
+                    const decrypted = await decryptBlock(combined, getMasterKeyRaw(), mediaIdAad);
                     const meta = JSON.parse(new TextDecoder().decode(decrypted));
                     // Store trusted chunk count from encrypted metadata (tamper-proof)
                     if (meta.chunk_count) {
@@ -2584,7 +2590,8 @@ async function pollMedia() {
                     const combined = new Uint8Array(nonce.length + encData.length);
                     combined.set(nonce, 0);
                     combined.set(encData, nonce.length);
-                    const decrypted = await decryptBlock(combined, getMasterKeyRaw());
+                    const mediaIdAad = new TextEncoder().encode(item.id);
+                    const decrypted = await decryptBlock(combined, getMasterKeyRaw(), mediaIdAad);
                     const meta = JSON.parse(new TextDecoder().decode(decrypted));
                     if (meta.chunk_count) meta.chunk_count_trusted = meta.chunk_count;
                     Object.assign(item, meta);
@@ -2730,7 +2737,7 @@ async function loadThumbnail(item, img) {
 
         // Decrypt thumbnail key
         const thumbKeyEnc = base64ToBuffer(item.thumb_key_enc);
-        const thumbKey = await decryptFileKey(thumbKeyEnc);
+        const thumbKey = await decryptFileKey(thumbKeyEnc, item.id);
 
         // Decrypt thumbnail (it's encrypted as chunk index 0)
         const decrypted = await workerDecrypt('decryptChunk', encData, thumbKey, 0);
@@ -2875,7 +2882,8 @@ async function moveItemToFolder(item, newFolderId, skipDupeCheck) {
     if (item.codecs) meta.codecs = item.codecs;
 
     const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
-    const enc = await encryptBlock(metaBytes, getMasterKeyRaw());
+    const mediaIdAad = new TextEncoder().encode(item.id);
+    const enc = await encryptBlock(metaBytes, getMasterKeyRaw(), mediaIdAad);
     const nonce = enc.slice(0, 12);
     const ciphertext = enc.slice(12);
 
@@ -3344,7 +3352,7 @@ async function openViewer(item) {
 
     // Decrypt file key
     const fileKeyEnc = base64ToBuffer(item.file_key_enc);
-    const fileKey = await decryptFileKey(fileKeyEnc);
+    const fileKey = await decryptFileKey(fileKeyEnc, item.id);
 
     if (item.media_type === 'video') {
         await playVideo(item, fileKey);
@@ -4001,7 +4009,7 @@ async function rotateCurrentItem() {
     try {
         // Decrypt file
         const fileKeyEnc = base64ToBuffer(item.file_key_enc);
-        const fileKey = await decryptFileKey(fileKeyEnc);
+        const fileKey = await decryptFileKey(fileKeyEnc, item.id);
         const chunks = [];
         for (let i = 0; i < item.chunk_count; i++) {
             const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
@@ -4047,8 +4055,10 @@ async function rotateCurrentItem() {
             encChunks.push(await encryptChunk(modifiedData.slice(start, end), newFileKey, i));
         }
 
-        const encFileKey = await encryptFileKey(newFileKey);
-        const encThumbKey = await encryptFileKey(newThumbKey);
+        // Generate media ID for the re-upload (used as AAD for key encryption)
+        const newMediaId = crypto.randomUUID();
+        const encFileKey = await encryptFileKey(newFileKey, newMediaId);
+        const encThumbKey = await encryptFileKey(newThumbKey, newMediaId);
 
         // Get rotated dimensions
         const rotImg = new Image();
@@ -4072,11 +4082,13 @@ async function rotateCurrentItem() {
         if (item.folderId) metaPlain.folderId = item.folderId;
 
         const metaBytes = new TextEncoder().encode(JSON.stringify(metaPlain));
-        const encMetadata = await encryptBlock(metaBytes, getMasterKeyRaw());
+        const newMediaIdAad = new TextEncoder().encode(newMediaId);
+        const encMetadata = await encryptBlock(metaBytes, getMasterKeyRaw(), newMediaIdAad);
         const metadataNonce = encMetadata.slice(0, 12);
         const metadataCiphertext = encMetadata.slice(12);
 
         const metadata = {
+            media_id: newMediaId,
             chunk_count: chunkCount,
             file_key_enc: bufferToBase64(encFileKey),
             thumb_key_enc: bufferToBase64(encThumbKey),
@@ -4223,7 +4235,7 @@ async function downloadItem(item) {
 
     try {
         const fileKeyEnc = base64ToBuffer(item.file_key_enc);
-        const fileKey = await decryptFileKey(fileKeyEnc);
+        const fileKey = await decryptFileKey(fileKeyEnc, item.id);
         const progressEl = toast.querySelector('.download-toast-progress');
 
         // Collect all chunks
@@ -4301,7 +4313,7 @@ async function downloadFolder(folder) {
             const filename = prefix + (item.name || `file-${idx}`);
 
             const fileKeyEnc = base64ToBuffer(item.file_key_enc);
-            const fileKey = await decryptFileKey(fileKeyEnc);
+            const fileKey = await decryptFileKey(fileKeyEnc, item.id);
 
             const chunks = [];
             for (let i = 0; i < item.chunk_count; i++) {
@@ -4554,7 +4566,8 @@ async function updateItemMetadata(item) {
     if (item.codecs) meta.codecs = item.codecs;
 
     const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
-    const enc = await encryptBlock(metaBytes, getMasterKeyRaw());
+    const mediaIdAad = new TextEncoder().encode(item.id);
+    const enc = await encryptBlock(metaBytes, getMasterKeyRaw(), mediaIdAad);
     const nonce = enc.slice(0, 12);
     const ciphertext = enc.slice(12);
 
@@ -4733,9 +4746,12 @@ async function uploadFile(file, itemEl, targetFolderId) {
         setUploadProgress(itemEl, Math.round(((i + 1) / chunkCount) * 50));
     }
 
-    // Encrypt keys with master key
-    const encFileKey = await encryptFileKey(fileKey);
-    const encThumbKey = await encryptFileKey(thumbKey);
+    // Generate media ID for AAD binding (client-generated, sent to server)
+    const mediaId = crypto.randomUUID();
+
+    // Encrypt keys with master key, bound to this media item via AAD
+    const encFileKey = await encryptFileKey(fileKey, mediaId);
+    const encThumbKey = await encryptFileKey(thumbKey, mediaId);
 
     // Build and encrypt metadata blob
     const metaPlain = {
@@ -4766,7 +4782,8 @@ async function uploadFile(file, itemEl, targetFolderId) {
     }
 
     const metaBytes = new TextEncoder().encode(JSON.stringify(metaPlain));
-    const encMetadata = await encryptBlock(metaBytes, getMasterKeyRaw());
+    const mediaIdAad = new TextEncoder().encode(mediaId);
+    const encMetadata = await encryptBlock(metaBytes, getMasterKeyRaw(), mediaIdAad);
     // encryptBlock returns nonce (12 bytes) || ciphertext
     const metadataNonce = encMetadata.slice(0, 12);
     const metadataCiphertext = encMetadata.slice(12);
@@ -4775,6 +4792,7 @@ async function uploadFile(file, itemEl, targetFolderId) {
     setUploadStatus(itemEl, 'Uploading...');
 
     const metadata = {
+        media_id: mediaId,
         chunk_count: chunkCount,
         file_key_enc: bufferToBase64(encFileKey),
         thumb_key_enc: bufferToBase64(encThumbKey),
