@@ -18,7 +18,7 @@ func DecryptBlock(ciphertext, key, aad []byte) ([]byte, error) {
 		return nil, err
 	}
 	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
+	if len(ciphertext) < nonceSize+gcm.Overhead() {
 		return nil, fmt.Errorf("ciphertext too short")
 	}
 	nonce, ct := ciphertext[:nonceSize], ciphertext[nonceSize:]
@@ -37,7 +37,7 @@ func DecryptChunk(ciphertext, key []byte, chunkIndex int, mediaID string) ([]byt
 		return nil, err
 	}
 	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
+	if len(ciphertext) < nonceSize+gcm.Overhead() {
 		return nil, fmt.Errorf("ciphertext too short")
 	}
 

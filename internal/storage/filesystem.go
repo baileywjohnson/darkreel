@@ -53,7 +53,9 @@ func (l *Layout) WriteChunk(userID, mediaID string, index int, data []byte) erro
 	copy(padded[4:], data)
 	// Fill remaining with random bytes so padding isn't distinguishable
 	if rem := padSize - len(data); rem > 0 {
-		rand.Read(padded[4+len(data):])
+		if _, err := rand.Read(padded[4+len(data):]); err != nil {
+			return fmt.Errorf("generate chunk padding: %w", err)
+		}
 	}
 
 	if err := os.WriteFile(path, padded, 0600); err != nil {
@@ -110,7 +112,9 @@ func (l *Layout) WriteThumbnail(userID, mediaID string, data []byte) error {
 	binary.BigEndian.PutUint32(padded[:4], uint32(len(data)))
 	copy(padded[4:], data)
 	if pad := paddedThumbSize - len(data); pad > 0 {
-		rand.Read(padded[4+len(data):])
+		if _, err := rand.Read(padded[4+len(data):]); err != nil {
+			return fmt.Errorf("generate thumbnail padding: %w", err)
+		}
 	}
 
 	if err := os.WriteFile(path, padded, 0600); err != nil {

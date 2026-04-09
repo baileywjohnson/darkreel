@@ -79,9 +79,11 @@ func BootstrapAdmin(database *sql.DB, username, password string) (string, error)
 	if err != nil {
 		return "", err
 	}
+	defer clear(masterKey)
 
 	// Encrypt master key with password-derived key (for login decryption)
 	kdfKey := crypto.DeriveKey(password, kdfSalt)
+	defer clear(kdfKey)
 	encryptedMK, err := crypto.EncryptBlock(masterKey, kdfKey, userIDBytes)
 	if err != nil {
 		return "", err
@@ -92,15 +94,11 @@ func BootstrapAdmin(database *sql.DB, username, password string) (string, error)
 	if err != nil {
 		return "", err
 	}
+	defer clear(recoveryCode)
 	recoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, recoveryCode, userIDBytes)
 	if err != nil {
 		return "", err
 	}
-
-	// Zero sensitive material
-	for i := range masterKey { masterKey[i] = 0 }
-	for i := range kdfKey { kdfKey[i] = 0 }
-	defer func() { for i := range recoveryCode { recoveryCode[i] = 0 } }()
 
 	user := &db.User{
 		ID:           userID,
@@ -176,9 +174,11 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	defer clear(masterKey)
 
 	// Encrypt master key with password-derived key
 	kdfKey := crypto.DeriveKey(req.Password, kdfSalt)
+	defer clear(kdfKey)
 	encryptedMK, err := crypto.EncryptBlock(masterKey, kdfKey, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -191,15 +191,12 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	defer clear(recoveryCode)
 	recoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, recoveryCode, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
-	for i := range masterKey { masterKey[i] = 0 }
-	for i := range kdfKey { kdfKey[i] = 0 }
-	defer func() { for i := range recoveryCode { recoveryCode[i] = 0 } }()
 
 	user := &db.User{
 		ID:           userID,
@@ -262,12 +259,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	// Decrypt master key from stored encrypted copy using password-derived key
 	userIDBytes := []byte(user.ID)
 	kdfKey := crypto.DeriveKey(req.Password, user.KDFSalt)
+	defer clear(kdfKey)
 	masterKey, err := crypto.DecryptBlock(user.EncryptedMK, kdfKey, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	for i := range kdfKey { kdfKey[i] = 0 }
+	defer clear(masterKey)
 
 	sessionID := GenerateSessionID()
 	Sessions.Set(sessionID, user.ID, masterKey)
@@ -276,18 +274,11 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	// Client derives the same session key via PBKDF2(password, kdfSalt)
 	// and decrypts the master key. This avoids needing Argon2id in the browser.
 	sessionKeyBytes := crypto.DeriveSessionKey(req.Password, user.KDFSalt)
+	defer clear(sessionKeyBytes)
 	encMasterKey, err := crypto.EncryptBlock(masterKey, sessionKeyBytes, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
-	}
-
-	// Zero local copies
-	for i := range masterKey {
-		masterKey[i] = 0
-	}
-	for i := range sessionKeyBytes {
-		sessionKeyBytes[i] = 0
 	}
 
 	token, err := GenerateToken(user.ID, sessionID, user.IsAdmin)
@@ -352,14 +343,13 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	// Decrypt master key with old password
 	userIDBytes := []byte(user.ID)
 	oldKdfKey := crypto.DeriveKey(req.OldPassword, user.KDFSalt)
+	defer clear(oldKdfKey)
 	masterKey, err := crypto.DecryptBlock(user.EncryptedMK, oldKdfKey, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	for i := range oldKdfKey {
-		oldKdfKey[i] = 0
-	}
+	defer clear(masterKey)
 
 	// Re-encrypt master key with new password
 	newAuthSalt, err := crypto.GenerateSalt()
@@ -374,13 +364,11 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newKdfKey := crypto.DeriveKey(req.NewPassword, newKdfSalt)
+	defer clear(newKdfKey)
 	newEncryptedMK, err := crypto.EncryptBlock(masterKey, newKdfKey, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
-	}
-	for i := range newKdfKey {
-		newKdfKey[i] = 0
 	}
 
 	newPasswordHash := crypto.HashPassword(req.NewPassword, newAuthSalt)
@@ -411,16 +399,11 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	// Re-encrypt master key with new session key for the client
 	newSessionKey := crypto.DeriveSessionKey(req.NewPassword, newKdfSalt)
+	defer clear(newSessionKey)
 	newEncMKForClient, err := crypto.EncryptBlock(masterKey, newSessionKey, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
-	}
-	for i := range newSessionKey {
-		newSessionKey[i] = 0
-	}
-	for i := range masterKey {
-		masterKey[i] = 0
 	}
 
 	// Generate new token with fresh session ID
@@ -542,11 +525,12 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 	// Decrypt master key with recovery code
 	userIDBytes := []byte(user.ID)
 	masterKey, err := crypto.DecryptMasterKeyWithRecovery(user.RecoveryMK, recoveryCode, userIDBytes)
-	for i := range recoveryCode { recoveryCode[i] = 0 }
+	clear(recoveryCode)
 	if decodeErr != nil || err != nil {
 		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
 		return
 	}
+	defer clear(masterKey)
 
 	// Generate new auth/KDF salts and hash
 	newAuthSalt, err := crypto.GenerateSalt()
@@ -564,12 +548,12 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 
 	// Re-encrypt master key with new password-derived key
 	newKdfKey := crypto.DeriveKey(req.NewPassword, newKdfSalt)
+	defer clear(newKdfKey)
 	newEncryptedMK, err := crypto.EncryptBlock(masterKey, newKdfKey, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	for i := range newKdfKey { newKdfKey[i] = 0 }
 
 	// Re-encrypt recovery MK with new recovery code
 	newRecoveryCode, err := crypto.GenerateRecoveryCode()
@@ -606,11 +590,6 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate all existing sessions for this user
 	Sessions.DeleteAllForUser(user.ID)
-
-	// Zero sensitive data
-	for i := range masterKey {
-		masterKey[i] = 0
-	}
 
 	recoveryCodeB64 := base64.URLEncoding.EncodeToString(newRecoveryCode)
 	for i := range newRecoveryCode { newRecoveryCode[i] = 0 }

@@ -218,8 +218,10 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	defer clear(masterKey)
 
 	kdfKey := crypto.DeriveKey(req.Password, kdfSalt)
+	defer clear(kdfKey)
 	encryptedMK, err := crypto.EncryptBlock(masterKey, kdfKey, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -231,19 +233,12 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	defer clear(recoveryCode)
 	recoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, recoveryCode, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
-	for i := range masterKey {
-		masterKey[i] = 0
-	}
-	for i := range kdfKey {
-		kdfKey[i] = 0
-	}
-	defer func() { for i := range recoveryCode { recoveryCode[i] = 0 } }()
 
 	user := &db.User{
 		ID:           userID,

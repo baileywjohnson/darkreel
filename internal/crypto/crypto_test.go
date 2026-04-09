@@ -173,6 +173,163 @@ func TestHashModification(t *testing.T) {
 	}
 }
 
+func TestDecryptBlockCiphertextTooShort(t *testing.T) {
+	key := make([]byte, 32)
+	aad := []byte("context")
+
+	// Empty ciphertext
+	_, err := DecryptBlock(nil, key, aad)
+	if err == nil {
+		t.Fatal("expected error for empty ciphertext")
+	}
+
+	// Ciphertext shorter than nonce (12 bytes)
+	_, err = DecryptBlock(make([]byte, 11), key, aad)
+	if err == nil {
+		t.Fatal("expected error for ciphertext shorter than nonce")
+	}
+
+	// Ciphertext exactly nonce size — missing GCM tag (16 bytes)
+	_, err = DecryptBlock(make([]byte, 12), key, aad)
+	if err == nil {
+		t.Fatal("expected error for ciphertext with nonce but no tag")
+	}
+
+	// Ciphertext nonce + partial tag (27 bytes, need at least 28)
+	_, err = DecryptBlock(make([]byte, 27), key, aad)
+	if err == nil {
+		t.Fatal("expected error for ciphertext with partial tag")
+	}
+}
+
+func TestDecryptChunkCiphertextTooShort(t *testing.T) {
+	key := make([]byte, 32)
+	mediaID := "550e8400-e29b-41d4-a716-446655440000"
+
+	// Ciphertext shorter than nonce + tag
+	_, err := DecryptChunk(make([]byte, 20), key, 0, mediaID)
+	if err == nil {
+		t.Fatal("expected error for ciphertext shorter than nonce + tag")
+	}
+}
+
+func TestRecoveryCodeEncryptDecrypt(t *testing.T) {
+	masterKey, err := GenerateFileKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryCode, err := GenerateRecoveryCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	userID := []byte("test-user-id")
+
+	enc, err := EncryptMasterKeyForRecovery(masterKey, recoveryCode, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, err := DecryptMasterKeyWithRecovery(enc, recoveryCode, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(masterKey, dec) {
+		t.Fatal("recovery round-trip failed")
+	}
+
+	// Wrong recovery code should fail
+	wrongCode := make([]byte, 32)
+	_, err = DecryptMasterKeyWithRecovery(enc, wrongCode, userID)
+	if err == nil {
+		t.Fatal("expected error with wrong recovery code")
+	}
+
+	// Wrong user ID should fail (AAD mismatch)
+	_, err = DecryptMasterKeyWithRecovery(enc, recoveryCode, []byte("other-user"))
+	if err == nil {
+		t.Fatal("expected error with wrong user ID")
+	}
+}
+
+func TestHashModificationWebM(t *testing.T) {
+	nonce, err := GenerateHashNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid minimal WebM: EBML header ID (4 bytes) + 1-byte VINT size (0x80 = 0 data bytes)
+	webm := []byte{0x1A, 0x45, 0xDF, 0xA3, 0x80}
+	modified, err := ModifyHash(webm, "video/webm", nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(webm, modified) {
+		t.Fatal("WebM hash modification should change the data")
+	}
+	// Original header should be preserved
+	if !bytes.Equal(modified[:4], webm[:4]) {
+		t.Fatal("EBML header ID should be preserved")
+	}
+}
+
+func TestHashModificationWebMTruncated(t *testing.T) {
+	nonce, err := GenerateHashNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Truncated WebM: just the EBML header ID, no VINT
+	truncated := []byte{0x1A, 0x45, 0xDF, 0xA3}
+	_, err = ModifyHash(truncated, "video/webm", nonce)
+	if err == nil {
+		t.Fatal("expected error for truncated WebM")
+	}
+}
+
+func TestHashModificationWebMOverflowHeader(t *testing.T) {
+	nonce, err := GenerateHashNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// WebM with VINT claiming huge size that exceeds file length
+	// EBML header ID + 1-byte VINT (0x80 | 0x7F = size 127, but file is only 6 bytes)
+	overflow := []byte{0x1A, 0x45, 0xDF, 0xA3, 0xFF}
+	_, err = ModifyHash(overflow, "video/webm", nonce)
+	if err == nil {
+		t.Fatal("expected error for WebM with header size exceeding file length")
+	}
+}
+
+func TestHashModificationMP4(t *testing.T) {
+	nonce, err := GenerateHashNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Minimal MP4 with ftyp box
+	mp4 := make([]byte, 20)
+	mp4[0], mp4[1], mp4[2], mp4[3] = 0, 0, 0, 20 // box size = 20
+	copy(mp4[4:8], "ftyp")
+	modified, err := ModifyHash(mp4, "video/mp4", nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(mp4, modified) {
+		t.Fatal("MP4 hash modification should change the data")
+	}
+}
+
+func TestHashModificationUnsupportedFormat(t *testing.T) {
+	nonce, err := GenerateHashNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ModifyHash([]byte("data"), "text/plain", nonce)
+	if err == nil {
+		t.Fatal("expected error for unsupported format")
+	}
+}
+
 func TestSessionKeyDerivation(t *testing.T) {
 	salt := []byte("test-salt-1234567890123456789012")
 	key := DeriveSessionKey("testpassword", salt)

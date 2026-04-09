@@ -188,6 +188,9 @@ func modifyWebM(data []byte, nonce []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid EBML header size")
 	}
 	pos += vintLen + int(headerSize)
+	if pos > len(data) {
+		return nil, fmt.Errorf("invalid EBML header: position exceeds file size")
+	}
 
 	result := make([]byte, 0, len(data)+len(voidElem))
 	result = append(result, data[:pos]...)

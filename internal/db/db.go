@@ -5,9 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
+
+// isDuplicateColumnError returns true if the error indicates the column already exists.
+func isDuplicateColumnError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "duplicate column name")
+}
 
 func Open(dataDir string) (*sql.DB, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
@@ -39,7 +45,13 @@ func Open(dataDir string) (*sql.DB, error) {
 }
 
 func migrate(db *sql.DB) error {
-	_, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
 			id            TEXT PRIMARY KEY,
 			username      TEXT UNIQUE NOT NULL,
@@ -81,8 +93,13 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
-	// Add storage_quota column to users if it doesn't exist (migration for existing DBs)
-	_, _ = db.Exec(`ALTER TABLE users ADD COLUMN storage_quota INTEGER NOT NULL DEFAULT 0`)
+	// Add storage_quota column to users if it doesn't exist (migration for existing DBs).
+	// "duplicate column name" is expected on DBs that already have this column.
+	if _, err := tx.Exec(`ALTER TABLE users ADD COLUMN storage_quota INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !isDuplicateColumnError(err) {
+			return fmt.Errorf("add storage_quota column: %w", err)
+		}
+	}
 
-	return nil
+	return tx.Commit()
 }
