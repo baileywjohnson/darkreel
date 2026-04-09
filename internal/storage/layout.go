@@ -93,6 +93,21 @@ func (l *Layout) CleanupOrphans(validPaths map[string]bool) (int, error) {
 	return removed, nil
 }
 
+// IsMediaComplete checks that all expected chunk files and the thumbnail exist on disk.
+func (l *Layout) IsMediaComplete(userID, mediaID string, chunkCount int) bool {
+	// Check thumbnail
+	if _, err := os.Stat(l.ThumbnailPath(userID, mediaID)); err != nil {
+		return false
+	}
+	// Check all chunks
+	for i := 0; i < chunkCount; i++ {
+		if _, err := os.Stat(l.ChunkPath(userID, mediaID, i)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // RemoveMedia securely shreds all files for a media item, then removes the directory.
 func (l *Layout) RemoveMedia(userID, mediaID string) error {
 	dir := l.MediaDir(userID, mediaID)

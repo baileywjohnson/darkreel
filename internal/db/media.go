@@ -85,8 +85,45 @@ func ListMediaIDsByUser(db *sql.DB, userID string) ([]string, error) {
 	return ids, rows.Err()
 }
 
+// MediaSummary is a lightweight struct for startup integrity checks.
+type MediaSummary struct {
+	ID         string
+	UserID     string
+	ChunkCount int
+}
+
+// ListAllMediaSummaries returns (id, user_id, chunk_count) for all media items.
+func ListAllMediaSummaries(db *sql.DB) ([]MediaSummary, error) {
+	rows, err := db.Query(`SELECT id, user_id, chunk_count FROM media`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaSummary
+	for rows.Next() {
+		var s MediaSummary
+		if err := rows.Scan(&s.ID, &s.UserID, &s.ChunkCount); err != nil {
+			return nil, err
+		}
+		items = append(items, s)
+	}
+	return items, rows.Err()
+}
+
+func GetUserChunkCount(db *sql.DB, userID string) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COALESCE(SUM(chunk_count), 0) FROM media WHERE user_id = ?`, userID).Scan(&count)
+	return count, err
+}
+
 func DeleteMedia(db *sql.DB, id, userID string) error {
 	_, err := db.Exec(`DELETE FROM media WHERE id = ? AND user_id = ?`, id, userID)
+	return err
+}
+
+// DeleteMediaByID deletes a media record by ID only (used during startup cleanup).
+func DeleteMediaByID(db *sql.DB, id string) error {
+	_, err := db.Exec(`DELETE FROM media WHERE id = ?`, id)
 	return err
 }
 

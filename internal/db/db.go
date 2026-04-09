@@ -71,6 +71,18 @@ func migrate(db *sql.DB) error {
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_media_user ON media(user_id, created_at DESC);
+
+		CREATE TABLE IF NOT EXISTS settings (
+			key   TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Add storage_quota column to users if it doesn't exist (migration for existing DBs)
+	_, _ = db.Exec(`ALTER TABLE users ADD COLUMN storage_quota INTEGER NOT NULL DEFAULT 0`)
+
+	return nil
 }

@@ -225,6 +225,8 @@ DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 | `DARKREEL_ADMIN_PASSWORD` | **(required on first run)** | Admin password (first-run bootstrap only) |
 | `PERSIST_SESSION` | `true` | Cache master key in sessionStorage (survives page refresh). Set to `false` for higher security -- see [Session persistence](#session-persistence) |
 | `ALLOW_REGISTRATION` | `false` | Allow new user registration via the web UI |
+| `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` / `X-Real-IP` headers for rate limiting. **Only enable when running behind a trusted reverse proxy** (Caddy, nginx). Without a proxy, clients can spoof these headers to bypass rate limits. |
+| `MAX_STORAGE_CHUNKS` | unlimited | Per-user total chunk limit. Each chunk is ~1 MB. Set to `50000` for ~50 GB per user. |
 
 Password: 16-128 characters, at least one letter, number, and symbol. Username: 3-64 alphanumeric characters.
 
@@ -275,7 +277,7 @@ media.example.com {
 }
 ```
 
-Caddy handles TLS automatically via Let's Encrypt. For nginx, see the [nginx example](#reverse-proxy-nginx) below.
+Caddy handles TLS automatically via Let's Encrypt. When running behind any reverse proxy, set `TRUST_PROXY=true` so rate limiting uses the real client IP from `X-Forwarded-For` instead of the proxy's address. For nginx, see the [nginx example](#reverse-proxy-nginx) below.
 
 ## API
 
@@ -400,7 +402,7 @@ The setup script handles all of this. If deploying manually:
 - systemd sandboxing -- `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `PrivateDevices`, `CapabilityBoundingSet=`, `SystemCallFilter`, and more
 - Dedicated `darkreel` user -- minimal permissions
 - SRI hashes -- frontend JS/CSS integrity verified by browser (including dynamically loaded mp4box.js)
-- Rate limiting -- 5 auth attempts/min/IP (uses `X-Real-IP` behind reverse proxy)
+- Rate limiting -- 5 auth attempts/min/IP + 10 attempts/15min/username (per-username limits defend against distributed brute-force even when per-IP limits are bypassed)
 - Security headers -- `nosniff`, `DENY` framing, `no-referrer`, strict CSP, HSTS, `Permissions-Policy`
 - COOP/COEP -- defense-in-depth for SharedArrayBuffer
 - Cache-Control -- `no-store` on all API responses to prevent caching of sensitive data
@@ -410,7 +412,10 @@ The setup script handles all of this. If deploying manually:
 - Admin re-verification -- admin status is checked from the database on every admin request
 - Timing side-channel mitigation -- login and recovery endpoints perform dummy work for non-existent users
 - BREACH mitigation -- HTTP compression disabled on auth endpoints that return secrets
-- Last-admin protection -- the system prevents deletion of the last admin account
+- Last-admin protection -- the system prevents deletion of the last admin account (atomic transaction prevents TOCTOU race)
+- Per-user storage quotas -- configurable chunk limit prevents any single user from filling the disk
+- Startup integrity checks -- incomplete uploads (DB record without all chunk files) are cleaned up on restart
+- Proxy-aware rate limiting -- `X-Forwarded-For` trust is off by default; must be explicitly enabled via `TRUST_PROXY=true` to prevent header spoofing
 - Encrypted backups -- database backups encrypted with AES-256-CBC using a dedicated key
 
 ### Session persistence
@@ -471,6 +476,7 @@ If you lose both your password and recovery code, your data is permanently inacc
 | Max chunk | 20 MB |
 | Max chunks per file | 50,000 |
 | Max total upload | 100 GB |
+| Per-user storage | Unlimited (configurable via `MAX_STORAGE_CHUNKS`) |
 
 ### Data directory
 

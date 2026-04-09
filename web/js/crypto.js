@@ -290,7 +290,8 @@ function modifyMP4(data, nonce) {
     if (data.length >= 8) {
         const type = String.fromCharCode(data[4], data[5], data[6], data[7]);
         if (type === 'ftyp') {
-            pos = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
+            pos = ((data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]) >>> 0;
+            if (pos > data.length) pos = data.length;
         }
     }
     const boxSize = 8 + nonce.length;
@@ -335,7 +336,7 @@ function modifyPNG(data, nonce) {
     // Find first IDAT
     let pos = 8;
     while (pos + 8 <= data.length) {
-        const len = (data[pos] << 24) | (data[pos+1] << 16) | (data[pos+2] << 8) | data[pos+3];
+        const len = ((data[pos] << 24) | (data[pos+1] << 16) | (data[pos+2] << 8) | data[pos+3]) >>> 0;
         const type = String.fromCharCode(data[pos+4], data[pos+5], data[pos+6], data[pos+7]);
         if (type === 'IDAT') break;
         pos += 12 + len;

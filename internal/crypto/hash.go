@@ -134,6 +134,9 @@ func modifyMP4(data []byte, nonce []byte) ([]byte, error) {
 	if len(data) >= 8 && string(data[4:8]) == "ftyp" {
 		boxSize := binary.BigEndian.Uint32(data[0:4])
 		pos = int(boxSize)
+		if pos > len(data) {
+			pos = len(data)
+		}
 	}
 
 	// Build a 'free' box with our nonce

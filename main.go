@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -87,8 +88,33 @@ func main() {
 		}
 	}
 
+	// Clean up incomplete uploads — DB records whose chunk files are missing
+	// (e.g., server crashed after DB INSERT but before all chunks were written).
+	if summaries, err := db.ListAllMediaSummaries(database); err != nil {
+		log.Printf("Warning: incomplete upload cleanup skipped — failed to list media: %v", err)
+	} else {
+		cleaned := 0
+		for _, s := range summaries {
+			if !store.IsMediaComplete(s.UserID, s.ID, s.ChunkCount) {
+				store.RemoveMedia(s.UserID, s.ID)
+				db.DeleteMediaByID(database, s.ID)
+				cleaned++
+			}
+		}
+		if cleaned > 0 {
+			log.Printf("Cleaned up %d incomplete uploads", cleaned)
+		}
+	}
+
 	// Start session cleanup goroutine (removes expired sessions every minute)
 	auth.Sessions.StartCleanup()
+
+	maxChunks := 0 // 0 = unlimited
+	if v := os.Getenv("MAX_STORAGE_CHUNKS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxChunks = n
+		}
+	}
 
 	srv := &server.Server{
 		DB:                database,
@@ -97,6 +123,8 @@ func main() {
 		Addr:              *addr,
 		PersistSession:    os.Getenv("PERSIST_SESSION") != "false",
 		AllowRegistration: os.Getenv("ALLOW_REGISTRATION") == "true", // default false
+		TrustProxy:        os.Getenv("TRUST_PROXY") == "true",        // default false — only enable behind a reverse proxy
+		MaxStorageChunks:  maxChunks,
 	}
 
 	// Graceful shutdown: drain in-flight requests, then close DB

@@ -954,6 +954,8 @@ a:hover { text-decoration: underline; }
 <span class="flag">DARKREEL_ADMIN_PASSWORD</span>=...           <span class="comment"># required on first run</span>
 <span class="flag">PERSIST_SESSION</span>=true                  <span class="comment"># master key in sessionStorage (default: on)</span>
 <span class="flag">ALLOW_REGISTRATION</span>=false              <span class="comment"># public registration</span>
+<span class="flag">TRUST_PROXY</span>=false                     <span class="comment"># enable behind Caddy/nginx for correct rate limiting</span>
+<span class="flag">MAX_STORAGE_CHUNKS</span>=                   <span class="comment"># per-user chunk limit (e.g. 50000 ≈ 50 GB)</span>
       </code>
     </div>
   </section>
@@ -1070,7 +1072,7 @@ a:hover { text-decoration: underline; }
 <span class="output">systemd sandbox</span>       <span class="comment">15+ directives: capabilities, syscall filter, namespaces, and more</span>
 <span class="output">dedicated user</span>        <span class="comment">darkreel user with minimal permissions</span>
 <span class="output">SRI hashes</span>            <span class="comment">all JS/CSS integrity-verified, including dynamic loads</span>
-<span class="output">rate limiting</span>         <span class="comment">5 auth attempts/min/IP (X-Real-IP behind proxy)</span>
+<span class="output">rate limiting</span>         <span class="comment">5 auth/min/IP + 10/15min/username (distributed brute-force protection)</span>
 <span class="output">security headers</span>      <span class="comment">CSP, HSTS, Permissions-Policy, Cache-Control: no-store</span>
 <span class="output">COOP/COEP</span>             <span class="comment">defense-in-depth for SharedArrayBuffer</span>
 <span class="output">graceful shutdown</span>     <span class="comment">drains in-flight requests before closing database</span>
@@ -1079,7 +1081,10 @@ a:hover { text-decoration: underline; }
 <span class="output">admin re-check</span>        <span class="comment">admin status verified from DB on every admin request</span>
 <span class="output">timing mitigation</span>    <span class="comment">login and recovery endpoints do dummy work for unknown users</span>
 <span class="output">BREACH mitigation</span>    <span class="comment">compression disabled on auth endpoints that return secrets</span>
-<span class="output">last-admin guard</span>     <span class="comment">prevents deletion of the last admin account</span>
+<span class="output">last-admin guard</span>     <span class="comment">atomic transaction prevents TOCTOU race on admin deletion</span>
+<span class="output">storage quotas</span>       <span class="comment">configurable per-user chunk limit prevents disk exhaustion</span>
+<span class="output">proxy-aware IPs</span>      <span class="comment">X-Forwarded-For trust off by default &mdash; opt-in via TRUST_PROXY</span>
+<span class="output">startup integrity</span>    <span class="comment">incomplete uploads cleaned up on restart</span>
 <span class="output">encrypted backups</span>    <span class="comment">AES-256-CBC with dedicated key, 30-day retention</span>
       </code>
     </div>

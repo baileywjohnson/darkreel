@@ -26,6 +26,8 @@ type Server struct {
 	Addr              string
 	PersistSession    bool
 	AllowRegistration bool
+	TrustProxy        bool // trust X-Forwarded-For/X-Real-IP (only enable behind a reverse proxy)
+	MaxStorageChunks  int  // per-user chunk limit (0 = unlimited)
 	httpServer        *http.Server
 }
 
@@ -51,7 +53,12 @@ func (s *Server) routes() chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.RealIP) // trust X-Forwarded-For/X-Real-IP from reverse proxy (Caddy)
+	// Only trust X-Forwarded-For/X-Real-IP when explicitly configured behind a
+	// reverse proxy (e.g. Caddy). Without this, clients can spoof their IP to
+	// bypass per-IP rate limits.
+	if s.TrustProxy {
+		r.Use(middleware.RealIP)
+	}
 	// Compression applied selectively — disabled on /api/auth/* routes to
 	// prevent BREACH-style attacks against responses containing secrets
 	// (encrypted master keys, KDF salts). Encrypted media chunks are random
@@ -60,8 +67,12 @@ func (s *Server) routes() chi.Router {
 	r.Use(securityHeaders)
 	r.Use(RateLimit(6000, time.Minute)) // Global: 6000 req/min per IP (high for chunk streaming)
 
-	authHandler := &auth.Handler{DB: s.DB, Storage: s.Storage}
-	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage}
+	// Per-username rate limiter: 10 attempts per 15 minutes per account.
+	// Defends against distributed brute-force even when per-IP limits are bypassed.
+	accountLimiter := auth.NewAccountLimiter(10, 15*time.Minute)
+
+	authHandler := &auth.Handler{DB: s.DB, Storage: s.Storage, AccountLimiter: accountLimiter, DataDir: s.Storage.BaseDir}
+	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage, MaxStorageChunks: s.MaxStorageChunks}
 
 	// Auth rate limiter: 5 attempts per minute per IP
 	authLimiter := RateLimit(5, time.Minute)
@@ -140,6 +151,10 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/admin/users", authHandler.ListUsers)
 		r.Post("/api/admin/users", authHandler.CreateUser)
 		r.Delete("/api/admin/users/{id}", authHandler.DeleteUser)
+		r.Patch("/api/admin/users/{id}/quota", authHandler.SetUserQuota)
+
+		r.Get("/api/admin/storage", authHandler.GetStorageStats)
+		r.Put("/api/admin/storage/quota", authHandler.SetDefaultQuota)
 
 		r.Post("/api/admin/registration", func(w http.ResponseWriter, r *http.Request) {
 			var req struct {

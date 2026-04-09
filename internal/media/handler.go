@@ -17,8 +17,9 @@ import (
 )
 
 type Handler struct {
-	DB      *sql.DB
-	Storage *storage.Layout
+	DB               *sql.DB
+	Storage          *storage.Layout
+	MaxStorageChunks int // per-user total chunk limit (0 = unlimited)
 }
 
 // validID returns the URL param if it is a valid UUID, or writes a 400 and returns "".
@@ -130,7 +131,83 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mediaID := meta.MediaID
+
+	// Decode all metadata fields before any I/O to fail fast on bad input
+	fileKeyBytes, err := FromB64(meta.FileKeyEnc)
+	if err != nil {
+		http.Error(w, "invalid file_key_enc", http.StatusBadRequest)
+		return
+	}
+	thumbKeyBytes, err := FromB64(meta.ThumbKeyEnc)
+	if err != nil {
+		http.Error(w, "invalid thumb_key_enc", http.StatusBadRequest)
+		return
+	}
+	hashNonceBytes, err := FromB64(meta.HashNonce)
+	if err != nil {
+		http.Error(w, "invalid hash_nonce", http.StatusBadRequest)
+		return
+	}
+	metadataEncBytes, err := FromB64(meta.MetadataEnc)
+	if err != nil {
+		http.Error(w, "invalid metadata_enc", http.StatusBadRequest)
+		return
+	}
+	metadataNonceBytes, err := FromB64(meta.MetadataNonce)
+	if err != nil {
+		http.Error(w, "invalid metadata_nonce", http.StatusBadRequest)
+		return
+	}
+
+	// Per-user storage quota check (before DB insert to avoid unnecessary work).
+	// Priority: per-user DB override > server default in DB > env var fallback.
+	quota := h.MaxStorageChunks // env var fallback
+	if val, err := db.GetSetting(h.DB, "default_storage_quota"); err == nil {
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			quota = n
+		}
+	}
+	if user, err := db.GetUserByID(h.DB, userID); err == nil && user.StorageQuota > 0 {
+		quota = user.StorageQuota
+	}
+	if quota > 0 {
+		existing, err := db.GetUserChunkCount(h.DB, userID)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if existing+meta.ChunkCount > quota {
+			http.Error(w, "storage quota exceeded", http.StatusForbidden)
+			return
+		}
+	}
+
+	// INSERT DB record first — fails fast on duplicate media_id (PRIMARY KEY
+	// constraint), preventing a race where two concurrent uploads with the same
+	// ID both write to disk and one cleanup deletes the other's files.
+	mediaItem := &db.MediaItem{
+		ID:            mediaID,
+		UserID:        userID,
+		ChunkCount:    meta.ChunkCount,
+		FileKeyEnc:    fileKeyBytes,
+		ThumbKeyEnc:   thumbKeyBytes,
+		HashNonce:     hashNonceBytes,
+		MetadataEnc:   metadataEncBytes,
+		MetadataNonce: metadataNonceBytes,
+	}
+	if err := db.InsertMedia(h.DB, mediaItem); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// From here, any failure must clean up both DB record and files.
+	cleanup := func() {
+		db.DeleteMedia(h.DB, mediaID, userID)
+		h.Storage.RemoveMedia(userID, mediaID)
+	}
+
 	if err := h.Storage.EnsureMediaDir(userID, mediaID); err != nil {
+		cleanup()
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -138,18 +215,20 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	// Read thumbnail part
 	part, err = mr.NextPart()
 	if err != nil || part.FormName() != "thumbnail" {
+		cleanup()
 		http.Error(w, "second part must be thumbnail", http.StatusBadRequest)
 		return
 	}
 	thumbData, err := io.ReadAll(io.LimitReader(part, maxThumbnailSize))
 	if err != nil {
+		cleanup()
 		http.Error(w, "failed to read thumbnail", http.StatusBadRequest)
 		return
 	}
 	part.Close()
 
 	if err := h.Storage.WriteThumbnail(userID, mediaID, thumbData); err != nil {
-		h.Storage.RemoveMedia(userID, mediaID)
+		cleanup()
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -162,27 +241,27 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			h.Storage.RemoveMedia(userID, mediaID)
+			cleanup()
 			http.Error(w, "failed to read chunk", http.StatusBadRequest)
 			return
 		}
 
 		chunkData, err := io.ReadAll(io.LimitReader(part, maxChunkSize))
 		if err != nil {
-			h.Storage.RemoveMedia(userID, mediaID)
+			cleanup()
 			http.Error(w, "failed to read chunk data", http.StatusBadRequest)
 			return
 		}
 		part.Close()
 
 		if len(chunkData) == 0 {
-			h.Storage.RemoveMedia(userID, mediaID)
+			cleanup()
 			http.Error(w, "empty chunk not allowed", http.StatusBadRequest)
 			return
 		}
 
 		if err := h.Storage.WriteChunk(userID, mediaID, chunkIndex, chunkData); err != nil {
-			h.Storage.RemoveMedia(userID, mediaID)
+			cleanup()
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -190,56 +269,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if chunkIndex != meta.ChunkCount {
-		h.Storage.RemoveMedia(userID, mediaID)
+		cleanup()
 		http.Error(w, fmt.Sprintf("expected %d chunks, got %d", meta.ChunkCount, chunkIndex), http.StatusBadRequest)
-		return
-	}
-
-	fileKeyBytes, err := FromB64(meta.FileKeyEnc)
-	if err != nil {
-		h.Storage.RemoveMedia(userID, mediaID)
-		http.Error(w, "invalid file_key_enc", http.StatusBadRequest)
-		return
-	}
-	thumbKeyBytes, err := FromB64(meta.ThumbKeyEnc)
-	if err != nil {
-		h.Storage.RemoveMedia(userID, mediaID)
-		http.Error(w, "invalid thumb_key_enc", http.StatusBadRequest)
-		return
-	}
-	hashNonceBytes, err := FromB64(meta.HashNonce)
-	if err != nil {
-		h.Storage.RemoveMedia(userID, mediaID)
-		http.Error(w, "invalid hash_nonce", http.StatusBadRequest)
-		return
-	}
-	metadataEncBytes, err := FromB64(meta.MetadataEnc)
-	if err != nil {
-		h.Storage.RemoveMedia(userID, mediaID)
-		http.Error(w, "invalid metadata_enc", http.StatusBadRequest)
-		return
-	}
-	metadataNonceBytes, err := FromB64(meta.MetadataNonce)
-	if err != nil {
-		h.Storage.RemoveMedia(userID, mediaID)
-		http.Error(w, "invalid metadata_nonce", http.StatusBadRequest)
-		return
-	}
-
-	mediaItem := &db.MediaItem{
-		ID:            mediaID,
-		UserID:        userID,
-		ChunkCount:    meta.ChunkCount,
-		FileKeyEnc:    fileKeyBytes,
-		ThumbKeyEnc:   thumbKeyBytes,
-		HashNonce:     hashNonceBytes,
-		MetadataEnc:   metadataEncBytes,
-		MetadataNonce: metadataNonceBytes,
-	}
-
-	if err := db.InsertMedia(h.DB, mediaItem); err != nil {
-		h.Storage.RemoveMedia(userID, mediaID)
-		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 

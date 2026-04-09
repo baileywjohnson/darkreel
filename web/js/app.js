@@ -1333,6 +1333,7 @@ async function showAdminPanel() {
     adminLoading.classList.remove('hidden');
     await Promise.all([
         loadAdminUsers(),
+        loadAdminStorage(),
         fetch('/api/config').then(r => r.json()).then(config => {
             adminRegToggle.checked = config.allowRegistration;
         }).catch(() => {}),
@@ -1340,6 +1341,52 @@ async function showAdminPanel() {
     adminLoading.classList.add('hidden');
     adminContent.classList.remove('hidden');
 }
+
+async function loadAdminStorage() {
+    try {
+        const stats = await api('/api/admin/storage');
+        const statsEl = document.getElementById('admin-storage-stats');
+        const diskUsed = formatSize(stats.disk_used_bytes || 0);
+        const diskAvail = formatSize(stats.disk_avail_bytes || 0);
+        const diskTotal = formatSize((stats.disk_used_bytes || 0) + (stats.disk_avail_bytes || 0));
+        statsEl.innerHTML = '<div style="display:flex;gap:24px;flex-wrap:wrap">' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(String(stats.total_chunks)) + '</span> total chunks</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskUsed) + '</span> used</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskAvail) + '</span> available</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskTotal) + '</span> total</div>' +
+            '</div>';
+        _cachedDefaultQuota = stats.default_storage_quota || 0;
+        document.getElementById('admin-default-quota').value = stats.default_storage_quota || '';
+    } catch {}
+}
+
+// Only allow digits in the quota input (block e, +, -, ., etc.)
+document.getElementById('admin-default-quota').addEventListener('keydown', (e) => {
+    if (!/^\d$/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+    }
+});
+document.getElementById('admin-default-quota').addEventListener('paste', (e) => {
+    const text = (e.clipboardData || window.clipboardData).getData('text');
+    if (!/^\d+$/.test(text)) e.preventDefault();
+});
+
+document.getElementById('admin-save-quota').addEventListener('click', async () => {
+    const btn = document.getElementById('admin-save-quota');
+    const input = document.getElementById('admin-default-quota');
+    const val = parseInt(input.value, 10) || 0;
+    btnLoading(btn);
+    try {
+        await api('/api/admin/storage/quota', { method: 'PUT', json: { default_storage_quota: val } });
+        btn.textContent = 'Saved';
+        btn.disabled = false;
+        setTimeout(() => { btn.textContent = 'Save'; }, 1500);
+        loadAdminStorage();
+    } catch (err) {
+        btnReset(btn);
+        alert(err.message || 'Failed to save quota');
+    }
+});
 
 adminBtn.addEventListener('click', showAdminPanel);
 
@@ -1498,6 +1545,8 @@ adminCreateForm.addEventListener('submit', async (e) => {
     }
 });
 
+let _cachedDefaultQuota = 0;
+
 async function loadAdminUsers() {
     try {
         const users = await api('/api/admin/users');
@@ -1505,28 +1554,182 @@ async function loadAdminUsers() {
             adminUserList.innerHTML = '<p style="color:var(--text-dim);font-size:14px">No users</p>';
             return;
         }
-        adminUserList.innerHTML = users.map(u => `
-            <div class="admin-user-card">
-                <div class="admin-user-info">
+        adminUserList.innerHTML = users.map(u => {
+            const effectiveQuota = u.storage_quota > 0 ? u.storage_quota : _cachedDefaultQuota;
+            const quotaLabel = effectiveQuota > 0
+                ? escapeHtml(String(effectiveQuota)) + ' chunks'
+                : 'unlimited';
+            const usage = escapeHtml(String(u.chunk_count)) + ' chunks';
+            return `
+            <div class="admin-user-card" style="flex-wrap:wrap;gap:8px">
+                <div class="admin-user-info" style="flex:1;min-width:0">
                     ${escapeHtml(u.username)}
                     ${u.is_admin ? '<span class="admin-badge">Admin</span>' : ''}
+                    <div style="font-size:12px;color:var(--text-dim);margin-top:2px">
+                        ${usage} used &middot; quota: ${quotaLabel}
+                    </div>
                 </div>
-                ${u.id === userId ? '<span style="font-size:12px;color:var(--text-dim)">You</span>' : '<button class="btn btn-danger" data-delete-uid="' + escapeHtml(u.id) + '">Delete</button>'}
-            </div>
-        `).join('');
+                <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+                    <button class="btn" style="font-size:12px;padding:4px 10px" data-quota-uid="${escapeHtml(u.id)}" data-current-quota="${u.storage_quota}">Raise Quota</button>
+                    ${u.id === userId ? '<span style="font-size:12px;color:var(--text-dim)">You</span>' : '<button class="btn btn-danger" data-delete-uid="' + escapeHtml(u.id) + '" style="font-size:12px;padding:4px 10px">Delete</button>'}
+                </div>
+            </div>`;
+        }).join('');
 
         adminUserList.querySelectorAll('[data-delete-uid]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                if (!confirm('Delete this user and all their media? This cannot be undone.')) return;
-                try {
-                    await api('/api/admin/users/' + btn.dataset.deleteUid, { method: 'DELETE' });
-                    loadAdminUsers();
-                } catch (err) {
-                    alert(err.message || 'Failed to delete user');
-                }
+            btn.addEventListener('click', () => {
+                const uid = btn.dataset.deleteUid;
+                const username = btn.closest('.admin-user-card').querySelector('.admin-user-info').firstChild.textContent.trim();
+                showAdminConfirmModal(
+                    'Delete User',
+                    'Delete "' + username + '" and all their media?\nThis cannot be undone.',
+                    async () => {
+                        await api('/api/admin/users/' + uid, { method: 'DELETE' });
+                        loadAdminUsers();
+                        loadAdminStorage();
+                    }
+                );
+            });
+        });
+
+        adminUserList.querySelectorAll('[data-quota-uid]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const uid = btn.dataset.quotaUid;
+                const current = parseInt(btn.dataset.currentQuota, 10) || 0;
+                const username = btn.closest('.admin-user-card').querySelector('.admin-user-info').firstChild.textContent.trim();
+                const effectiveQuota = current > 0 ? current : _cachedDefaultQuota;
+                showAdminQuotaModal(
+                    'Raise Quota',
+                    'Set a custom chunk quota for "' + username + '". Must be higher than the server default' + (_cachedDefaultQuota > 0 ? ' (' + _cachedDefaultQuota + ')' : '') + ', or 0 to use the default.',
+                    effectiveQuota,
+                    async (val) => {
+                        await api('/api/admin/users/' + uid + '/quota', { method: 'PATCH', json: { storage_quota: val } });
+                        loadAdminUsers();
+                    }
+                );
             });
         });
     } catch {}
+}
+
+// --- Admin confirm modal (replaces browser confirm()) ---
+const adminConfirmModal = document.getElementById('admin-confirm-modal');
+const adminConfirmTitle = document.getElementById('admin-confirm-title');
+const adminConfirmMessage = document.getElementById('admin-confirm-message');
+const adminConfirmError = document.getElementById('admin-confirm-error');
+const adminConfirmOkBtn = document.getElementById('admin-confirm-ok');
+const adminConfirmCancelBtn = document.getElementById('admin-confirm-cancel');
+
+function showAdminConfirmModal(title, message, onConfirm) {
+    adminConfirmTitle.textContent = title;
+    adminConfirmMessage.textContent = message;
+    adminConfirmError.classList.add('hidden');
+    btnReset(adminConfirmOkBtn);
+    adminConfirmOkBtn.textContent = 'Delete';
+    adminConfirmOkBtn.className = 'btn btn-danger';
+    adminConfirmModal.classList.remove('hidden');
+
+    const cleanup = () => {
+        adminConfirmModal.classList.add('hidden');
+        adminConfirmOkBtn.removeEventListener('click', handleOk);
+        adminConfirmCancelBtn.removeEventListener('click', handleCancel);
+        document.removeEventListener('keydown', handleKey);
+        adminConfirmModal.removeEventListener('click', handleOverlay);
+    };
+
+    const handleOk = async () => {
+        btnLoading(adminConfirmOkBtn);
+        adminConfirmError.classList.add('hidden');
+        try {
+            await onConfirm();
+            cleanup();
+        } catch (err) {
+            btnReset(adminConfirmOkBtn);
+            adminConfirmOkBtn.textContent = 'Delete';
+            adminConfirmOkBtn.className = 'btn btn-danger';
+            adminConfirmError.textContent = err.message || 'Operation failed';
+            adminConfirmError.classList.remove('hidden');
+        }
+    };
+    const handleCancel = () => cleanup();
+    const handleKey = (e) => { if (e.key === 'Escape') cleanup(); };
+    const handleOverlay = (e) => { if (e.target === adminConfirmModal) cleanup(); };
+
+    adminConfirmOkBtn.addEventListener('click', handleOk);
+    adminConfirmCancelBtn.addEventListener('click', handleCancel);
+    document.addEventListener('keydown', handleKey);
+    adminConfirmModal.addEventListener('click', handleOverlay);
+}
+
+// --- Admin quota modal (replaces browser prompt()) ---
+const adminQuotaModal = document.getElementById('admin-quota-modal');
+const adminQuotaTitle = document.getElementById('admin-quota-title');
+const adminQuotaMessage = document.getElementById('admin-quota-message');
+const adminQuotaInput = document.getElementById('admin-quota-input');
+const adminQuotaError = document.getElementById('admin-quota-error');
+const adminQuotaConfirmBtn = document.getElementById('admin-quota-confirm');
+const adminQuotaCancelBtn = document.getElementById('admin-quota-cancel');
+
+// Only allow digits
+adminQuotaInput.addEventListener('keydown', (e) => {
+    if (!/^\d$/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+    }
+});
+adminQuotaInput.addEventListener('paste', (e) => {
+    const text = (e.clipboardData || window.clipboardData).getData('text');
+    if (!/^\d+$/.test(text)) e.preventDefault();
+});
+
+function showAdminQuotaModal(title, message, currentValue, onConfirm) {
+    adminQuotaTitle.textContent = title;
+    adminQuotaMessage.textContent = message;
+    adminQuotaInput.value = currentValue > 0 ? String(currentValue) : '';
+    adminQuotaError.classList.add('hidden');
+    btnReset(adminQuotaConfirmBtn);
+    adminQuotaConfirmBtn.textContent = 'Save';
+    adminQuotaModal.classList.remove('hidden');
+    adminQuotaInput.focus();
+    adminQuotaInput.select();
+
+    const cleanup = () => {
+        adminQuotaModal.classList.add('hidden');
+        adminQuotaConfirmBtn.removeEventListener('click', handleConfirm);
+        adminQuotaCancelBtn.removeEventListener('click', handleCancel);
+        adminQuotaInput.removeEventListener('keydown', handleKey);
+        document.removeEventListener('keydown', handleEsc);
+        adminQuotaModal.removeEventListener('click', handleOverlay);
+    };
+
+    const handleConfirm = async () => {
+        const val = parseInt(adminQuotaInput.value, 10);
+        if (isNaN(val) || val < 0) {
+            adminQuotaError.textContent = 'Enter a valid number (0 or higher)';
+            adminQuotaError.classList.remove('hidden');
+            return;
+        }
+        btnLoading(adminQuotaConfirmBtn);
+        adminQuotaError.classList.add('hidden');
+        try {
+            await onConfirm(val);
+            cleanup();
+        } catch (err) {
+            btnReset(adminQuotaConfirmBtn);
+            adminQuotaConfirmBtn.textContent = 'Save';
+            adminQuotaError.textContent = err.message || 'Failed to set quota';
+            adminQuotaError.classList.remove('hidden');
+        }
+    };
+    const handleCancel = () => cleanup();
+    const handleKey = (e) => { if (e.key === 'Enter') handleConfirm(); };
+    const handleEsc = (e) => { if (e.key === 'Escape') cleanup(); };
+    const handleOverlay = (e) => { if (e.target === adminQuotaModal) cleanup(); };
+
+    adminQuotaConfirmBtn.addEventListener('click', handleConfirm);
+    adminQuotaCancelBtn.addEventListener('click', handleCancel);
+    adminQuotaInput.addEventListener('keydown', handleKey);
+    document.addEventListener('keydown', handleEsc);
+    adminQuotaModal.addEventListener('click', handleOverlay);
 }
 
 // --- Registration toggle (admin) ---

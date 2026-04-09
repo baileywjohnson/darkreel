@@ -45,8 +45,10 @@ func isValidUsername(u string) bool {
 }
 
 type Handler struct {
-	DB      *sql.DB
-	Storage interface{ RemoveMedia(userID, mediaID string) error }
+	DB             *sql.DB
+	Storage        interface{ RemoveMedia(userID, mediaID string) error }
+	AccountLimiter *AccountLimiter // per-username rate limiter for login/recovery
+	DataDir        string          // data directory path (for disk usage stats)
 }
 
 // BootstrapAdmin creates the initial admin user if no users exist.
@@ -227,6 +229,17 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Per-username rate limit: prevents distributed brute-force against a single
+	// account even when per-IP limits are bypassed. Checked for all usernames
+	// (including non-existent) to avoid leaking account existence via timing.
+	if h.AccountLimiter != nil && !h.AccountLimiter.Allow(req.Username) {
+		// Still perform dummy work so response timing is indistinguishable
+		dummySalt, _ := crypto.GenerateSalt()
+		crypto.DeriveKey(req.Password, dummySalt)
+		http.Error(w, "Username and/or password is incorrect.", http.StatusUnauthorized)
 		return
 	}
 
@@ -453,29 +466,26 @@ func (h *Handler) DeleteOwnAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prevent deleting the last admin — would leave the system unrecoverable
-	if user.IsAdmin {
-		adminCount, err := db.GetAdminCount(h.DB)
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		if adminCount <= 1 {
-			http.Error(w, "cannot delete the last admin account", http.StatusBadRequest)
-			return
-		}
-	}
+	// Collect media IDs before deletion so we can shred files after.
+	mediaIDs, _ := db.ListMediaIDsByUser(h.DB, user.ID)
 
-	// Delete all media
-	mediaIDs, err := db.ListMediaIDsByUser(h.DB, user.ID)
-	if err == nil {
-		for _, mid := range mediaIDs {
-			h.Storage.RemoveMedia(user.ID, mid)
+	// Atomic delete: checks admin count inside a transaction to prevent TOCTOU.
+	// DB record is deleted first — orphan cleanup at startup handles leftover files.
+	if err := db.DeleteUserAtomic(h.DB, user.ID); err != nil {
+		if err.Error() == "cannot delete the last admin account" {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
+		return
 	}
 
 	Sessions.DeleteAllForUser(user.ID)
-	db.DeleteUser(h.DB, user.ID)
+
+	// Shred files after DB deletion
+	for _, mid := range mediaIDs {
+		h.Storage.RemoveMedia(user.ID, mid)
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -497,6 +507,16 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 
 	if !isStrongPassword(req.NewPassword) {
 		http.Error(w, "password must be 16-128 characters with at least one letter, one number, and one symbol", http.StatusBadRequest)
+		return
+	}
+
+	// Per-username rate limit (same rationale as Login)
+	if h.AccountLimiter != nil && !h.AccountLimiter.Allow(req.Username) {
+		dummySalt, _ := crypto.GenerateSalt()
+		crypto.DeriveKey(req.NewPassword, dummySalt)
+		dummyCiphertext := make([]byte, 60)
+		crypto.DecryptMasterKeyWithRecovery(dummyCiphertext, make([]byte, 32), []byte("dummy"))
+		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
 		return
 	}
 
