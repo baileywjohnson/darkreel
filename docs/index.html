@@ -746,8 +746,28 @@ a:hover { text-decoration: underline; }
         <div class="feature-desc">Isolated encrypted libraries. Each user gets their own master key. Admin panel for user management.</div>
       </div>
       <div class="feature">
+        <div class="feature-name">hash modification</div>
+        <div class="feature-desc">Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box, WebM Void) before encryption. Identical files produce different ciphertexts, defeating duplicate detection.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">chunk integrity verification</div>
+        <div class="feature-desc">Chunk counts stored inside encrypted metadata. On download/playback, the client verifies the count matches &mdash; detects truncation attacks where chunks are deleted from the server.</div>
+      </div>
+      <div class="feature">
         <div class="feature-name">encrypted folders</div>
-        <div class="feature-desc">Organize media into folders. The structure is encrypted &mdash; only you can see it.</div>
+        <div class="feature-desc">Organize media into folders. The structure is encrypted &mdash; only you can see it. Drag-and-drop to reorganize on desktop and mobile.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">folder download</div>
+        <div class="feature-desc">Download an entire folder (including subfolders) as a ZIP file, decrypted client-side. No server involvement.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">image rotation</div>
+        <div class="feature-desc">Rotate images at the pixel level. The original is securely deleted and replaced with a freshly encrypted copy using new keys.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">6 color themes</div>
+        <div class="feature-desc">Classic, cool, forest, neon, ocean, and warm. Stored in localStorage.</div>
       </div>
       <div class="feature">
         <div class="feature-name">recovery codes</div>
@@ -797,6 +817,7 @@ a:hover { text-decoration: underline; }
       <tr><td>metadata encryption</td><td>AES-256-GCM &mdash; media ID as AAD (prevents ciphertext substitution)</td></tr>
       <tr><td>session key</td><td>PBKDF2-SHA256 &mdash; 600,000 iterations</td></tr>
       <tr><td>chunk padding</td><td>random fill to 1 / 2 / 4 / 8 / 16 MB buckets</td></tr>
+      <tr><td>hash modification</td><td>nonce injection &mdash; JPEG COM, PNG tEXt, MP4 free box, WebM Void element</td></tr>
       <tr><td>deletion</td><td>3-pass random overwrite &rarr; fsync &rarr; unlink</td></tr>
     </table>
 
@@ -998,9 +1019,12 @@ a:hover { text-decoration: underline; }
 
     <div class="api-group">
       <div class="api-group-title">admin</div>
-      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/admin/users</span><span class="api-desc">list users</span></div>
-      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/admin/users</span><span class="api-desc">create user</span></div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/admin/users</span><span class="api-desc">list users with storage usage</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/admin/users</span><span class="api-desc">create user, returns recovery code</span></div>
       <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/admin/users/:id</span><span class="api-desc">delete user + all media</span></div>
+      <div class="api-route"><span class="api-method patch">PATCH</span><span class="api-path">/api/admin/users/:id/quota</span><span class="api-desc">set per-user storage quota</span></div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/admin/storage</span><span class="api-desc">storage stats (chunks, disk usage)</span></div>
+      <div class="api-route"><span class="api-method put">PUT</span><span class="api-path">/api/admin/storage/quota</span><span class="api-desc">set default storage quota</span></div>
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/admin/registration</span><span class="api-desc">toggle registration</span></div>
     </div>
 

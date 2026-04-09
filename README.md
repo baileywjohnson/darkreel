@@ -66,7 +66,12 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **Size fingerprinting resistance** -- Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data. Original file sizes are unrecoverable from disk.
 - **Secure deletion** -- Deleted files are overwritten 3 times with random data, fsynced, then unlinked. Best-effort on SSDs due to wear leveling.
 - **Multi-user** -- Each user has an isolated, encrypted library with their own master key. Admin panel for user management.
-- **Encrypted folders** -- Organize your media into folders. The folder structure is encrypted -- only you can see it.
+- **Hash modification** -- Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection.
+- **Chunk integrity verification** -- Chunk counts are stored inside the encrypted metadata blob. On download/playback, the client verifies the count matches, detecting truncation attacks where an attacker deletes chunks from the server.
+- **Encrypted folders** -- Organize your media into folders. The folder structure is encrypted -- only you can see it. Drag-and-drop to reorganize (desktop and mobile touch).
+- **Folder download** -- Download an entire folder (including subfolders) as a ZIP file, decrypted client-side.
+- **Image rotation** -- Rotate images at the pixel level. The original is securely deleted and replaced with a freshly encrypted copy using new keys.
+- **6 color themes** -- Classic, cool, forest, neon, ocean, and warm. Stored in localStorage.
 - **Recovery codes** -- 256-bit recovery code generated at account creation. If you lose your password, this is the only way back in. Lose both and your data is gone.
 - **Single binary** -- One Go binary with an embedded web UI and SQLite. No external dependencies, no containers, no runtime requirements.
 - **Self-hosted** -- Runs on your hardware. A $6/month VPS is enough. Your data never touches a third-party service.
@@ -106,6 +111,7 @@ The master key never leaves the browser. It's also encrypted with a 256-bit reco
 | Metadata encryption | AES-256-GCM | Media ID as AAD (prevents ciphertext substitution) |
 | Session key | PBKDF2-SHA256 | 600,000 iterations |
 | Chunk padding | Random fill | Bucketed to 1/2/4/8/16 MB per chunk |
+| Hash modification | Nonce injection | JPEG COM, PNG tEXt, MP4 free box, WebM Void element |
 | Secure deletion | 3-pass shred | Random overwrite, fsync, then unlink |
 
 ### AAD binding
@@ -319,9 +325,12 @@ All endpoints except `/health` and `/api/config` require a JWT. JWTs contain use
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/admin/users` | List users |
-| POST | `/api/admin/users` | Create user |
+| GET | `/api/admin/users` | List users with storage usage |
+| POST | `/api/admin/users` | Create user (returns recovery code) |
 | DELETE | `/api/admin/users/:id` | Delete user and all their media |
+| PATCH | `/api/admin/users/:id/quota` | Set per-user storage quota |
+| GET | `/api/admin/storage` | Get storage stats (total chunks, disk usage) |
+| PUT | `/api/admin/storage/quota` | Set server-wide default storage quota |
 | POST | `/api/admin/registration` | Toggle registration on/off |
 
 ### Health
