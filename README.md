@@ -5,7 +5,7 @@
 <h1 align="center">Darkreel</h1>
 
 <p align="center">
-  <strong>Encrypted media storage, streaming & file vault.</strong><br>
+  <strong>Encrypted media storage & streaming.</strong><br>
   Your server stores opaque blobs. Your browser holds the keys.
 </p>
 
@@ -68,7 +68,7 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **Multi-user** - Each user has an isolated, encrypted library with their own master key. Admin panel for user management.
 - **Hash modification** - Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection.
 - **Chunk integrity verification** - Chunk counts are stored inside the encrypted metadata blob. On download/playback, the client verifies the count matches, detecting truncation attacks where an attacker deletes chunks from the server.
-- **Generic file storage** - Not just media. Upload any file type — PDFs, documents, archives, code. Everything is encrypted with the same zero-knowledge scheme. Non-media files get a file icon in the gallery and a download button in the viewer.
+- **Generic file storage** - Not just media. Upload any file type — PDFs, documents, archives, code. Everything is encrypted with the same zero-knowledge scheme.
 - **Encrypted folders** - Organize your files into folders. The folder structure is encrypted - only you can see it. Drag-and-drop to reorganize (desktop and mobile touch).
 - **Folder download** - Download an entire folder (including subfolders) as a ZIP file, decrypted client-side.
 - **Image rotation** - Rotate images at the pixel level. The original is securely deleted and replaced with a freshly encrypted copy using new keys.
