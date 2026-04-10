@@ -269,13 +269,13 @@ EOF
 info "Caddy configured for $DOMAIN (automatic HTTPS via Let's Encrypt)"
 
 # --- Write environment file (restricted permissions) ---
-# The admin password is only needed for the first-run bootstrap.
-# After first boot, Darkreel stores the Argon2id hash in the DB and
-# never reads this variable again. We write it for bootstrap, then
-# remove it from the env file after the service starts successfully.
+# The admin password is written to a separate one-time bootstrap file
+# that is deleted immediately after the first successful start.
+# This avoids leaving the plaintext password in the long-lived env file
+# and is resilient to interruptions — the bootstrap file persists until
+# explicitly removed after a successful health check.
 cat > /etc/darkreel/env <<EOF
 DARKREEL_ADMIN_USERNAME=${ADMIN_USER}
-DARKREEL_ADMIN_PASSWORD=${ADMIN_PASS}
 ALLOW_REGISTRATION=false
 # PERSIST_SESSION controls whether the client stores the master key in
 # sessionStorage so it survives page refreshes without re-login.
@@ -285,6 +285,12 @@ PERSIST_SESSION=true
 EOF
 chmod 600 /etc/darkreel/env
 chown darkreel:darkreel /etc/darkreel/env
+
+# Write the admin password to a separate bootstrap file (deleted after first start)
+BOOTSTRAP_FILE="/etc/darkreel/bootstrap.env"
+echo "DARKREEL_ADMIN_PASSWORD=${ADMIN_PASS}" > "$BOOTSTRAP_FILE"
+chmod 600 "$BOOTSTRAP_FILE"
+chown darkreel:darkreel "$BOOTSTRAP_FILE"
 info "Environment file written to /etc/darkreel/env (mode 600)"
 
 # --- Create systemd service ---
@@ -300,6 +306,7 @@ User=darkreel
 Group=darkreel
 ExecStart=${INSTALL_DIR}/darkreel -addr 127.0.0.1:8080 -data ${DATA_DIR}
 EnvironmentFile=/etc/darkreel/env
+EnvironmentFile=-/etc/darkreel/bootstrap.env
 Restart=always
 RestartSec=5
 
@@ -377,10 +384,11 @@ for i in $(seq 1 15); do
 done
 
 if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
-  # Bootstrap succeeded — strip the plaintext admin password from the env file.
-  # The password is now stored only as an Argon2id hash in the database.
-  sed -i '/^DARKREEL_ADMIN_PASSWORD=/d' /etc/darkreel/env
-  info "Admin password removed from /etc/darkreel/env (stored as hash in DB)"
+  # Bootstrap succeeded — delete the one-time bootstrap file containing
+  # the plaintext admin password. The password is now stored only as an
+  # Argon2id hash in the database.
+  rm -f /etc/darkreel/bootstrap.env
+  info "Bootstrap credentials removed (password stored as hash in DB)"
 
   echo ""
   echo -e "${GREEN}${BOLD}Darkreel is running!${NC}"
@@ -399,8 +407,11 @@ if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
     echo -e "  ${YELLOW}Save this code somewhere safe — it is the only way to regain${NC}"
     echo -e "  ${YELLOW}access to your encrypted data if you forget your password.${NC}"
     echo ""
-    echo -e "  ${YELLOW}The code is shown in the service logs. Clear them after saving:${NC}"
-    echo -e "  ${BOLD}sudo journalctl --rotate && sudo journalctl --vacuum-time=1s${NC}"
+
+    # Auto-clear the journal so the recovery code doesn't persist in logs.
+    journalctl --rotate >/dev/null 2>&1 || true
+    journalctl --vacuum-time=1s >/dev/null 2>&1 || true
+    info "Service logs cleared (recovery code no longer in journal)"
     echo ""
   else
     echo -e "  ${YELLOW}IMPORTANT:${NC} Check the logs for your recovery code:"

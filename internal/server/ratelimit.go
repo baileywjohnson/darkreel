@@ -62,6 +62,10 @@ func (rl *rateLimiter) allow(ip string) bool {
 					delete(rl.visitors, k)
 				}
 			}
+			// If still at capacity after eviction, reject to prevent unbounded growth
+			if len(rl.visitors) >= maxVisitors {
+				return false
+			}
 		}
 		rl.visitors[ip] = &visitor{count: 1, resetAt: now.Add(rl.window)}
 		return true

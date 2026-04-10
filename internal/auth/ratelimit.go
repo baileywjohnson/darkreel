@@ -63,6 +63,10 @@ func (al *AccountLimiter) Allow(username string) bool {
 					delete(al.visitors, k)
 				}
 			}
+			// If still at capacity after eviction, reject to prevent unbounded growth
+			if len(al.visitors) >= accountMaxVisitors {
+				return false
+			}
 		}
 		al.visitors[username] = &accountVisitor{count: 1, resetAt: now.Add(al.window)}
 		return true

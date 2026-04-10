@@ -46,13 +46,13 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 
 | Data | Visible to server? |
 |------|--------------------|
-| File content | **no** -- AES-256-GCM, per-file key |
-| File names, types, MIME | **no** -- encrypted metadata blob |
-| File sizes, dimensions, duration | **no** -- chunk padding + encrypted metadata |
-| Thumbnails | **no** -- separate encrypted key |
-| Folder structure | **no** -- encrypted blob |
-| Passwords | **never** -- Argon2id hash only |
-| Master key | **never** -- encrypted, browser-only |
+| File content | **no** - AES-256-GCM, per-file key |
+| File names, types, MIME | **no** - encrypted metadata blob |
+| File sizes, dimensions, duration | **no** - chunk padding + encrypted metadata |
+| Thumbnails | **no** - separate encrypted key |
+| Folder structure | **no** - encrypted blob |
+| Passwords | **never** - Argon2id hash only |
+| Master key | **never** - encrypted, browser-only |
 | Usernames | yes |
 | File count per user | yes (database row count) |
 | Approximate total storage | yes (disk usage, though padding obscures per-file) |
@@ -60,21 +60,21 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 
 ## Features
 
-- **End-to-end encrypted** -- AES-256-GCM chunk encryption, keys derived from your password via Argon2id. The server stores only opaque blobs.
-- **Zero-knowledge metadata** -- File names, types, sizes, dimensions, and durations are encrypted into a single blob. The server cannot read any of it.
-- **Encrypted streaming** -- Videos stream via MSE with chunk-level decryption in a Web Worker. No server-side decryption. Playback starts after the first chunk.
-- **Size fingerprinting resistance** -- Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data. Original file sizes are unrecoverable from disk.
-- **Secure deletion** -- Deleted files are overwritten 3 times with random data, fsynced, then unlinked. Best-effort on SSDs due to wear leveling.
-- **Multi-user** -- Each user has an isolated, encrypted library with their own master key. Admin panel for user management.
-- **Hash modification** -- Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection.
-- **Chunk integrity verification** -- Chunk counts are stored inside the encrypted metadata blob. On download/playback, the client verifies the count matches, detecting truncation attacks where an attacker deletes chunks from the server.
-- **Encrypted folders** -- Organize your media into folders. The folder structure is encrypted -- only you can see it. Drag-and-drop to reorganize (desktop and mobile touch).
-- **Folder download** -- Download an entire folder (including subfolders) as a ZIP file, decrypted client-side.
-- **Image rotation** -- Rotate images at the pixel level. The original is securely deleted and replaced with a freshly encrypted copy using new keys.
-- **6 color themes** -- Classic, cool, forest, neon, ocean, and warm. Stored in localStorage.
-- **Recovery codes** -- 256-bit recovery code generated at account creation. If you lose your password, this is the only way back in. Lose both and your data is gone.
-- **Single binary** -- One Go binary with an embedded web UI and SQLite. No external dependencies, no containers, no runtime requirements.
-- **Self-hosted** -- Runs on your hardware. A $6/month VPS is enough. Your data never touches a third-party service.
+- **End-to-end encrypted** - AES-256-GCM chunk encryption, keys derived from your password via Argon2id. The server stores only opaque blobs.
+- **Zero-knowledge metadata** - File names, types, sizes, dimensions, and durations are encrypted into a single blob. The server cannot read any of it.
+- **Encrypted streaming** - Videos stream via MSE with chunk-level decryption in a Web Worker. No server-side decryption. Playback starts after the first chunk.
+- **Size fingerprinting resistance** - Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data. Original file sizes are unrecoverable from disk.
+- **Secure deletion** - Deleted files are overwritten 3 times with random data, fsynced, then unlinked. Best-effort on SSDs due to wear leveling.
+- **Multi-user** - Each user has an isolated, encrypted library with their own master key. Admin panel for user management.
+- **Hash modification** - Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection.
+- **Chunk integrity verification** - Chunk counts are stored inside the encrypted metadata blob. On download/playback, the client verifies the count matches, detecting truncation attacks where an attacker deletes chunks from the server.
+- **Encrypted folders** - Organize your media into folders. The folder structure is encrypted - only you can see it. Drag-and-drop to reorganize (desktop and mobile touch).
+- **Folder download** - Download an entire folder (including subfolders) as a ZIP file, decrypted client-side.
+- **Image rotation** - Rotate images at the pixel level. The original is securely deleted and replaced with a freshly encrypted copy using new keys.
+- **6 color themes** - Classic, cool, forest, neon, ocean, and warm. Stored in localStorage.
+- **Recovery codes** - 256-bit recovery code generated at account creation. If you lose your password, this is the only way back in. Lose both and your data is gone.
+- **Single binary** - One Go binary with an embedded web UI and SQLite. No external dependencies, no containers, no runtime requirements.
+- **Self-hosted** - Runs on your hardware. A $6/month VPS is enough. Your data never touches a third-party service.
 
 ### Supported formats
 
@@ -98,7 +98,7 @@ Password
          └─ encrypts folder structure         (AAD: userID)
 ```
 
-The master key never leaves the browser. It's also encrypted with a 256-bit recovery code (AAD: userID) generated at account creation -- shown once, never stored in plaintext.
+The master key never leaves the browser. It's also encrypted with a 256-bit recovery code (AAD: userID) generated at account creation - shown once, never stored in plaintext.
 
 ### Algorithms
 
@@ -123,14 +123,14 @@ All block-level encryption uses Additional Authenticated Data (AAD) to cryptogra
 - **Metadata encryption** uses the **media ID** as AAD
 - **Folder tree encryption** uses the **user ID** as AAD
 
-This prevents ciphertext substitution attacks -- an attacker with database access cannot swap encrypted keys or metadata between users or media items. Decryption will fail if the AAD doesn't match.
+This prevents ciphertext substitution attacks - an attacker with database access cannot swap encrypted keys or metadata between users or media items. Decryption will fail if the AAD doesn't match.
 
 ### On-disk format
 
 ```
 // encrypted chunk
 [nonce: 12 bytes] [ciphertext] [GCM tag: 16 bytes]
-// chunk index bound as AAD — reorder and decryption fails
+// chunk index bound as AAD - reorder and decryption fails
 
 // padded chunk on disk
 [real length: 4B big-endian] [encrypted data] [random padding → bucket]
@@ -138,7 +138,7 @@ This prevents ciphertext substitution attacks -- an attacker with database acces
 
 ## Streaming
 
-Videos are remuxed to fragmented MP4 on upload -- no re-encoding. The CLI uses ffmpeg (supports all formats including WEBM/MKV). The browser uses mp4box.js (144 KB, no WASM, supports MP4/MOV).
+Videos are remuxed to fragmented MP4 on upload - no re-encoding. The CLI uses ffmpeg (supports all formats including WEBM/MKV). The browser uses mp4box.js (144 KB, no WASM, supports MP4/MOV).
 
 ```
 upload:
@@ -179,7 +179,7 @@ These are deliberate:
 git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel
 sudo ./setup.sh
 # firewall, fail2ban, SSH hardening, TLS via Caddy,
-# systemd service, daily backups — all handled
+# systemd service, daily backups - all handled
 ```
 
 Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOcean droplet, Hetzner VPS, or similar). The script asks for your domain (verified against server IP), an admin password, and optionally a personal SSH user. Safe to re-run.
@@ -190,7 +190,7 @@ Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOc
 | Firewall | UFW configured for SSH, HTTP, HTTPS only | Blocks all other inbound traffic |
 | fail2ban | Installed and enabled | Auto-bans IPs after failed SSH attempts |
 | SSH hardening | Creates personal user, disables root login | Limits attack surface if an SSH key is compromised |
-| Deploy user | `deploy` user with limited sudo | For CI/CD -- can only copy the binary and restart the service |
+| Deploy user | `deploy` user with limited sudo | For CI/CD - can only copy the binary and restart the service |
 | Go | Installs Go if not present | Required to build from source |
 | Caddy | Installed and configured | Automatic HTTPS via Let's Encrypt, reverse proxies to Darkreel |
 | Darkreel | Built, installed to `/usr/local/bin/` | The application itself |
@@ -200,10 +200,10 @@ Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOc
 ### When it's done
 
 1. Open `https://your-domain.com` and log in
-2. The setup script will display your **recovery code** -- save it somewhere safe
+2. The setup script will display your **recovery code** - save it somewhere safe
 3. SSH in as your personal user going forward: `ssh yourname@your-server-ip`
 
-The recovery code is printed to stderr only and is never written to disk. Save it immediately -- it's the only way to regain access to your encrypted data if you forget your password. No one -- including the server admin -- can recover it without this code.
+The recovery code is printed to stderr only and is never written to disk. Save it immediately - it's the only way to regain access to your encrypted data if you forget your password. No one - including the server admin - can recover it without this code.
 
 ### Manual
 
@@ -211,7 +211,7 @@ The recovery code is printed to stderr only and is never written to disk. Save i
 git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel
 bash build.sh
 DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
-# listening on :8080 — put Caddy or nginx in front for TLS
+# listening on :8080 - put Caddy or nginx in front for TLS
 ```
 
 ~14 MB RAM. One binary. Zero dependencies. No Docker, no PostgreSQL, no Redis, no S3.
@@ -229,7 +229,7 @@ DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 |----------|---------|-------------|
 | `DARKREEL_ADMIN_USERNAME` | `admin` | Admin username (first-run bootstrap only) |
 | `DARKREEL_ADMIN_PASSWORD` | **(required on first run)** | Admin password (first-run bootstrap only) |
-| `PERSIST_SESSION` | `true` | Cache master key in sessionStorage (survives page refresh). Set to `false` for higher security -- see [Session persistence](#session-persistence) |
+| `PERSIST_SESSION` | `true` | Cache master key in sessionStorage (survives page refresh). Set to `false` for higher security - see [Session persistence](#session-persistence) |
 | `ALLOW_REGISTRATION` | `false` | Allow new user registration via the web UI |
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` / `X-Real-IP` headers for rate limiting. **Only enable when running behind a trusted reverse proxy** (Caddy, nginx). Without a proxy, clients can spoof these headers to bypass rate limits. |
 | `MAX_STORAGE_CHUNKS` | unlimited | Per-user total chunk limit. Each chunk is ~1 MB. Set to `50000` for ~50 GB per user. |
@@ -287,7 +287,7 @@ Caddy handles TLS automatically via Let's Encrypt. When running behind any rever
 
 ## API
 
-All endpoints except `/health` and `/api/config` require a JWT. JWTs contain user ID, session ID, and admin flag -- nothing else.
+All endpoints except `/health` and `/api/config` require a JWT. JWTs contain user ID, session ID, and admin flag - nothing else.
 
 ### Auth
 
@@ -337,13 +337,13 @@ All endpoints except `/health` and `/api/config` require a JWT. JWTs contain use
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Health check (no auth) -- returns `{"status":"ok"}` |
+| GET | `/health` | Health check (no auth) - returns `{"status":"ok"}` |
 
 ## Operations
 
 ### Backups
 
-**The database is load-bearing.** Every encrypted file key lives in `darkreel.db`. Lose the database and every file on disk becomes permanently undecryptable -- even with the correct password.
+**The database is load-bearing.** Every encrypted file key lives in `darkreel.db`. Lose the database and every file on disk becomes permanently undecryptable - even with the correct password.
 
 ```bash
 # Hot backup (server stays running, WAL-safe)
@@ -357,7 +357,7 @@ sudo systemctl start darkreel
 
 Both database and media are required for a full restore. The database without the media means you have keys but no files. The media without the database means you have encrypted blobs with no way to decrypt them.
 
-Backups are safe to store off-site -- media is encrypted on disk, keys are encrypted in the database. An attacker with a backup can't decrypt anything without a user's password.
+Backups are safe to store off-site - media is encrypted on disk, keys are encrypted in the database. An attacker with a backup can't decrypt anything without a user's password.
 
 #### SQLite backup with cron
 
@@ -383,7 +383,7 @@ sudo cp darkreel /usr/local/bin/darkreel
 sudo systemctl restart darkreel
 ```
 
-Or use the auto-updater -- checks GitHub for tagged releases, verifies SHA-256 checksum and Ed25519 signature, restarts the service:
+Or use the auto-updater - checks GitHub for tagged releases, verifies SHA-256 checksum and Ed25519 signature, restarts the service:
 
 ```bash
 sudo ./update.sh              # check once
@@ -404,28 +404,28 @@ sudo ./update.sh --uninstall  # remove cron
 
 The setup script handles all of this. If deploying manually:
 
-- TLS termination -- Caddy or nginx (Darkreel does not handle TLS)
-- UFW firewall -- SSH, HTTP, HTTPS only
-- fail2ban -- auto-ban after failed SSH attempts
-- SSH hardened -- root login disabled, key-only auth
-- systemd sandboxing -- `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `PrivateDevices`, `CapabilityBoundingSet=`, `SystemCallFilter`, and more
-- Dedicated `darkreel` user -- minimal permissions
-- SRI hashes -- frontend JS/CSS integrity verified by browser (including dynamically loaded mp4box.js)
-- Rate limiting -- 5 auth attempts/min/IP + 10 attempts/15min/username (per-username limits defend against distributed brute-force even when per-IP limits are bypassed)
-- Security headers -- `nosniff`, `DENY` framing, `no-referrer`, strict CSP, HSTS, `Permissions-Policy`
-- COOP/COEP -- defense-in-depth for SharedArrayBuffer
-- Cache-Control -- `no-store` on all API responses to prevent caching of sensitive data
-- Graceful shutdown -- in-flight requests drain before the database closes
-- Session expiration -- sessions expire after 24 hours, with periodic cleanup
-- Password change -- all existing sessions are invalidated immediately
-- Admin re-verification -- admin status is checked from the database on every admin request
-- Timing side-channel mitigation -- login and recovery endpoints perform dummy work for non-existent users
-- BREACH mitigation -- HTTP compression disabled on auth endpoints that return secrets
-- Last-admin protection -- the system prevents deletion of the last admin account (atomic transaction prevents TOCTOU race)
-- Per-user storage quotas -- configurable chunk limit prevents any single user from filling the disk
-- Startup integrity checks -- incomplete uploads (DB record without all chunk files) are cleaned up on restart
-- Proxy-aware rate limiting -- `X-Forwarded-For` trust is off by default; must be explicitly enabled via `TRUST_PROXY=true` to prevent header spoofing
-- Encrypted backups -- database backups encrypted with AES-256-CBC using a dedicated key
+- TLS termination - Caddy or nginx (Darkreel does not handle TLS)
+- UFW firewall - SSH, HTTP, HTTPS only
+- fail2ban - auto-ban after failed SSH attempts
+- SSH hardened - root login disabled, key-only auth
+- systemd sandboxing - `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `PrivateDevices`, `CapabilityBoundingSet=`, `SystemCallFilter`, and more
+- Dedicated `darkreel` user - minimal permissions
+- SRI hashes - frontend JS/CSS integrity verified by browser (including dynamically loaded mp4box.js)
+- Rate limiting - 5 auth attempts/min/IP + 10 attempts/15min/username (per-username limits defend against distributed brute-force even when per-IP limits are bypassed)
+- Security headers - `nosniff`, `DENY` framing, `no-referrer`, strict CSP, HSTS, `Permissions-Policy`
+- COOP/COEP - defense-in-depth for SharedArrayBuffer
+- Cache-Control - `no-store` on all API responses to prevent caching of sensitive data
+- Graceful shutdown - in-flight requests drain before the database closes
+- Session expiration - sessions expire after 24 hours, with periodic cleanup
+- Password change - all existing sessions are invalidated immediately
+- Admin re-verification - admin status is checked from the database on every admin request
+- Timing side-channel mitigation - login and recovery endpoints perform dummy work for non-existent users
+- BREACH mitigation - HTTP compression disabled on auth endpoints that return secrets
+- Last-admin protection - the system prevents deletion of the last admin account (atomic transaction prevents TOCTOU race)
+- Per-user storage quotas - configurable chunk limit prevents any single user from filling the disk
+- Startup integrity checks - incomplete uploads (DB record without all chunk files) are cleaned up on restart
+- Proxy-aware rate limiting - `X-Forwarded-For` trust is off by default; must be explicitly enabled via `TRUST_PROXY=true` to prevent header spoofing
+- Encrypted backups - database backups encrypted with AES-256-CBC using a dedicated key
 
 ### Session persistence
 
@@ -447,7 +447,7 @@ Then restart: `sudo systemctl restart darkreel`
 
 ### Disk encryption (LUKS)
 
-The 3-pass secure deletion works on traditional HDDs but is unreliable on SSDs due to wear leveling -- the SSD controller may retain old data in spare sectors even after overwriting. If your threat model includes physical disk seizure or forensic recovery:
+The 3-pass secure deletion works on traditional HDDs but is unreliable on SSDs due to wear leveling - the SSD controller may retain old data in spare sectors even after overwriting. If your threat model includes physical disk seizure or forensic recovery:
 
 ```bash
 # Set up LUKS on the data partition (do this BEFORE installing Darkreel)
@@ -457,7 +457,7 @@ sudo mkfs.ext4 /dev/mapper/darkreel-data
 sudo mount /dev/mapper/darkreel-data /var/lib/darkreel
 ```
 
-With LUKS, all data at rest is encrypted at the block level. Shredding becomes irrelevant because the underlying blocks are already encrypted -- destroying the LUKS key makes all data unrecoverable regardless of SSD wear leveling.
+With LUKS, all data at rest is encrypted at the block level. Shredding becomes irrelevant because the underlying blocks are already encrypted - destroying the LUKS key makes all data unrecoverable regardless of SSD wear leveling.
 
 This is the recommended setup for production deployments on VPS providers where you don't control the physical hardware.
 
@@ -475,7 +475,7 @@ curl -X POST https://media.example.com/api/auth/recover \
 
 This resets your password, re-encrypts the master key, and returns a new recovery code. Your data remains accessible.
 
-If you lose both your password and recovery code, your data is permanently inaccessible. No one -- including the server admin -- can recover your encryption keys. This is by design.
+If you lose both your password and recovery code, your data is permanently inaccessible. No one - including the server admin - can recover your encryption keys. This is by design.
 
 ### Upload limits
 
@@ -526,8 +526,8 @@ server {
 
 ## Related
 
-- [darkreel-cli](https://github.com/baileywjohnson/darkreel-cli) -- Command-line upload tool. ffmpeg-based remuxing for all video formats.
-- [PPVDA](https://github.com/baileywjohnson/ppvda) -- Privacy-focused video downloader with Darkreel integration.
+- [darkreel-cli](https://github.com/baileywjohnson/darkreel-cli) - Command-line upload tool. ffmpeg-based remuxing for all video formats.
+- [PPVDA](https://github.com/baileywjohnson/ppvda) - Privacy-focused video downloader with Darkreel integration.
 
 ## License
 
