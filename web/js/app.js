@@ -2838,13 +2838,21 @@ async function createGalleryItem(item) {
     div.className = 'gallery-item';
     div.dataset.id = item.id;
 
-    // Decrypt thumbnail
-    const img = document.createElement('img');
-    img.loading = 'lazy';
-    img.alt = '';
-
-    // Load thumbnail asynchronously
-    loadThumbnail(item, img);
+    if (item.media_type === 'file') {
+        // Non-media file: show file icon instead of thumbnail
+        const fallback = document.createElement('div');
+        fallback.className = 'thumb-fallback';
+        fallback.innerHTML = '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+        div.appendChild(fallback);
+    } else {
+        // Decrypt thumbnail for images/videos
+        const img = document.createElement('img');
+        img.loading = 'lazy';
+        img.draggable = false;
+        img.alt = '';
+        loadThumbnail(item, img);
+        div.appendChild(img);
+    }
 
     const badge = document.createElement('span');
     badge.className = 'badge';
@@ -2856,6 +2864,8 @@ async function createGalleryItem(item) {
         badge.textContent = h > 0
             ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
             : `${m}:${String(sec).padStart(2, '0')}`;
+    } else if (item.media_type === 'file') {
+        badge.textContent = 'FILE';
     } else {
         badge.textContent = item.media_type === 'video' ? 'VID' : (item.mime_type === 'image/gif' ? 'GIF' : 'IMG');
     }
@@ -2873,7 +2883,6 @@ async function createGalleryItem(item) {
     nameEl.className = 'item-name';
     nameEl.textContent = item.name || 'Encrypted';
 
-    div.appendChild(img);
     div.appendChild(badge);
     div.appendChild(menuBtn);
     div.appendChild(nameEl);
@@ -2985,6 +2994,9 @@ async function loadThumbnail(item, img) {
 const viewer = document.getElementById('viewer');
 const viewerVideo = document.getElementById('viewer-video');
 const viewerImage = document.getElementById('viewer-image');
+const viewerFile = document.getElementById('viewer-file');
+const viewerFileName = document.getElementById('viewer-file-name');
+const viewerFileDownload = document.getElementById('viewer-file-download');
 const viewerTitle = document.getElementById('viewer-title');
 const viewerPrev = document.getElementById('viewer-prev');
 const viewerNext = document.getElementById('viewer-next');
@@ -2997,6 +3009,7 @@ document.getElementById('viewer-delete').addEventListener('click', deleteCurrent
 document.getElementById('viewer-download').addEventListener('click', downloadCurrentItem);
 document.getElementById('viewer-move').addEventListener('click', moveCurrentItem);
 document.getElementById('viewer-rotate').addEventListener('click', rotateCurrentItem);
+viewerFileDownload.addEventListener('click', downloadCurrentItem);
 document.getElementById('viewer-rename').addEventListener('click', () => {
     if (!currentViewerItem) return;
     renameItem(currentViewerItem);
@@ -3448,18 +3461,7 @@ async function handleDropUpload(files, targetFolderId) {
     dropUploadStatus.innerHTML = '';
     let hasErrors = false;
 
-    // Filter unsupported files before processing
-    const supported = [];
     for (const file of files) {
-        if (isUnsupportedFile(file)) {
-            showUnsupportedModal(file);
-        } else {
-            supported.push(file);
-        }
-    }
-    if (!supported.length) return;
-
-    for (const file of supported) {
         const row = document.createElement('div');
         row.className = 'drop-upload-item';
         const nameSpan = document.createElement('span');
@@ -3556,6 +3558,7 @@ async function openViewer(item) {
     viewer.classList.remove('hidden');
     viewerVideo.classList.add('hidden');
     viewerImage.classList.add('hidden');
+    viewerFile.classList.add('hidden');
 
     // Build navigation list from current folder's media (only on first open, not during navigation)
     if (viewerList.length === 0 || !viewerList.includes(item)) {
@@ -3568,6 +3571,18 @@ async function openViewer(item) {
     // Only apply CSS rotation for videos (images are rotated at the file level)
     viewerImage.style.transform = '';
     viewerVideo.style.transform = (item.media_type === 'video' && item.rotation) ? `rotate(${item.rotation}deg)` : '';
+
+    // Hide rotate button for non-image/video files
+    const isFile = item.media_type === 'file';
+    document.getElementById('viewer-rotate').style.display = isFile ? 'none' : '';
+    const moreRotate = document.querySelector('#viewer-more-menu [data-action="rotate"]');
+    if (moreRotate) moreRotate.style.display = isFile ? 'none' : '';
+
+    if (isFile) {
+        viewerFile.classList.remove('hidden');
+        viewerFileName.textContent = item.name || 'Encrypted file';
+        return;
+    }
 
     // Decrypt file key
     const fileKeyEnc = base64ToBuffer(item.file_key_enc);
@@ -3590,6 +3605,7 @@ function closeViewer() {
     viewerVideo.load();
     viewerVideo.classList.add('hidden');
     viewerImage.classList.add('hidden');
+    viewerFile.classList.add('hidden');
     viewerImage.src = '';
     applyRotation(0);
     if (_viewerBlobUrl) {
@@ -4763,7 +4779,10 @@ function renameItem(item) {
         item.name = newName;
         updateItemMetadata(item);
         renderGalleryItems();
-        if (currentViewerItem === item) viewerTitle.textContent = newName;
+        if (currentViewerItem === item) {
+            viewerTitle.textContent = newName;
+            viewerFileName.textContent = newName;
+        }
         return null;
     });
 }
@@ -4829,34 +4848,22 @@ uploadDropzone.addEventListener('drop', (e) => {
 });
 uploadInput.addEventListener('change', (e) => handleFiles(e.target.files));
 
-function isUnsupportedFile(file) {
-    const unsupportedExts = /\.(avi|flv|wmv|ogv|ts|mts|m2ts)$/i;
-    return unsupportedExts.test(file.name) || /x-msvideo|x-flv|x-ms-wmv/i.test(file.type);
-}
-
-function showUnsupportedModal(file) {
-    showConfirmModal('File type not supported',
-        `"${file.name}" cannot be uploaded.\n\nSupported formats:\n\nVideo: MP4, MOV, WEBM, MKV, M4V\nImage: JPG, PNG, GIF, WEBP`,
-        () => {}, { buttonLabel: 'Dismiss', buttonClass: 'btn-primary', hideCancel: true });
+function isMediaFile(file) {
+    const imageExts = /\.(jpe?g|png|gif|webp)$/i;
+    const videoExts = /\.(mp4|mov|m4v|webm|mkv)$/i;
+    const imageMimes = /^image\/(jpeg|png|gif|webp)$/i;
+    const videoMimes = /^video\//i;
+    if (imageExts.test(file.name) || imageMimes.test(file.type)) return 'image';
+    if (videoExts.test(file.name) || videoMimes.test(file.type)) return 'video';
+    return 'file';
 }
 
 async function handleFiles(files) {
     if (!files.length) return;
 
-    // Check for unsupported files first — show modal and filter them out
-    const supported = [];
-    for (const file of files) {
-        if (isUnsupportedFile(file)) {
-            showUnsupportedModal(file);
-        } else {
-            supported.push(file);
-        }
-    }
-    if (!supported.length) return;
-
     uploadProgress.classList.remove('hidden');
 
-    for (const file of supported) {
+    for (const file of files) {
         const itemEl = createUploadItem(file.name);
         uploadList.appendChild(itemEl);
 
@@ -4896,8 +4903,7 @@ async function uploadFile(file, itemEl, targetFolderId) {
     setUploadStatus(itemEl, 'Reading...');
     let fileData = new Uint8Array(await file.arrayBuffer());
 
-    const videoExts = /\.(mp4|mov|m4v|webm|mkv)$/i;
-    const mediaType = (file.type.startsWith('video/') || videoExts.test(file.name)) ? 'video' : 'image';
+    const mediaType = isMediaFile(file);
     let fragmented = false;
 
     // Remux videos to fMP4 for streaming playback.
@@ -4923,16 +4929,21 @@ async function uploadFile(file, itemEl, targetFolderId) {
         }
     }
 
-    setUploadStatus(itemEl, 'Generating thumbnail...');
     let thumbData;
-    try {
-        const thumbTimeout = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Thumbnail timeout')), 15000)
-        );
-        thumbData = await Promise.race([generateThumbnail(file), thumbTimeout]);
-    } catch {
-        // Fallback: 1px placeholder
+    if (mediaType === 'file') {
+        // Non-media files: use placeholder thumbnail
         thumbData = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46]);
+    } else {
+        setUploadStatus(itemEl, 'Generating thumbnail...');
+        try {
+            const thumbTimeout = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Thumbnail timeout')), 15000)
+            );
+            thumbData = await Promise.race([generateThumbnail(file), thumbTimeout]);
+        } catch {
+            // Fallback: 1px placeholder
+            thumbData = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46]);
+        }
     }
 
     setUploadStatus(itemEl, 'Encrypting...');
@@ -4940,8 +4951,8 @@ async function uploadFile(file, itemEl, targetFolderId) {
     const thumbKey = generateFileKey();
     const hashNonce = generateHashNonce();
 
-    // Hash modification (skip for videos to preserve container integrity)
-    const modifiedData = mediaType === 'video' ? fileData : modifyHash(fileData, file.type, hashNonce);
+    // Hash modification (skip for videos and non-media files)
+    const modifiedData = (mediaType === 'image') ? modifyHash(fileData, file.type, hashNonce) : fileData;
 
     // Generate media ID first — needed as AAD for chunk and key encryption
     const mediaId = crypto.randomUUID();
@@ -4984,7 +4995,7 @@ async function uploadFile(file, itemEl, targetFolderId) {
     if (detectedCodecs) metaPlain.codecs = detectedCodecs;
     if (targetFolderId) metaPlain.folderId = targetFolderId;
 
-    // Get video dimensions/duration
+    // Get dimensions/duration for media files
     if (mediaType === 'video') {
         try {
             const info = await getVideoInfo(file);
@@ -4992,7 +5003,7 @@ async function uploadFile(file, itemEl, targetFolderId) {
             metaPlain.height = info.height;
             metaPlain.duration = info.duration;
         } catch {}
-    } else {
+    } else if (mediaType === 'image') {
         try {
             const info = await getImageInfo(file);
             metaPlain.width = info.width;

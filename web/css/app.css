@@ -677,6 +677,23 @@ main { padding-top: 0; position: relative; z-index: 1; }
     border-radius: var(--radius);
     image-orientation: from-image;
 }
+.viewer-file {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    color: var(--text-dim);
+}
+.viewer-file svg { opacity: 0.5; }
+.viewer-file span {
+    font-size: 14px;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+}
 .viewer-nav {
     position: absolute;
     top: 50%;

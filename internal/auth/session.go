@@ -68,6 +68,18 @@ func (s *SessionStore) Get(sessionID string) ([]byte, bool) {
 	return cp, true
 }
 
+// Has checks whether a valid (non-expired) session exists without
+// copying the master key into a new allocation.
+func (s *SessionStore) Has(sessionID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entry, ok := s.sessions[sessionID]
+	if !ok {
+		return false
+	}
+	return time.Since(entry.CreatedAt) <= sessionMaxAge
+}
+
 func (s *SessionStore) Delete(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

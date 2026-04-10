@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Darkreel</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-<meta name="description" content="End-to-end encrypted photo and video storage. Single Go binary. Zero-knowledge architecture. Your server stores opaque blobs. Your browser holds the keys.">
+<meta name="description" content="End-to-end encrypted media storage, streaming & file vault. Single Go binary. Zero-knowledge architecture. Your server stores opaque blobs. Your browser holds the keys.">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap');
 
@@ -653,7 +653,7 @@ a:hover { text-decoration: underline; }
       <span>source</span>
     </a>
     <h1><span class="popcorn">&#127871;</span>darkreel<span class="cursor"></span></h1>
-    <div class="tagline">encrypted media storage & streaming</div>
+    <div class="tagline">encrypted media storage, streaming & file vault</div>
     <p class="subtitle">
       Your server stores <strong>opaque blobs</strong>. Your browser holds the keys.
       Single Go binary. No Docker, no Postgres, no Redis, no S3.
@@ -754,8 +754,12 @@ a:hover { text-decoration: underline; }
         <div class="feature-desc">Chunk counts stored inside encrypted metadata. On download/playback, the client verifies the count matches - detects truncation attacks where chunks are deleted from the server.</div>
       </div>
       <div class="feature">
+        <div class="feature-name">generic file storage</div>
+        <div class="feature-desc">Not just media. Upload any file type - PDFs, documents, archives, code. Same zero-knowledge encryption. Non-media files get a download button in the viewer.</div>
+      </div>
+      <div class="feature">
         <div class="feature-name">encrypted folders</div>
-        <div class="feature-desc">Organize media into folders. The structure is encrypted - only you can see it. Drag-and-drop to reorganize on desktop and mobile.</div>
+        <div class="feature-desc">Organize your files into folders. The structure is encrypted - only you can see it. Drag-and-drop to reorganize on desktop and mobile.</div>
       </div>
       <div class="feature">
         <div class="feature-name">folder download</div>
@@ -864,7 +868,7 @@ a:hover { text-decoration: underline; }
     <p>iOS Safari 17.1+ uses ManagedMediaSource. Non-remuxable formats
     uploaded via browser are stored as-is and played via blob URL.</p>
 
-    <h3>formats</h3>
+    <h3>media formats</h3>
     <p>
       <span class="tag">MP4</span>
       <span class="tag">MOV</span>
@@ -877,6 +881,7 @@ a:hover { text-decoration: underline; }
       <span class="tag">WEBP</span>
     </p>
     <p class="note">MP4 and MOV get streaming playback in the browser. CLI uploads via ffmpeg support all video formats with full streaming.</p>
+    <p class="note">Any other file type can also be uploaded and stored with full encryption - no preview, just encrypted storage and download.</p>
   </section>
 
   <!-- ────────────────────────── TRADE-OFFS ────────────────────────── -->

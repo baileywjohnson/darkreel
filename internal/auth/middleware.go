@@ -31,7 +31,7 @@ func Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if _, ok := Sessions.Get(claims.SessionID); !ok {
+		if !Sessions.Has(claims.SessionID) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

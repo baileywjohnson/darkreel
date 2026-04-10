@@ -34,8 +34,9 @@ type Server struct {
 func (s *Server) Run() error {
 	r := s.routes()
 	s.httpServer = &http.Server{
-		Addr:    s.Addr,
-		Handler: r,
+		Addr:              s.Addr,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Printf("Darkreel listening on %s", s.Addr)
 	return s.httpServer.ListenAndServe()

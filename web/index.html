@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-ToF83IwuPOuIY1h+WRx8D1jXEQYfcMyNwzcTbXQKNiB4QnWhvWMOkmiE6qo/DsV8" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-rVy+54xvgKu3ooD24yHcjoOKpqrA4v8moFgvEnPj07C3PyB2Ak/ur6K+ab/i3eY4" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -100,6 +100,7 @@
                                 <div class="custom-select-option selected" data-value="">All</div>
                                 <div class="custom-select-option" data-value="image">Images</div>
                                 <div class="custom-select-option" data-value="video">Videos</div>
+                                <div class="custom-select-option" data-value="file">Files</div>
                             </div>
                         </div>
                         <button id="filter-menu-btn" class="btn btn-ghost btn-sm filter-mobile" aria-label="Filters"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2h14l-5 6v5l-4 2V8z"/></svg></button>
@@ -123,6 +124,7 @@
                                     <div class="custom-select-option selected" data-value="">All</div>
                                     <div class="custom-select-option" data-value="image">Images</div>
                                     <div class="custom-select-option" data-value="video">Videos</div>
+                                    <div class="custom-select-option" data-value="file">Files</div>
                                 </div>
                             </div>
                         </div>
@@ -304,6 +306,14 @@
                     <button id="viewer-prev" class="viewer-nav viewer-nav-prev" aria-label="Previous"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
                     <video id="viewer-video" class="hidden" controls></video>
                     <img id="viewer-image" class="hidden" alt="">
+                    <div id="viewer-file" class="viewer-file hidden">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                        <span id="viewer-file-name"></span>
+                        <button id="viewer-file-download" class="btn btn-primary">Download File</button>
+                    </div>
                     <button id="viewer-next" class="viewer-nav viewer-nav-next" aria-label="Next"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
                 </div>
             </div>
@@ -367,7 +377,7 @@
                 <h3>Upload Media</h3>
                 <div id="upload-dropzone" class="dropzone">
                     <p>Drop files here or click to select</p>
-                    <input type="file" id="upload-input" multiple accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.webm,.mkv,.m4v,.jpg,.jpeg,.png,.gif,.webp">
+                    <input type="file" id="upload-input" multiple>
                 </div>
                 <div id="upload-progress" class="hidden">
                     <div id="upload-list"></div>
@@ -381,6 +391,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-LzmM737+lLw3SErseDz6eFA1/NihbzADMsKMCmMVC3s8qyvNdbWfrbeMll95F99o" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-7IQNs+eSYsAiL9iUII9wSJjIsX2fkDfXpM4F3sM0oDbk5C4hT0GdIpSXU/0+CeOq" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-E3VMD79bIOMRVYDQApTaTyKozqSnZQLfcv9Y27zEE84+lFixxVGGvF/gEjCIjO7q" crossorigin="anonymous"></script>
 </body>
 </html>

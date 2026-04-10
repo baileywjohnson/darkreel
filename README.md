@@ -5,7 +5,7 @@
 <h1 align="center">Darkreel</h1>
 
 <p align="center">
-  <strong>Encrypted media storage & streaming.</strong><br>
+  <strong>Encrypted media storage, streaming & file vault.</strong><br>
   Your server stores opaque blobs. Your browser holds the keys.
 </p>
 
@@ -68,7 +68,8 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **Multi-user** - Each user has an isolated, encrypted library with their own master key. Admin panel for user management.
 - **Hash modification** - Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection.
 - **Chunk integrity verification** - Chunk counts are stored inside the encrypted metadata blob. On download/playback, the client verifies the count matches, detecting truncation attacks where an attacker deletes chunks from the server.
-- **Encrypted folders** - Organize your media into folders. The folder structure is encrypted - only you can see it. Drag-and-drop to reorganize (desktop and mobile touch).
+- **Generic file storage** - Not just media. Upload any file type — PDFs, documents, archives, code. Everything is encrypted with the same zero-knowledge scheme. Non-media files get a file icon in the gallery and a download button in the viewer.
+- **Encrypted folders** - Organize your files into folders. The folder structure is encrypted - only you can see it. Drag-and-drop to reorganize (desktop and mobile touch).
 - **Folder download** - Download an entire folder (including subfolders) as a ZIP file, decrypted client-side.
 - **Image rotation** - Rotate images at the pixel level. The original is securely deleted and replaced with a freshly encrypted copy using new keys.
 - **6 color themes** - Classic, cool, forest, neon, ocean, and warm. Stored in localStorage.
@@ -78,8 +79,9 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 
 ### Supported formats
 
-- **Video:** MP4, MOV, WEBM, MKV, M4V
-- **Image:** JPG, PNG, GIF, WEBP
+- **Video:** MP4, MOV, WEBM, MKV, M4V — with thumbnail generation, streaming playback (MP4/MOV), and in-browser preview
+- **Image:** JPG, PNG, GIF, WEBP — with thumbnail generation and in-browser preview
+- **Any file:** PDFs, documents, archives, and any other file type can be uploaded and stored with full encryption. Non-media files are displayed with a file icon in the gallery and a download button in the viewer (no preview).
 
 > **Note:** Only MP4 and MOV videos support streaming playback when uploaded in the browser. CLI uploads via ffmpeg support all video formats with full streaming.
 
