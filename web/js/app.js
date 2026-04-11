@@ -806,6 +806,13 @@ let mediaItems = [];
 const pendingDeletes = new Set();
 // Tracks in-progress uploads: Map<id, { name, folderId }>
 const pendingUploads = new Map();
+
+// Warn before closing/refreshing the page during an active upload.
+// Browsers enforce their own native dialog for beforeunload — custom
+// modals are not allowed (anti-abuse measure).
+window.addEventListener('beforeunload', (e) => {
+    if (pendingUploads.size > 0) e.preventDefault();
+});
 let currentPage = 1;
 let totalItems = 0;
 const PAGE_SIZE = 50;
@@ -2824,6 +2831,10 @@ function galleryFingerprint() {
 }
 
 function onRefreshClick() {
+    // Don't refresh the gallery while uploads are in progress —
+    // loadMedia() clears and re-renders the grid, which would destroy
+    // the placeholder tiles and status indicators for active uploads.
+    if (pendingUploads.size > 0) return;
     _silentRefresh = true;
     const oldFingerprint = galleryFingerprint();
     galleryView.classList.add('refreshing');
@@ -2948,8 +2959,8 @@ async function pollMedia() {
 
         totalItems = newTotal;
 
-        // Also detect deletions
-        if (rawItems.length < mediaItems.length) {
+        // Also detect deletions (but not during uploads — would destroy placeholders)
+        if (rawItems.length < mediaItems.length && pendingUploads.size === 0) {
             loadMedia();
         }
     } catch {}
