@@ -218,6 +218,17 @@ func GetTotalChunkCount(db *sql.DB) (int, error) {
 	return count, err
 }
 
+// GetTotalAllocatedQuota returns the sum of effective quotas across all users.
+// Users with a per-user override use that value; others use the provided default.
+func GetTotalAllocatedQuota(db *sql.DB, defaultQuota int) (int, error) {
+	var total int
+	err := db.QueryRow(
+		`SELECT COALESCE(SUM(CASE WHEN storage_quota > 0 THEN storage_quota ELSE ? END), 0) FROM users`,
+		defaultQuota,
+	).Scan(&total)
+	return total, err
+}
+
 // --- Server settings ---
 
 func GetSetting(db *sql.DB, key string) (string, error) {

@@ -132,6 +132,7 @@ func (s *Server) routes() chi.Router {
 		r.Delete("/api/auth/account", authHandler.DeleteOwnAccount)
 
 		r.Get("/api/media", mediaHandler.List)
+		r.Get("/api/media/quota", mediaHandler.QuotaCheck)
 		r.Get("/api/media/{id}", mediaHandler.Get)
 		r.Post("/api/media/upload", mediaHandler.Upload)
 		r.Delete("/api/media/{id}", mediaHandler.Delete)

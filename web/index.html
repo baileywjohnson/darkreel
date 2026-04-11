@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-rVy+54xvgKu3ooD24yHcjoOKpqrA4v8moFgvEnPj07C3PyB2Ak/ur6K+ab/i3eY4" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-DNgwyYRZgj4rRML2vObhWxSMLQuYkQFNetJ72bMpxuqS1ab0oG6l713nmS7DJy5S" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -164,10 +164,10 @@
                             <div id="admin-storage-stats" style="font-size:14px;color:var(--text-dim);margin-bottom:16px"></div>
                             <label style="font-size:14px;color:var(--text-dim);display:block;margin-bottom:6px">Default per-user quota (chunks)</label>
                             <div style="display:flex;gap:8px;align-items:stretch;height:38px;box-sizing:border-box">
-                                <input type="number" id="admin-default-quota" min="0" placeholder="0 = unlimited" inputmode="numeric" pattern="[0-9]*" style="width:140px;padding:0 10px;font-size:14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);box-sizing:border-box;height:38px;margin:0;-moz-appearance:textfield">
+                                <input type="number" id="admin-default-quota" min="0" placeholder="Required" inputmode="numeric" pattern="[0-9]*" style="width:140px;padding:0 10px;font-size:14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);box-sizing:border-box;height:38px;margin:0;-moz-appearance:textfield">
                                 <button type="button" id="admin-save-quota" class="btn btn-primary" style="padding:0 16px;font-size:13px;box-sizing:border-box;height:38px;margin:0">Save</button>
                             </div>
-                            <p style="font-size:12px;color:var(--text-dim);margin-top:6px">Each chunk is ~1 MB. Set to 0 for unlimited. Example: 50000 = ~50 GB.</p>
+                            <p style="font-size:12px;color:var(--text-dim);margin-top:6px">Each chunk is ~1 MB. Example: 50000 = ~50 GB.</p>
                         </div>
                         <div class="admin-create">
                             <h3>Create User</h3>
@@ -371,6 +371,16 @@
             </div>
         </div>
 
+        <div id="upload-error-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <h3 id="upload-error-title">Upload Failed</h3>
+                <p id="upload-error-message" style="font-size:14px;color:var(--text-dim);margin-bottom:20px"></p>
+                <div class="modal-card-actions">
+                    <button id="upload-error-ok" class="btn btn-primary">OK</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Upload modal -->
         <div id="upload-modal" class="modal hidden">
             <div class="modal-content">
@@ -391,6 +401,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-LzmM737+lLw3SErseDz6eFA1/NihbzADMsKMCmMVC3s8qyvNdbWfrbeMll95F99o" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-E3VMD79bIOMRVYDQApTaTyKozqSnZQLfcv9Y27zEE84+lFixxVGGvF/gEjCIjO7q" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-si/a4vwSjPScVKoZUgbZ7SbEZfChqogdScvlCSzsAlh4VyuJWZSaydPB3xMDna1C" crossorigin="anonymous"></script>
 </body>
 </html>

@@ -882,6 +882,7 @@ async function handleLogin(overrideUsername, overridePassword) {
         serverConfig.isAdmin = res.is_admin || false;
         sessionStorage.setItem('token', token);
         sessionStorage.setItem('userId', userId);
+        sessionStorage.setItem('username', username);
         sessionStorage.setItem('isAdmin', serverConfig.isAdmin ? '1' : '0');
 
         // Optionally persist master key for refresh survival
@@ -1349,13 +1350,22 @@ async function loadAdminStorage() {
         const diskUsed = formatSize(stats.disk_used_bytes || 0);
         const diskAvail = formatSize(stats.disk_avail_bytes || 0);
         const diskTotal = formatSize((stats.disk_used_bytes || 0) + (stats.disk_avail_bytes || 0));
+        const totalAllocated = stats.total_allocated_quota || 0;
+        const maxChunks = stats.max_allocatable_chunks || 0;
+        const remaining = Math.max(0, maxChunks - totalAllocated);
         statsEl.innerHTML = '<div style="display:flex;gap:24px;flex-wrap:wrap">' +
-            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(String(stats.total_chunks)) + '</span> total chunks</div>' +
-            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskUsed) + '</span> used</div>' +
-            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskAvail) + '</span> available</div>' +
-            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskTotal) + '</span> total</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(String(stats.total_chunks)) + '</span> chunks used</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(String(totalAllocated)) + '</span> chunks allocated</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(String(remaining)) + '</span> chunks available</div>' +
+            '</div>' +
+            '<div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:8px">' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskUsed) + '</span> disk used</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskAvail) + '</span> disk available</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskTotal) + '</span> disk total</div>' +
             '</div>';
         _cachedDefaultQuota = stats.default_storage_quota || 0;
+        _cachedMaxChunks = maxChunks;
+        _cachedTotalAllocated = totalAllocated;
         document.getElementById('admin-default-quota').value = stats.default_storage_quota || '';
     } catch {}
 }
@@ -1546,6 +1556,8 @@ adminCreateForm.addEventListener('submit', async (e) => {
 });
 
 let _cachedDefaultQuota = 0;
+let _cachedMaxChunks = 0;
+let _cachedTotalAllocated = 0;
 
 async function loadAdminUsers() {
     try {
@@ -1558,7 +1570,7 @@ async function loadAdminUsers() {
             const effectiveQuota = u.storage_quota > 0 ? u.storage_quota : _cachedDefaultQuota;
             const quotaLabel = effectiveQuota > 0
                 ? escapeHtml(String(effectiveQuota)) + ' chunks'
-                : 'unlimited';
+                : '<span style="color:var(--danger)">not set</span>';
             const usage = escapeHtml(String(u.chunk_count)) + ' chunks';
             return `
             <div class="admin-user-card" style="flex-wrap:wrap;gap:8px">
@@ -1570,7 +1582,7 @@ async function loadAdminUsers() {
                     </div>
                 </div>
                 <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-                    <button class="btn" style="font-size:12px;padding:4px 10px" data-quota-uid="${escapeHtml(u.id)}" data-current-quota="${u.storage_quota}">Raise Quota</button>
+                    <button class="btn" style="font-size:12px;padding:4px 10px" data-quota-uid="${escapeHtml(u.id)}" data-current-quota="${u.storage_quota}">Set Quota</button>
                     ${u.id === userId ? '<span style="font-size:12px;color:var(--text-dim)">You</span>' : '<button class="btn btn-danger" data-delete-uid="' + escapeHtml(u.id) + '" style="font-size:12px;padding:4px 10px">Delete</button>'}
                 </div>
             </div>`;
@@ -1598,9 +1610,10 @@ async function loadAdminUsers() {
                 const current = parseInt(btn.dataset.currentQuota, 10) || 0;
                 const username = btn.closest('.admin-user-card').querySelector('.admin-user-info').firstChild.textContent.trim();
                 const effectiveQuota = current > 0 ? current : _cachedDefaultQuota;
+                const quotaRemaining = Math.max(0, _cachedMaxChunks - _cachedTotalAllocated + effectiveQuota);
                 showAdminQuotaModal(
-                    'Raise Quota',
-                    'Set a custom chunk quota for "' + username + '". Must be higher than the server default' + (_cachedDefaultQuota > 0 ? ' (' + _cachedDefaultQuota + ')' : '') + ', or 0 to use the default.',
+                    'Set Quota',
+                    'Set a chunk quota for "' + username + '". Must be higher than the server default' + (_cachedDefaultQuota > 0 ? ' (' + _cachedDefaultQuota + ')' : '') + ', or 0 to use the default. Max available: ' + quotaRemaining + ' chunks.',
                     effectiveQuota,
                     async (val) => {
                         await api('/api/admin/users/' + uid + '/quota', { method: 'PATCH', json: { storage_quota: val } });
@@ -2212,13 +2225,14 @@ function getFolderPath(folderId) {
 
 function renderBreadcrumb() {
     const path = getFolderPath(currentFolderId);
+    const rootLabel = sessionStorage.getItem('username') || 'All Media';
 
     // Full breadcrumb (desktop)
     let fullHtml = '<span class="breadcrumb-sep">/</span>';
     if (!currentFolderId && path.length === 0) {
-        fullHtml += '<span class="breadcrumb-current">All Media</span>';
+        fullHtml += `<span class="breadcrumb-current">${escapeHtml(rootLabel)}</span>`;
     } else {
-        fullHtml += '<span class="breadcrumb-item" data-folder-id="">All Media</span>';
+        fullHtml += `<span class="breadcrumb-item" data-folder-id="">${escapeHtml(rootLabel)}</span>`;
     }
     for (const folder of path) {
         fullHtml += '<span class="breadcrumb-sep">/</span>';
@@ -2232,7 +2246,7 @@ function renderBreadcrumb() {
     // Compact breadcrumb (mobile) — / .. / CurrentFolder
     let compactHtml = '<span class="breadcrumb-sep">/</span>';
     if (!currentFolderId) {
-        compactHtml += '<span class="breadcrumb-current">All Media</span>';
+        compactHtml += `<span class="breadcrumb-current">${escapeHtml(rootLabel)}</span>`;
     } else {
         const parentId = path.length >= 2 ? path[path.length - 2].id : '';
         compactHtml += `<span class="breadcrumb-item" data-folder-id="${escapeHtml(parentId)}">..</span>`;
@@ -3142,7 +3156,7 @@ function openMoveModal(item) {
     // Root option
     const rootEl = document.createElement('div');
     rootEl.className = 'move-folder-item' + ((item.folderId || null) === null ? ' active' : '');
-    rootEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> All Media (root)';
+    rootEl.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ${escapeHtml(sessionStorage.getItem('username') || 'All Media')} (root)`;
     rootEl.addEventListener('click', () => doMove(null));
     moveFolderList.appendChild(rootEl);
 
@@ -3198,7 +3212,7 @@ function openMoveFolderModal(folder) {
     // Root option
     const rootEl = document.createElement('div');
     rootEl.className = 'move-folder-item' + ((folder.parentId || null) === null ? ' active' : '');
-    rootEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> All Media (root)';
+    rootEl.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ${escapeHtml(sessionStorage.getItem('username') || 'All Media')} (root)`;
     rootEl.addEventListener('click', () => doMoveFolder(null));
     moveFolderList.appendChild(rootEl);
 
@@ -3460,6 +3474,7 @@ async function handleDropUpload(files, targetFolderId) {
     if (targetFolderId === undefined) targetFolderId = currentFolderId;
     dropUploadStatus.innerHTML = '';
     let hasErrors = false;
+    let isQuotaError = false;
 
     for (const file of files) {
         const row = document.createElement('div');
@@ -3514,10 +3529,12 @@ async function handleDropUpload(files, targetFolderId) {
             statusSpan.textContent = 'Done';
             statusSpan.className = 'status done';
         } catch (e) {
-            console.error('Drop upload failed:', e);
+            const msg = e.quotaError ? e.message : (e.message || 'Upload failed');
+            showUploadErrorModal(msg);
             statusSpan.textContent = 'Error';
             statusSpan.className = 'status error';
             hasErrors = true;
+            if (e.quotaError) { isQuotaError = true; break; }
         } finally {
             pendingUploads.delete(uploadId);
             const ph = document.querySelector(`[data-pending-upload="${uploadId}"]`);
@@ -3525,8 +3542,8 @@ async function handleDropUpload(files, targetFolderId) {
         }
     }
 
-    if (hasErrors) {
-        // Only show toast for failed uploads
+    if (hasErrors && !isQuotaError) {
+        // Only show toast for non-quota failed uploads
         dropUploadStatus.querySelectorAll('.drop-upload-item').forEach(row => {
             if (!row.querySelector('.status.error')) row.remove();
         });
@@ -3540,6 +3557,10 @@ async function handleDropUpload(files, targetFolderId) {
         }, 3000);
     }
     loadMedia();
+    if (!adminView.classList.contains('hidden')) {
+        loadAdminStorage();
+        loadAdminUsers();
+    }
 }
 
 /**
@@ -4240,7 +4261,11 @@ async function rotateCurrentItem() {
     }
 
     // Images: actually rotate the pixel data and re-upload
-    viewerTitle.textContent = 'Rotating...';
+    viewerImage.style.opacity = '0.4';
+    viewerImage.parentElement.style.position = 'relative';
+    const spinner = document.createElement('div');
+    spinner.className = 'viewer-rotate-spinner';
+    viewerImage.parentElement.appendChild(spinner);
     try {
         // Decrypt file
         const fileKeyEnc = base64ToBuffer(item.file_key_enc);
@@ -4353,6 +4378,10 @@ async function rotateCurrentItem() {
         const uploadData = await uploadRes.json();
         const newId = uploadData.id;
 
+        // Clean up spinner before reloading viewer
+        viewerImage.style.opacity = '';
+        spinner.remove();
+
         // Reload media and re-open viewer on the new item at the same position
         const savedIndex = viewerIndex;
         viewerList = [];
@@ -4373,6 +4402,8 @@ async function rotateCurrentItem() {
             closeViewer();
         }
     } catch (e) {
+        viewerImage.style.opacity = '';
+        spinner.remove();
         viewerTitle.textContent = 'Rotate failed: ' + e.message;
     }
 }
@@ -4863,19 +4894,51 @@ async function handleFiles(files) {
 
     uploadProgress.classList.remove('hidden');
 
+    // Create all items upfront so they appear immediately
+    const items = [];
     for (const file of files) {
         const itemEl = createUploadItem(file.name);
         uploadList.appendChild(itemEl);
+        items.push({ file, itemEl });
+    }
 
+    // Upload sequentially
+    for (const { file, itemEl } of items) {
         try {
             await uploadFile(file, itemEl);
             setUploadStatus(itemEl, 'Done');
         } catch (e) {
-            console.error('Upload failed:', e);
-            setUploadStatus(itemEl, 'Error: ' + e.message);
+            const msg = e.quotaError ? e.message : (e.message || 'Upload failed');
+            if (e.quotaError) uploadModal.classList.add('hidden');
+            showUploadErrorModal(msg);
+            setUploadStatus(itemEl, 'Error');
+            if (e.quotaError) break;
         }
     }
     loadMedia();
+    if (!adminView.classList.contains('hidden')) {
+        loadAdminStorage();
+        loadAdminUsers();
+    }
+}
+
+function showUploadErrorModal(message) {
+    const modal = document.getElementById('upload-error-modal');
+    document.getElementById('upload-error-message').textContent = message;
+    modal.classList.remove('hidden');
+    const okBtn = document.getElementById('upload-error-ok');
+    const close = () => {
+        modal.classList.add('hidden');
+        okBtn.removeEventListener('click', close);
+        document.removeEventListener('keydown', onKey);
+        modal.removeEventListener('click', onOverlay);
+    };
+    const onKey = (e) => { if (e.key === 'Escape' || e.key === 'Enter') close(); };
+    const onOverlay = (e) => { if (e.target === modal) close(); };
+    okBtn.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    modal.addEventListener('click', onOverlay);
+    okBtn.focus();
 }
 
 function createUploadItem(name) {
@@ -4897,8 +4960,26 @@ function setUploadProgress(el, pct) {
     el.querySelector('.fill').style.width = pct + '%';
 }
 
+async function checkQuotaBeforeUpload() {
+    const res = await fetch('/api/media/quota', {
+        headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Failed to check quota');
+    const data = await res.json();
+    if (data.quota <= 0) {
+        throw { quotaError: 'no_quota', message: 'No storage quota configured. Please contact your administrator.' };
+    }
+    if (data.used >= data.quota) {
+        throw { quotaError: 'exceeded', message: 'Storage quota exceeded. Please contact your administrator.' };
+    }
+    return data;
+}
+
 async function uploadFile(file, itemEl, targetFolderId) {
     if (targetFolderId === undefined) targetFolderId = currentFolderId;
+
+    setUploadStatus(itemEl, 'Checking quota...');
+    await checkQuotaBeforeUpload();
 
     setUploadStatus(itemEl, 'Reading...');
     let fileData = new Uint8Array(await file.arrayBuffer());

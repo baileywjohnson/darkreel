@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"syscall"
@@ -12,6 +13,14 @@ import (
 	"github.com/baileywjohnson/darkreel/internal/db"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+)
+
+const (
+	// Conservative estimate: most chunks pad to 1 MB, but larger buckets exist (2/4/8/16 MB).
+	// 2 MB per chunk accounts for larger chunks and thumbnail overhead.
+	bytesPerChunk = 2 * 1024 * 1024
+	// Reserve 2 GB for database, OS, logs, and filesystem overhead.
+	reservedBytes = 2 * 1024 * 1024 * 1024
 )
 
 // getDiskInfo returns (used bytes, available bytes) for the data directory.
@@ -27,6 +36,16 @@ func (h *Handler) getDiskInfo() (uint64, uint64) {
 	avail := stat.Bavail * uint64(stat.Bsize)
 	used := total - avail
 	return used, avail
+}
+
+// maxAllocatableChunks returns the maximum number of chunks that can be allocated
+// based on available disk space, after subtracting the reserved buffer.
+func (h *Handler) maxAllocatableChunks() int {
+	_, avail := h.getDiskInfo()
+	if avail <= reservedBytes {
+		return 0
+	}
+	return int((avail - reservedBytes) / bytesPerChunk)
 }
 
 // AdminMiddleware returns middleware that verifies admin status from the database
@@ -117,6 +136,35 @@ func (h *Handler) SetUserQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate that the new total allocation fits on disk.
+	// Compute: current total with old value, then adjust for the change.
+	currentTotal, err := db.GetTotalAllocatedQuota(h.DB, defaultQuota)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// Get the user's current effective quota to compute the delta.
+	user, err := db.GetUserByID(h.DB, targetID)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	oldEffective := user.StorageQuota
+	if oldEffective <= 0 {
+		oldEffective = defaultQuota
+	}
+	newEffective := req.StorageQuota
+	if newEffective <= 0 {
+		newEffective = defaultQuota
+	}
+	newTotal := currentTotal - oldEffective + newEffective
+
+	maxChunks := h.maxAllocatableChunks()
+	if maxChunks > 0 && newTotal > maxChunks {
+		http.Error(w, fmt.Sprintf("total allocated quota (%d chunks) would exceed available disk capacity (%d chunks)", newTotal, maxChunks), http.StatusBadRequest)
+		return
+	}
+
 	if err := db.UpdateUserQuota(h.DB, targetID, req.StorageQuota); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -138,15 +186,20 @@ func (h *Handler) GetStorageStats(w http.ResponseWriter, r *http.Request) {
 		defaultQuota, _ = strconv.Atoi(val)
 	}
 
+	totalAllocated, _ := db.GetTotalAllocatedQuota(h.DB, defaultQuota)
+
 	// Get disk usage info from the storage layer
 	diskUsed, diskAvail := h.getDiskInfo()
+	maxChunks := h.maxAllocatableChunks()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"total_chunks":         totalChunks,
+		"total_chunks":          totalChunks,
 		"default_storage_quota": defaultQuota,
-		"disk_used_bytes":      diskUsed,
-		"disk_avail_bytes":     diskAvail,
+		"total_allocated_quota": totalAllocated,
+		"max_allocatable_chunks": maxChunks,
+		"disk_used_bytes":       diskUsed,
+		"disk_avail_bytes":      diskAvail,
 	})
 }
 
@@ -161,8 +214,20 @@ func (h *Handler) SetDefaultQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.DefaultStorageQuota < 0 {
-		http.Error(w, "quota must be non-negative", http.StatusBadRequest)
+	if req.DefaultStorageQuota <= 0 {
+		http.Error(w, "quota must be greater than zero", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that the new total allocation fits on disk.
+	newTotal, err := db.GetTotalAllocatedQuota(h.DB, req.DefaultStorageQuota)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	maxChunks := h.maxAllocatableChunks()
+	if maxChunks > 0 && newTotal > maxChunks {
+		http.Error(w, fmt.Sprintf("total allocated quota (%d chunks) would exceed available disk capacity (%d chunks)", newTotal, maxChunks), http.StatusBadRequest)
 		return
 	}
 

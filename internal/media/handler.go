@@ -32,6 +32,30 @@ func validID(w http.ResponseWriter, r *http.Request, param string) string {
 	return id
 }
 
+// QuotaCheck returns the authenticated user's effective quota and current usage.
+func (h *Handler) QuotaCheck(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r)
+
+	quota := h.MaxStorageChunks
+	if val, err := db.GetSetting(h.DB, "default_storage_quota"); err == nil {
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			quota = n
+		}
+	}
+	if user, err := db.GetUserByID(h.DB, userID); err == nil && user.StorageQuota > 0 {
+		quota = user.StorageQuota
+	}
+
+	used, err := db.GetUserChunkCount(h.DB, userID)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{"quota": quota, "used": used})
+}
+
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
 
@@ -170,16 +194,18 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	if user, err := db.GetUserByID(h.DB, userID); err == nil && user.StorageQuota > 0 {
 		quota = user.StorageQuota
 	}
-	if quota > 0 {
-		existing, err := db.GetUserChunkCount(h.DB, userID)
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		if existing+meta.ChunkCount > quota {
-			http.Error(w, "storage quota exceeded", http.StatusForbidden)
-			return
-		}
+	if quota <= 0 {
+		http.Error(w, "No storage quota configured. Please contact your administrator.", http.StatusForbidden)
+		return
+	}
+	existing, err := db.GetUserChunkCount(h.DB, userID)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if existing+meta.ChunkCount > quota {
+		http.Error(w, "Storage quota exceeded. Please contact your administrator.", http.StatusForbidden)
+		return
 	}
 
 	// INSERT DB record first — fails fast on duplicate media_id (PRIMARY KEY
