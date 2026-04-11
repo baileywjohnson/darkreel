@@ -2443,9 +2443,11 @@ function createFolderElements() {
         const menuBtn = el.querySelector('.folder-menu-btn');
         menuBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            const wasActive = el.classList.contains('menu-active');
             // Close any existing context menu
             document.querySelectorAll('.menu-active').forEach(el2 => el2.classList.remove('menu-active'));
             document.querySelectorAll('.folder-context-menu').forEach(m => m.remove());
+            if (wasActive) return;
 
             el.classList.add('menu-active');
             const menu = document.createElement('div');
@@ -2986,8 +2988,10 @@ async function createGalleryItem(item) {
 }
 
 function openItemContextMenu(item, parentEl, anchorBtn) {
+    const wasActive = parentEl.classList.contains('menu-active');
     document.querySelectorAll('.menu-active').forEach(el => el.classList.remove('menu-active'));
     document.querySelectorAll('.folder-context-menu').forEach(m => m.remove());
+    if (wasActive) return;
 
     const menu = document.createElement('div');
     menu.className = 'folder-context-menu';
