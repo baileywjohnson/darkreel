@@ -339,9 +339,14 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Quantize size to 256 KB buckets to reduce content fingerprinting
+	// precision in the database. Negligible impact on quota accuracy.
+	const sizeQuantum = 256 * 1024
+	quantizedBytes := ((totalBytes + sizeQuantum - 1) / sizeQuantum) * sizeQuantum
+
 	// Atomically verify quota and update size in a single transaction
 	// to close the TOCTOU window between concurrent uploads.
-	ok, err := db.UpdateMediaSizeWithQuotaCheck(h.DB, mediaID, userID, totalBytes, quota)
+	ok, err := db.UpdateMediaSizeWithQuotaCheck(h.DB, mediaID, userID, quantizedBytes, quota)
 	if err != nil {
 		cleanup()
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -383,17 +388,19 @@ func (h *Handler) GetChunk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rc, size, err := h.Storage.ReadChunkStream(userID, mediaID, index)
+	// Send the full padded chunk so Content-Length reveals only the bucket
+	// size (1/2/4/8/16 MB), not the real encrypted chunk size. The client
+	// reads the 4-byte length prefix and strips the padding.
+	data, err := h.Storage.ReadChunkPadded(userID, mediaID, index)
 	if err != nil {
 		http.Error(w, "chunk not found", http.StatusNotFound)
 		return
 	}
-	defer rc.Close()
 
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	io.Copy(w, rc)
+	w.Write(data)
 }
 
 func (h *Handler) GetThumbnail(w http.ResponseWriter, r *http.Request) {
@@ -409,7 +416,9 @@ func (h *Handler) GetThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := h.Storage.ReadThumbnail(userID, mediaID)
+	// Send the full padded thumbnail so Content-Length is always the fixed
+	// padded size (256 KB), preventing thumbnail size fingerprinting.
+	data, err := h.Storage.ReadThumbnailPadded(userID, mediaID)
 	if err != nil {
 		http.Error(w, "thumbnail not found", http.StatusNotFound)
 		return
@@ -532,7 +541,7 @@ func (h *Handler) GetFolders(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"folder_tree_enc":   B64(data.FolderTreeEnc),
+		"folder_tree_enc":   B64(unpadFolderTree(data.FolderTreeEnc)),
 		"folder_tree_nonce": B64(data.FolderTreeNonce),
 	})
 }
@@ -566,7 +575,11 @@ func (h *Handler) SaveFolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.SaveUserData(h.DB, userID, encBytes, nonceBytes); err != nil {
+	// Pad the encrypted folder tree to a power-of-2 KB bucket to prevent
+	// the blob size from revealing folder structure complexity.
+	paddedEnc := padFolderTree(encBytes)
+
+	if err := db.SaveUserData(h.DB, userID, paddedEnc, nonceBytes); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -574,10 +587,38 @@ func (h *Handler) SaveFolders(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// padFolderTree pads encrypted folder tree data to a power-of-2 KB bucket.
+// Format: [4 bytes big-endian real length][data][zero padding]
+func padFolderTree(data []byte) []byte {
+	bucket := 1024 // 1 KB minimum
+	needed := 4 + len(data)
+	for bucket < needed {
+		bucket *= 2
+	}
+	padded := make([]byte, bucket)
+	padded[0] = byte(len(data) >> 24)
+	padded[1] = byte(len(data) >> 16)
+	padded[2] = byte(len(data) >> 8)
+	padded[3] = byte(len(data))
+	copy(padded[4:], data)
+	return padded
+}
+
+// unpadFolderTree strips the padding from a padded folder tree blob.
+func unpadFolderTree(padded []byte) []byte {
+	if len(padded) < 4 {
+		return padded
+	}
+	realLen := int(padded[0])<<24 | int(padded[1])<<16 | int(padded[2])<<8 | int(padded[3])
+	if realLen <= 0 || 4+realLen > len(padded) {
+		return padded // not padded (legacy data), return as-is
+	}
+	return padded[4 : 4+realLen]
+}
+
 func toAPIItem(m *db.MediaItem) APIMediaItem {
 	return APIMediaItem{
 		ID:            m.ID,
-		ChunkCount:    m.ChunkCount,
 		FileKeyEnc:    B64(m.FileKeyEnc),
 		ThumbKeyEnc:   B64(m.ThumbKeyEnc),
 		HashNonce:     B64(m.HashNonce),

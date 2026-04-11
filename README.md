@@ -52,10 +52,10 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 | Thumbnails | **no** - separate encrypted key |
 | Folder structure | **no** - encrypted blob |
 | Passwords | **never** - Argon2id hash only |
-| Master key | **never** - encrypted, browser-only |
+| Master key | **never** - encrypted, browser-only. Cleared from server memory immediately after login. |
 | Usernames | yes |
 | File count per user | yes (database row count) |
-| Approximate total storage | yes (disk usage, though padding obscures per-file) |
+| Approximate total storage | yes (quantized to 256 KB buckets, padding obscures per-file) |
 | Upload timestamps | year + week only (coarsened) |
 
 ## Features
@@ -63,7 +63,7 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **End-to-end encrypted** - AES-256-GCM chunk encryption, keys derived from your password via Argon2id. The server stores only opaque blobs.
 - **Zero-knowledge metadata** - File names, types, sizes, dimensions, and durations are encrypted into a single blob. The server cannot read any of it.
 - **Encrypted streaming** - Videos stream via MSE with chunk-level decryption in a Web Worker. No server-side decryption. Playback starts after the first chunk.
-- **Size fingerprinting resistance** - Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data. Original file sizes are unrecoverable from disk.
+- **Size fingerprinting resistance** - Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data, both on disk and over the network. Original file sizes are unrecoverable. Storage quotas are quantized to 256 KB buckets to prevent exact-size fingerprinting in the database.
 - **Secure deletion** - Deleted files are overwritten 3 times with random data, fsynced, then unlinked. Best-effort on SSDs due to wear leveling.
 - **Multi-user** - Each user has an isolated, encrypted library with their own master key. Admin panel for user management.
 - **Hash modification** - Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection.
@@ -73,7 +73,7 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **Folder download** - Download an entire folder (including subfolders) as a ZIP file, decrypted client-side.
 - **Image rotation** - Rotate images at the pixel level. The original is securely deleted and replaced with a freshly encrypted copy using new keys.
 - **6 color themes** - Classic, cool, forest, neon, ocean, and warm. Stored in localStorage.
-- **Recovery codes** - 256-bit recovery code generated at account creation. If you lose your password, this is the only way back in. Lose both and your data is gone.
+- **Recovery codes** - 256-bit recovery code generated at account creation and rotated on every password change. If you lose your password, this is the only way back in. Lose both and your data is gone.
 - **Single binary** - One Go binary with an embedded web UI and SQLite. No external dependencies, no containers, no runtime requirements.
 - **Self-hosted** - Runs on your hardware. A $6/month VPS is enough. Your data never touches a third-party service.
 
@@ -100,7 +100,7 @@ Password
          └─ encrypts folder structure         (AAD: userID)
 ```
 
-The master key never leaves the browser. It's also encrypted with a 256-bit recovery code (AAD: userID) generated at account creation - shown once, never stored in plaintext.
+The master key never leaves the browser. During login, the server briefly decrypts it to re-encrypt with a session key for the client, then immediately clears it from memory. The master key is also encrypted with a 256-bit recovery code (AAD: userID) generated at account creation and rotated on every password change - shown once, never stored in plaintext.
 
 ### Algorithms
 
@@ -112,7 +112,7 @@ The master key never leaves the browser. It's also encrypted with a 256-bit reco
 | Key wrapping | AES-256-GCM | Random nonce, context-bound AAD (user ID or media ID) |
 | Metadata encryption | AES-256-GCM | Media ID as AAD (prevents ciphertext substitution) |
 | Session key | PBKDF2-SHA256 | 600,000 iterations |
-| Chunk padding | Random fill | Bucketed to 1/2/4/8/16 MB per chunk |
+| Chunk padding | Random fill | Bucketed to 1/2/4/8/16 MB per chunk (on disk and over the network) |
 | Hash modification | Nonce injection | JPEG COM, PNG tEXt, MP4 free box, WebM Void element |
 | Secure deletion | 3-pass shred | Random overwrite, fsync, then unlink |
 
@@ -163,7 +163,7 @@ iOS Safari 17.1+ uses ManagedMediaSource. Non-remuxable formats uploaded via bro
 
 These are deliberate:
 
-- **Chunk padding wastes disk space.** A 3 MB file becomes 4 MB on disk. A 5 MB file becomes 8 MB. This is the cost of preventing size fingerprinting. If an observer can correlate chunk sizes to known files, encryption is weakened.
+- **Chunk padding wastes disk space and bandwidth.** A 3 MB file becomes 4 MB on disk and over the wire. A 5 MB file becomes 8 MB. Thumbnails are always 256 KB regardless of actual size. This is the cost of preventing size fingerprinting — if an observer can correlate chunk sizes to known files, encryption is weakened.
 
 - **Timestamps are coarsened.** Upload dates are stored as year + week only. Precise timestamps reveal usage patterns. That precision is deliberately discarded.
 
@@ -173,7 +173,7 @@ These are deliberate:
 
 - **SSD deletion is best-effort.** The 3-pass overwrite works on HDDs. On SSDs, wear leveling may retain old data. See [Disk encryption (LUKS)](#disk-encryption-luks) for the recommended mitigation.
 
-- **Quotas track logical size, not disk size.** Storage quotas are enforced against the raw encrypted byte count, not the padded on-disk size. Because every chunk is padded to a bucket boundary (1/2/4/8/16 MB), actual disk usage is higher than the quota suggests. This is intentional — exposing padded sizes in the quota display would leak information about per-chunk sizes, weakening the size-fingerprinting resistance that padding provides.
+- **Quotas are quantized and track logical size, not disk size.** Storage quotas are enforced against the encrypted byte count, quantized to 256 KB buckets to prevent exact-size content fingerprinting. Actual disk usage is higher than the quota suggests because every chunk is padded to a bucket boundary (1/2/4/8/16 MB). This is intentional — exposing exact or padded sizes would leak information that weakens size-fingerprinting resistance.
 
 ## Deploy
 
@@ -207,7 +207,7 @@ Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOc
 2. The setup script will display your **recovery code** - save it somewhere safe
 3. SSH in as your personal user going forward: `ssh yourname@your-server-ip`
 
-The recovery code is printed to stderr only and is never written to disk. Save it immediately - it's the only way to regain access to your encrypted data if you forget your password. No one - including the server admin - can recover it without this code.
+The recovery code is written to a temporary file in the data directory (`{data}/.recovery-code`, chmod 0600), read by the setup script, then securely deleted. It is never logged to stderr or journald. Save it immediately - it's the only way to regain access to your encrypted data if you forget your password. No one - including the server admin - can recover it without this code.
 
 ### Manual
 
@@ -284,10 +284,13 @@ WantedBy=multi-user.target
 ```
 media.example.com {
     reverse_proxy localhost:8080
+    log {
+        output discard
+    }
 }
 ```
 
-Caddy handles TLS automatically via Let's Encrypt. When running behind any reverse proxy, set `TRUST_PROXY=true` so rate limiting uses the real client IP from `X-Forwarded-For` instead of the proxy's address. For nginx, see the [nginx example](#reverse-proxy-nginx) below.
+Caddy handles TLS automatically via Let's Encrypt. The setup script offers to disable Caddy access logs for privacy (recommended — access logs record client IPs and request paths including media UUIDs). When running behind any reverse proxy, set `TRUST_PROXY=true` so rate limiting uses the real client IP from `X-Forwarded-For` instead of the proxy's address. For nginx, see the [nginx example](#reverse-proxy-nginx) below.
 
 ## API
 
@@ -301,7 +304,7 @@ All endpoints except `/health` and `/api/config` require a JWT. JWTs contain use
 | POST | `/api/auth/login` | Login (returns JWT + encrypted master key) |
 | POST | `/api/auth/logout` | Logout (immediate session invalidation) |
 | POST | `/api/auth/recover` | Reset password with recovery code |
-| POST | `/api/auth/change-password` | Change password (re-encrypts master key, invalidates all other sessions) |
+| POST | `/api/auth/change-password` | Change password (re-encrypts master key, rotates recovery code, invalidates all other sessions) |
 | DELETE | `/api/auth/account` | Delete account and all media |
 | GET | `/api/config` | Server config (registration, session persistence) |
 
@@ -388,7 +391,7 @@ sudo cp darkreel /usr/local/bin/darkreel
 sudo systemctl restart darkreel
 ```
 
-Or use the auto-updater - checks GitHub for tagged releases, verifies SHA-256 checksum and Ed25519 signature, restarts the service:
+Or use the auto-updater - checks GitHub for tagged releases, verifies SHA-256 checksum and Ed25519 signature (required — updates are refused if the signing public key is missing), restarts the service:
 
 ```bash
 sudo ./update.sh              # check once
@@ -431,6 +434,12 @@ The setup script handles all of this. If deploying manually:
 - Startup integrity checks - incomplete uploads (DB record without all chunk files) are cleaned up on restart. Uploads where the server crashed after writing chunks but before recording the size are detected and backfilled.
 - Proxy-aware rate limiting - `X-Forwarded-For` trust is off by default; must be explicitly enabled via `TRUST_PROXY=true` to prevent header spoofing
 - Encrypted backups - database backups encrypted with AES-256-CBC using a dedicated key
+- Per-user upload concurrency limit - max 3 concurrent uploads per user, prevents disk exhaustion via parallel uploads
+- Network-level padding - chunks and thumbnails sent padded over the wire (not just on disk), so Content-Length reveals only bucket tier
+- Master key cleared immediately - server clears the plaintext master key from memory immediately after the login response, not after 24h session expiry
+- Recovery code rotation - recovery code is rotated on every password change; old codes are immediately invalidated
+- Signed auto-updates - auto-updater refuses to install binaries without a valid Ed25519 signature (hard failure on missing signing key)
+- Caddy access log control - setup script offers to disable Caddy access logs for privacy (client IPs and request paths are not logged)
 
 ### Session persistence
 

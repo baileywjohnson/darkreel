@@ -712,10 +712,10 @@ a:hover { text-decoration: underline; }
       <tr><td>thumbnails</td><td><span class="no">no</span> <span class="detail">- separate encrypted key</span></td></tr>
       <tr><td>folder structure</td><td><span class="no">no</span> <span class="detail">- encrypted blob</span></td></tr>
       <tr><td>passwords</td><td><span class="never">never</span> <span class="detail">- Argon2id hash only</span></td></tr>
-      <tr><td>master key</td><td><span class="never">never</span> <span class="detail">- encrypted, browser-only</span></td></tr>
+      <tr><td>master key</td><td><span class="never">never</span> <span class="detail">- encrypted, browser-only. Cleared from server memory immediately after login.</span></td></tr>
       <tr><td>usernames</td><td><span class="yes">yes</span></td></tr>
       <tr><td>file count per user</td><td><span class="yes">yes</span> <span class="detail">- database row count</span></td></tr>
-      <tr><td>total storage</td><td><span class="yes">~approx</span> <span class="detail">- padding obscures per-file</span></td></tr>
+      <tr><td>total storage</td><td><span class="yes">~approx</span> <span class="detail">- quantized to 256 KB buckets, padding obscures per-file</span></td></tr>
       <tr><td>upload time</td><td><span class="yes">year + week</span> <span class="detail">- coarsened</span></td></tr>
     </table>
   </section>
@@ -740,7 +740,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">size fingerprinting resistance</div>
-        <div class="feature-desc">Every chunk padded to bucketed sizes with random data. Original file sizes are unrecoverable from disk.</div>
+        <div class="feature-desc">Every chunk padded to bucketed sizes with random data, both on disk and over the network. Storage sizes quantized to 256 KB in the database. Original file sizes are unrecoverable.</div>
       </div>
       <div class="feature">
         <div class="feature-name">secure deletion</div>
@@ -780,7 +780,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">recovery codes</div>
-        <div class="feature-desc">256-bit code generated at account creation. If you lose your password, this is the only way back in. Lose both and your data is gone.</div>
+        <div class="feature-desc">256-bit code generated at account creation and rotated on every password change. If you lose your password, this is the only way back in. Lose both and your data is gone.</div>
       </div>
       <div class="feature">
         <div class="feature-name">single binary</div>
@@ -813,8 +813,10 @@ a:hover { text-decoration: underline; }
 <span class="branch">         └─ </span><span class="leaf">encrypts folder structure</span>         <span class="leaf">(AAD: userID)</span>
     </div>
 
-    <p>The master key never leaves the browser. It's also encrypted with a 256-bit recovery code
-    (AAD: userID) generated at account creation - shown once, never stored in plaintext.</p>
+    <p>The master key never leaves the browser. During login, the server briefly decrypts it to
+    re-encrypt with a session key for the client, then immediately clears it from memory. The master
+    key is also encrypted with a 256-bit recovery code (AAD: userID) generated at account creation
+    and rotated on every password change - shown once, never stored in plaintext.</p>
 
     <p>All block-level encryption uses Additional Authenticated Data (AAD) to bind ciphertext
     to its context. An attacker with database access cannot swap encrypted keys or metadata between
@@ -829,7 +831,7 @@ a:hover { text-decoration: underline; }
       <tr><td>key wrapping</td><td>AES-256-GCM - random nonce, context-bound AAD (user ID or media ID)</td></tr>
       <tr><td>metadata encryption</td><td>AES-256-GCM - media ID as AAD (prevents ciphertext substitution)</td></tr>
       <tr><td>session key</td><td>PBKDF2-SHA256 - 600,000 iterations</td></tr>
-      <tr><td>chunk padding</td><td>random fill to 1 / 2 / 4 / 8 / 16 MB buckets</td></tr>
+      <tr><td>chunk padding</td><td>random fill to 1 / 2 / 4 / 8 / 16 MB buckets (on disk and over the network)</td></tr>
       <tr><td>hash modification</td><td>nonce injection - JPEG COM, PNG tEXt, MP4 free box, WebM Void element</td></tr>
       <tr><td>deletion</td><td>3-pass random overwrite &rarr; fsync &rarr; unlink</td></tr>
     </table>
@@ -899,10 +901,10 @@ a:hover { text-decoration: underline; }
     <h2>choices</h2>
 
     <div class="tradeoff">
-      <div class="tradeoff-title">chunk padding wastes disk space</div>
-      <p>A 3 MB file becomes 4 MB on disk. A 5 MB file becomes 8 MB. This is the cost of
-      preventing size fingerprinting. If an observer can correlate chunk sizes to known files,
-      encryption is weakened.</p>
+      <div class="tradeoff-title">chunk padding wastes disk space and bandwidth</div>
+      <p>A 3 MB file becomes 4 MB on disk and over the wire. A 5 MB file becomes 8 MB.
+      Thumbnails are always 256 KB regardless of actual size. This is the cost of
+      preventing size fingerprinting on both storage and network layers.</p>
     </div>
 
     <div class="tradeoff">
@@ -932,11 +934,11 @@ a:hover { text-decoration: underline; }
     </div>
 
     <div class="tradeoff">
-      <div class="tradeoff-title">Quotas track logical size, not disk size</div>
-      <p>Storage quotas are enforced against the raw encrypted byte count, not the padded on-disk size.
-      Because every chunk is padded to a bucket boundary (1/2/4/8/16 MB), actual disk usage is higher
-      than the quota suggests. This is intentional &mdash; exposing padded sizes in the quota display would
-      leak information about per-chunk sizes, weakening size-fingerprinting resistance.</p>
+      <div class="tradeoff-title">quotas are quantized, not exact</div>
+      <p>Storage quotas are enforced against encrypted byte counts, quantized to 256 KB buckets
+      to prevent exact-size content fingerprinting. Actual disk usage is higher than the quota
+      suggests because every chunk is padded to a bucket boundary (1/2/4/8/16 MB). This is
+      intentional &mdash; exposing exact or padded sizes would weaken size-fingerprinting resistance.</p>
     </div>
 
     <div class="tradeoff">
@@ -1016,7 +1018,7 @@ a:hover { text-decoration: underline; }
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/login</span><span class="api-desc">returns JWT + encrypted master key</span></div>
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/logout</span><span class="api-desc">immediate session invalidation</span></div>
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/recover</span><span class="api-desc">reset password with recovery code</span></div>
-      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/change-password</span><span class="api-desc">re-encrypts master key, invalidates all other sessions</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/change-password</span><span class="api-desc">re-encrypts master key, rotates recovery code, invalidates all sessions</span></div>
       <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/auth/account</span><span class="api-desc">delete account and all media</span></div>
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/config</span><span class="api-desc">server config (no auth)</span></div>
     </div>
@@ -1024,6 +1026,7 @@ a:hover { text-decoration: underline; }
     <div class="api-group">
       <div class="api-group-title">media</div>
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media</span><span class="api-desc">list media (paginated)</span></div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/quota</span><span class="api-desc">check quota (effective quota + current usage)</span></div>
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/:id</span><span class="api-desc">get metadata</span></div>
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/media/upload</span><span class="api-desc">multipart: metadata + thumbnail + chunks</span></div>
       <div class="api-route"><span class="api-method patch">PATCH</span><span class="api-path">/api/media/:id</span><span class="api-desc">update metadata</span></div>
@@ -1091,7 +1094,7 @@ a:hover { text-decoration: underline; }
 <span class="prompt">$ </span>sudo cp darkreel /usr/local/bin/darkreel
 <span class="prompt">$ </span>sudo systemctl restart darkreel
 
-<span class="comment"># or use the auto-updater (checks GitHub releases, verifies SHA-256 + Ed25519 signature)</span>
+<span class="comment"># or use the auto-updater (checks GitHub releases, verifies SHA-256 + Ed25519 signature, refuses unsigned binaries)</span>
 <span class="prompt">$ </span>sudo ./update.sh <span class="flag">--install</span>    <span class="comment"># daily cron at 4 AM</span>
       </code>
     </div>
@@ -1132,6 +1135,12 @@ a:hover { text-decoration: underline; }
 <span class="output">proxy-aware IPs</span>      <span class="comment">X-Forwarded-For trust off by default - opt-in via TRUST_PROXY</span>
 <span class="output">startup integrity</span>    <span class="comment">incomplete uploads cleaned up on restart, crashed size records backfilled</span>
 <span class="output">encrypted backups</span>    <span class="comment">AES-256-CBC with dedicated key, 30-day retention</span>
+<span class="output">upload concurrency</span>   <span class="comment">max 3 concurrent uploads per user - prevents disk exhaustion</span>
+<span class="output">network padding</span>      <span class="comment">chunks/thumbnails sent padded over the wire, not just on disk</span>
+<span class="output">master key clearing</span>  <span class="comment">cleared from server memory immediately after login response</span>
+<span class="output">recovery rotation</span>   <span class="comment">recovery code rotated on every password change</span>
+<span class="output">signed updates</span>       <span class="comment">auto-updater requires valid Ed25519 signature, hard failure on missing key</span>
+<span class="output">access log control</span>  <span class="comment">setup offers to disable Caddy access logs for privacy</span>
       </code>
     </div>
   </section>

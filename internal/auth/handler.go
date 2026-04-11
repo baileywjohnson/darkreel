@@ -287,6 +287,11 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Master key has been re-encrypted for the client — clear it from the
+	// session immediately. The session entry itself stays alive for auth
+	// (Sessions.Has), but the plaintext key is no longer in memory.
+	Sessions.ClearKey(sessionID)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(loginResponse{
 		Token:              token,
@@ -431,6 +436,9 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+
+	// Master key re-encrypted for client — clear from session immediately
+	Sessions.ClearKey(newSessionID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{

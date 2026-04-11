@@ -103,6 +103,11 @@ AUTO_UPDATE="n"
 echo ""
 read -rp "Enable auto-updates from tagged releases? (daily check, checksum verified) [y/N]: " AUTO_UPDATE
 
+DISABLE_ACCESS_LOGS="y"
+echo ""
+read -rp "Disable Caddy access logs for privacy? (recommended unless you need debugging) [Y/n]: " DISABLE_ACCESS_LOGS_INPUT
+[ "$DISABLE_ACCESS_LOGS_INPUT" = "n" ] || [ "$DISABLE_ACCESS_LOGS_INPUT" = "N" ] && DISABLE_ACCESS_LOGS="n"
+
 echo ""
 info "Domain:     $DOMAIN"
 info "Admin user: $ADMIN_USER"
@@ -272,12 +277,24 @@ else
 fi
 
 # --- Configure Caddy ---
+if [ "$DISABLE_ACCESS_LOGS" = "y" ]; then
+cat > /etc/caddy/Caddyfile <<EOF
+${DOMAIN} {
+    reverse_proxy localhost:8080
+    log {
+        output discard
+    }
+}
+EOF
+info "Caddy configured for $DOMAIN (HTTPS, access logs disabled for privacy)"
+else
 cat > /etc/caddy/Caddyfile <<EOF
 ${DOMAIN} {
     reverse_proxy localhost:8080
 }
 EOF
-info "Caddy configured for $DOMAIN (automatic HTTPS via Let's Encrypt)"
+info "Caddy configured for $DOMAIN (HTTPS, access logs enabled)"
+fi
 
 # --- Write environment file (restricted permissions) ---
 # The admin password is written to a separate one-time bootstrap file
@@ -410,9 +427,10 @@ if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
   echo -e "  ${BOLD}Data dir:${NC}  ${DATA_DIR}"
   echo ""
 
-  # Show recovery code from the service logs — never written to disk.
-  RC=$(journalctl -u darkreel --no-pager -o cat 2>/dev/null | grep -oP '(?<=  )[\w+/=_-]{40,}' | head -1)
-  if [ -n "$RC" ]; then
+  # Read recovery code from the temp file written by the server.
+  RC_FILE="${DATA_DIR}/.recovery-code"
+  if [ -f "$RC_FILE" ]; then
+    RC=$(cat "$RC_FILE")
     echo -e "  ${YELLOW}${BOLD}RECOVERY CODE:${NC}"
     echo -e "  ${BOLD}${RC}${NC}"
     echo ""
@@ -420,14 +438,13 @@ if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
     echo -e "  ${YELLOW}access to your encrypted data if you forget your password.${NC}"
     echo ""
 
-    # Auto-clear the journal so the recovery code doesn't persist in logs.
-    journalctl --rotate >/dev/null 2>&1 || true
-    journalctl --vacuum-time=1s >/dev/null 2>&1 || true
-    info "Service logs cleared (recovery code no longer in journal)"
+    # Securely delete the temp file
+    shred -u "$RC_FILE" 2>/dev/null || rm -f "$RC_FILE"
+    info "Recovery code file deleted"
     echo ""
   else
     echo -e "  ${YELLOW}IMPORTANT:${NC} Check the logs for your recovery code:"
-    echo -e "  ${BOLD}sudo journalctl -u darkreel --no-pager | grep -A2 'RECOVERY CODE'${NC}"
+    echo -e "  ${BOLD}sudo journalctl -u darkreel --no-pager | grep 'recovery code'${NC}"
     echo ""
   fi
 

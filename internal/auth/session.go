@@ -52,6 +52,20 @@ func (s *SessionStore) Set(sessionID, userID string, masterKey []byte) {
 	s.sessions[sessionID] = &sessionEntry{UserID: userID, MasterKey: key, CreatedAt: time.Now()}
 }
 
+// ClearKey zeroes and removes the master key from a session while keeping
+// the session itself alive for authentication. This minimizes the window
+// during which the plaintext master key is held in server memory.
+func (s *SessionStore) ClearKey(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entry, ok := s.sessions[sessionID]; ok {
+		for i := range entry.MasterKey {
+			entry.MasterKey[i] = 0
+		}
+		entry.MasterKey = nil
+	}
+}
+
 func (s *SessionStore) Get(sessionID string) ([]byte, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

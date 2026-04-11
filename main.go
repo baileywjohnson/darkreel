@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"os/signal"
 	"strconv"
 	"syscall"
@@ -54,10 +55,20 @@ func main() {
 			log.Fatalf("Failed to create admin user: %v", err)
 		}
 		log.Printf("Admin user %q created", adminUser)
-		fmt.Fprintf(os.Stderr, "\n========================================\n")
-		fmt.Fprintf(os.Stderr, "  RECOVERY CODE — save this now!\n")
-		fmt.Fprintf(os.Stderr, "  %s\n", recoveryCode)
-		fmt.Fprintf(os.Stderr, "========================================\n\n")
+
+		// Write recovery code to a temp file instead of stderr to avoid
+		// it persisting in journald. The file is chmod 0600 and should
+		// be read and deleted by the setup script immediately.
+		rcPath := filepath.Join(*dataDir, ".recovery-code")
+		if err := os.WriteFile(rcPath, []byte(recoveryCode), 0600); err != nil {
+			// Fallback to stderr if file write fails
+			fmt.Fprintf(os.Stderr, "\n========================================\n")
+			fmt.Fprintf(os.Stderr, "  RECOVERY CODE — save this now!\n")
+			fmt.Fprintf(os.Stderr, "  %s\n", recoveryCode)
+			fmt.Fprintf(os.Stderr, "========================================\n\n")
+		} else {
+			log.Printf("Recovery code written to %s — read and delete this file immediately", rcPath)
+		}
 	}
 
 	// Clean up orphaned data directories not referenced in DB.
@@ -112,9 +123,11 @@ func main() {
 		log.Printf("Warning: size_bytes backfill skipped — failed to list: %v", err)
 	} else {
 		backfilled := 0
+		const sizeQuantum = 256 * 1024
 		for _, item := range zeroItems {
 			if size := store.MediaChunkBytes(item.UserID, item.ID, item.ChunkCount); size > 0 {
-				if err := db.UpdateMediaSize(database, item.ID, size); err == nil {
+				quantized := ((size + sizeQuantum - 1) / sizeQuantum) * sizeQuantum
+				if err := db.UpdateMediaSize(database, item.ID, quantized); err == nil {
 					backfilled++
 				}
 			}

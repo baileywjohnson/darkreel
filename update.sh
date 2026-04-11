@@ -123,8 +123,7 @@ if [ -f "$SIGNING_PUB" ]; then
     error "Signature verification FAILED — binary may be tampered with"
   fi
 else
-  warn "No signing public key at $SIGNING_PUB — skipping signature verification"
-  warn "Run setup.sh to configure signature verification"
+  error "No signing public key at $SIGNING_PUB — refusing to install unsigned binary. Run setup.sh to configure signature verification."
 fi
 
 # --- Install (atomic: copy to temp location, then mv to avoid partial writes) ---

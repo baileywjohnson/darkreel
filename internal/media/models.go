@@ -5,9 +5,11 @@ import "encoding/base64"
 // APIMediaItem is the JSON representation of a media item returned to clients.
 // Metadata (name, type, mime, size, dimensions, duration) is encrypted — the server
 // stores it as an opaque blob and returns it for the client to decrypt.
+// APIMediaItem is the JSON representation of a media item returned to clients.
+// chunk_count is deliberately omitted — the client reads it from the encrypted
+// metadata to avoid leaking approximate file size to network observers.
 type APIMediaItem struct {
 	ID            string `json:"id"`
-	ChunkCount    int    `json:"chunk_count"`
 	FileKeyEnc    string `json:"file_key_enc"`    // base64
 	ThumbKeyEnc   string `json:"thumb_key_enc"`   // base64
 	HashNonce     string `json:"hash_nonce"`       // base64

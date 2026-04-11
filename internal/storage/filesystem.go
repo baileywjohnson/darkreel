@@ -90,6 +90,19 @@ func (l *Layout) ReadChunkStream(userID, mediaID string, index int) (io.ReadClos
 	return io.NopCloser(io.NewSectionReader(readerAt(data), 0, int64(len(data)))), int64(len(data)), nil
 }
 
+// ReadChunkPadded reads the full padded chunk file (length prefix + data + padding).
+// Sent over the network so Content-Length reveals only the bucket size, not the real size.
+func (l *Layout) ReadChunkPadded(userID, mediaID string, index int) ([]byte, error) {
+	path := l.ChunkPath(userID, mediaID, index)
+	return os.ReadFile(path)
+}
+
+// ReadThumbnailPadded reads the full padded thumbnail file.
+func (l *Layout) ReadThumbnailPadded(userID, mediaID string) ([]byte, error) {
+	path := l.ThumbnailPath(userID, mediaID)
+	return os.ReadFile(path)
+}
+
 type readerAt []byte
 
 func (r readerAt) ReadAt(p []byte, off int64) (n int, err error) {

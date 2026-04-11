@@ -8,6 +8,16 @@ import {
 
 const MAX_NAME_LENGTH = 255;
 
+// Strip server-side padding from chunks and thumbnails.
+// On-disk format: [4 bytes big-endian real length][data][random padding]
+// The server sends the full padded blob so Content-Length reveals only the
+// bucket size, not the real encrypted data size.
+function stripPadding(padded) {
+    const view = new DataView(padded.buffer, padded.byteOffset, padded.byteLength);
+    const realLen = view.getUint32(0);
+    return padded.subarray(4, 4 + realLen);
+}
+
 function truncateName(name) {
     if (name.length <= MAX_NAME_LENGTH) return name;
     const dot = name.lastIndexOf('.');
@@ -2113,6 +2123,9 @@ async function doLogout() {
     token = null;
     userId = null;
     currentFolderId = null;
+    // Clear decrypted metadata from memory
+    mediaItems.length = 0;
+    folders.length = 0;
     sessionStorage.clear();
     showAuth();
 }
@@ -2829,10 +2842,6 @@ async function loadMedia() {
                     const mediaIdAad = new TextEncoder().encode(item.id);
                     const decrypted = await decryptBlock(combined, getMasterKeyRaw(), mediaIdAad);
                     const meta = JSON.parse(new TextDecoder().decode(decrypted));
-                    // Store trusted chunk count from encrypted metadata (tamper-proof)
-                    if (meta.chunk_count) {
-                        meta.chunk_count_trusted = meta.chunk_count;
-                    }
                     Object.assign(item, meta);
                 }
             } catch (e) {
@@ -2892,7 +2901,6 @@ async function pollMedia() {
                     const mediaIdAad = new TextEncoder().encode(item.id);
                     const decrypted = await decryptBlock(combined, getMasterKeyRaw(), mediaIdAad);
                     const meta = JSON.parse(new TextDecoder().decode(decrypted));
-                    if (meta.chunk_count) meta.chunk_count_trusted = meta.chunk_count;
                     Object.assign(item, meta);
                 }
             } catch {}
@@ -3043,7 +3051,7 @@ async function loadThumbnail(item, img) {
         const res = await fetch(`/api/media/${item.id}/thumbnail`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
-        const encData = new Uint8Array(await res.arrayBuffer());
+        const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
 
         // Decrypt thumbnail key
         const thumbKeyEnc = base64ToBuffer(item.thumb_key_enc);
@@ -3188,7 +3196,7 @@ async function moveItemToFolder(item, newFolderId, skipDupeCheck) {
         media_type: item.media_type,
         mime_type: item.mime_type,
         size: item.size,
-        chunk_count: item.chunk_count_trusted || item.chunk_count,
+        chunk_count: item.chunk_count,
         folderId: newFolderId,
     };
     if (item.width) meta.width = item.width;
@@ -3657,7 +3665,7 @@ async function handleDropUpload(files, targetFolderId) {
  * Detects truncation attacks where an attacker deletes chunks from the server.
  */
 function verifyChunkCount(item, actualCount) {
-    const expectedCount = item.chunk_count_trusted || item.chunk_count;
+    const expectedCount = item.chunk_count;
     if (actualCount !== expectedCount) {
         throw new Error(`File integrity error: expected ${expectedCount} chunks but received ${actualCount}. The file may have been tampered with.`);
     }
@@ -3752,7 +3760,7 @@ async function showImage(item, fileKey) {
         const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
-        const encData = new Uint8Array(await res.arrayBuffer());
+        const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
         const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
         chunks.push(dec);
     }
@@ -3940,7 +3948,7 @@ async function playVideoMSE(item, fileKey) {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
-        const encData = new Uint8Array(await res.arrayBuffer());
+        const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
         const dec = await workerDecrypt('decryptChunk', encData, fileKey, index, item.id);
         chunkCache.set(index, dec);
         return dec;
@@ -4162,7 +4170,7 @@ async function playVideoBlob(item, fileKey, mime) {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (!res.ok) throw new Error(`Chunk ${idx} fetch failed: ${res.status}`);
-                const encData = new Uint8Array(await res.arrayBuffer());
+                const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
                 decrypted[idx] = await workerDecrypt('decryptChunk', encData, fileKey, idx, item.id);
                 done++;
             }
@@ -4364,7 +4372,7 @@ async function rotateCurrentItem() {
             const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            const encData = new Uint8Array(await res.arrayBuffer());
+            const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
             chunks.push(await workerDecrypt('decryptChunk', encData, fileKey, i, item.id));
         }
         const totalLen = chunks.reduce((s, c) => s + c.length, 0);
@@ -4600,7 +4608,7 @@ async function downloadItem(item) {
             const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            const encData = new Uint8Array(await res.arrayBuffer());
+            const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
             const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
             chunks.push(dec);
         }
@@ -4675,7 +4683,7 @@ async function downloadFolder(folder) {
                 const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
-                const encData = new Uint8Array(await res.arrayBuffer());
+                const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
                 const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
                 chunks.push(dec);
             }
@@ -4918,7 +4926,7 @@ async function updateItemMetadata(item) {
         media_type: item.media_type,
         mime_type: item.mime_type,
         size: item.size,
-        chunk_count: item.chunk_count_trusted || item.chunk_count,
+        chunk_count: item.chunk_count,
     };
     if (item.folderId) meta.folderId = item.folderId;
     if (item.width) meta.width = item.width;
