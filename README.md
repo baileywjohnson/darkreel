@@ -234,7 +234,7 @@ DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 | `PERSIST_SESSION` | `true` | Cache master key in sessionStorage (survives page refresh). Set to `false` for higher security - see [Session persistence](#session-persistence) |
 | `ALLOW_REGISTRATION` | `false` | Allow new user registration via the web UI |
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` / `X-Real-IP` headers for rate limiting. **Only enable when running behind a trusted reverse proxy** (Caddy, nginx). Without a proxy, clients can spoof these headers to bypass rate limits. |
-| `MAX_STORAGE_CHUNKS` | unlimited | Per-user total chunk limit. Each chunk is ~1 MB. Set to `50000` for ~50 GB per user. |
+| `MAX_STORAGE_CHUNKS` | **(none)** | Per-user total chunk limit (env var fallback). Each chunk is ~1 MB. Set to `50000` for ~50 GB per user. Quotas are required — uploads are blocked until a default quota is configured via the admin panel or this variable. |
 
 Password: 16-128 characters, at least one letter, number, and symbol. Username: 3-64 alphanumeric characters.
 
@@ -308,6 +308,7 @@ All endpoints except `/health` and `/api/config` require a JWT. JWTs contain use
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/media` | List media (paginated) |
+| GET | `/api/media/quota` | Check quota (returns effective quota and current usage) |
 | GET | `/api/media/:id` | Get media metadata |
 | POST | `/api/media/upload` | Upload (multipart: metadata + thumbnail + chunks). Media ID is client-generated (UUID) for AAD binding. |
 | PATCH | `/api/media/:id` | Update metadata (e.g., folder assignment) |
@@ -331,7 +332,7 @@ All endpoints except `/health` and `/api/config` require a JWT. JWTs contain use
 | POST | `/api/admin/users` | Create user (returns recovery code) |
 | DELETE | `/api/admin/users/:id` | Delete user and all their media |
 | PATCH | `/api/admin/users/:id/quota` | Set per-user storage quota |
-| GET | `/api/admin/storage` | Get storage stats (total chunks, disk usage) |
+| GET | `/api/admin/storage` | Get storage stats (total chunks, allocated quota, max capacity, disk usage) |
 | PUT | `/api/admin/storage/quota` | Set server-wide default storage quota |
 | POST | `/api/admin/registration` | Toggle registration on/off |
 
@@ -424,7 +425,7 @@ The setup script handles all of this. If deploying manually:
 - Timing side-channel mitigation - login and recovery endpoints perform dummy work for non-existent users
 - BREACH mitigation - HTTP compression disabled on auth endpoints that return secrets
 - Last-admin protection - the system prevents deletion of the last admin account (atomic transaction prevents TOCTOU race)
-- Per-user storage quotas - configurable chunk limit prevents any single user from filling the disk
+- Mandatory storage quotas - quotas are required for all users. Total allocated quotas are validated against available disk capacity (with a 2 GB reserve). Uploads are blocked until a quota is configured
 - Startup integrity checks - incomplete uploads (DB record without all chunk files) are cleaned up on restart
 - Proxy-aware rate limiting - `X-Forwarded-For` trust is off by default; must be explicitly enabled via `TRUST_PROXY=true` to prevent header spoofing
 - Encrypted backups - database backups encrypted with AES-256-CBC using a dedicated key
@@ -487,7 +488,7 @@ If you lose both your password and recovery code, your data is permanently inacc
 | Max chunk | 20 MB |
 | Max chunks per file | 50,000 |
 | Max total upload | 100 GB |
-| Per-user storage | Unlimited (configurable via `MAX_STORAGE_CHUNKS`) |
+| Per-user storage | Configurable via admin panel or `MAX_STORAGE_CHUNKS` (required) |
 
 ### Data directory
 

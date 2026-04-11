@@ -782,6 +782,10 @@ a:hover { text-decoration: underline; }
         <div class="feature-desc">Go + embedded SQLite + embedded web UI. No runtime dependencies. No containers. No external services.</div>
       </div>
       <div class="feature">
+        <div class="feature-name">storage quotas</div>
+        <div class="feature-desc">Mandatory per-user quotas validated against available disk capacity. A 2 GB reserve protects the database and OS. The server will never over-allocate.</div>
+      </div>
+      <div class="feature">
         <div class="feature-name">self-hosted</div>
         <div class="feature-desc">Runs on your hardware. A $6/month VPS is enough. Your data never touches a third-party service.</div>
       </div>
@@ -1111,7 +1115,7 @@ a:hover { text-decoration: underline; }
 <span class="output">timing mitigation</span>    <span class="comment">login and recovery endpoints do dummy work for unknown users</span>
 <span class="output">BREACH mitigation</span>    <span class="comment">compression disabled on auth endpoints that return secrets</span>
 <span class="output">last-admin guard</span>     <span class="comment">atomic transaction prevents TOCTOU race on admin deletion</span>
-<span class="output">storage quotas</span>       <span class="comment">configurable per-user chunk limit prevents disk exhaustion</span>
+<span class="output">storage quotas</span>       <span class="comment">mandatory per-user limits validated against disk capacity (2 GB reserve)</span>
 <span class="output">proxy-aware IPs</span>      <span class="comment">X-Forwarded-For trust off by default - opt-in via TRUST_PROXY</span>
 <span class="output">startup integrity</span>    <span class="comment">incomplete uploads cleaned up on restart</span>
 <span class="output">encrypted backups</span>    <span class="comment">AES-256-CBC with dedicated key, 30-day retention</span>
