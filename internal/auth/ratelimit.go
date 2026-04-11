@@ -58,14 +58,28 @@ func (al *AccountLimiter) Allow(username string) bool {
 	v, ok := al.visitors[username]
 	if !ok || now.After(v.resetAt) {
 		if len(al.visitors) >= accountMaxVisitors {
+			// First pass: evict expired entries
 			for k, entry := range al.visitors {
 				if now.After(entry.resetAt) {
 					delete(al.visitors, k)
 				}
 			}
-			// If still at capacity after eviction, reject to prevent unbounded growth
+			// Second pass: if still at capacity, evict the oldest entry (LRU)
+			// to prevent a botnet from filling the map and blocking all logins
 			if len(al.visitors) >= accountMaxVisitors {
-				return false
+				var oldestKey string
+				var oldestTime time.Time
+				first := true
+				for k, entry := range al.visitors {
+					if first || entry.resetAt.Before(oldestTime) {
+						oldestKey = k
+						oldestTime = entry.resetAt
+						first = false
+					}
+				}
+				if oldestKey != "" {
+					delete(al.visitors, oldestKey)
+				}
 			}
 		}
 		al.visitors[username] = &accountVisitor{count: 1, resetAt: now.Add(al.window)}

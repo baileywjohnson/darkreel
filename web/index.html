@@ -374,6 +374,18 @@
             </div>
         </div>
 
+        <div id="recovery-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <h3>New Recovery Code</h3>
+                <p style="font-size:14px;color:var(--text-dim);margin-bottom:12px">Your recovery code has been rotated. Save this new code somewhere safe — the old code will no longer work.</p>
+                <code id="recovery-modal-code" style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px"></code>
+                <p style="font-size:13px;color:var(--text-dim);margin-bottom:20px">This code cannot be shown again.</p>
+                <div class="modal-card-actions">
+                    <button id="recovery-modal-ok" class="btn btn-primary">OK</button>
+                </div>
+            </div>
+        </div>
+
         <div id="upload-error-modal" class="modal-overlay hidden">
             <div class="modal-card">
                 <h3 id="upload-error-title">Upload Failed</h3>
@@ -403,7 +415,7 @@
 
     </div>
 
-    <script src="/js/crypto.js" type="module" integrity="sha384-LzmM737+lLw3SErseDz6eFA1/NihbzADMsKMCmMVC3s8qyvNdbWfrbeMll95F99o" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-vie1pVeDYQFtw2txF/Mg1/p5BNQLJVijqJ1kRiPkWfSBCQAbLtdEQUOn/Rq9yUUR" crossorigin="anonymous"></script>
+    <script src="/js/crypto.js" type="module" integrity="sha384-6Mmwi3DO9D/OpY/urnlZxRTytvWuGmS5aauthp07oP3Bn6ivGm0JeAaH99V6A5yE" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-gAQMiZJjHKlB0RIJuTyPJUqANgE6hYFX9zHgZDuhy6GCsrFeet/CRN83QcqSrQ97" crossorigin="anonymous"></script>
 </body>
 </html>

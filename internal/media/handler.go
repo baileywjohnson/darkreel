@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/baileywjohnson/darkreel/internal/auth"
 	"github.com/baileywjohnson/darkreel/internal/db"
@@ -16,10 +17,38 @@ import (
 	"github.com/google/uuid"
 )
 
+const maxConcurrentUploads = 3 // per-user concurrent upload limit
+
 type Handler struct {
 	DB              *sql.DB
 	Storage         *storage.Layout
 	MaxStorageBytes int // per-user storage quota in bytes (0 = unlimited)
+
+	uploadMu   sync.Mutex
+	uploadSems map[string]chan struct{} // per-user upload semaphores
+}
+
+// acquireUpload blocks until an upload slot is available for the user.
+// Returns false if the handler has not been initialized (should not happen).
+func (h *Handler) acquireUpload(userID string) {
+	h.uploadMu.Lock()
+	if h.uploadSems == nil {
+		h.uploadSems = make(map[string]chan struct{})
+	}
+	sem, ok := h.uploadSems[userID]
+	if !ok {
+		sem = make(chan struct{}, maxConcurrentUploads)
+		h.uploadSems[userID] = sem
+	}
+	h.uploadMu.Unlock()
+	sem <- struct{}{} // blocks if maxConcurrentUploads slots are taken
+}
+
+func (h *Handler) releaseUpload(userID string) {
+	h.uploadMu.Lock()
+	sem := h.uploadSems[userID]
+	h.uploadMu.Unlock()
+	<-sem
 }
 
 // validID returns the URL param if it is a valid UUID, or writes a 400 and returns "".
@@ -115,6 +144,10 @@ const (
 
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
+
+	// Per-user concurrency limit to prevent disk exhaustion via parallel uploads
+	h.acquireUpload(userID)
+	defer h.releaseUpload(userID)
 
 	// Limit total request body size
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
@@ -306,24 +339,17 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Re-read current usage to close the TOCTOU window: another concurrent
-	// upload may have completed between our initial read and now.
-	currentBytes, err := db.GetUserStorageBytes(h.DB, userID)
+	// Atomically verify quota and update size in a single transaction
+	// to close the TOCTOU window between concurrent uploads.
+	ok, err := db.UpdateMediaSizeWithQuotaCheck(h.DB, mediaID, userID, totalBytes, quota)
 	if err != nil {
 		cleanup()
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if currentBytes+totalBytes > quota {
+	if !ok {
 		cleanup()
 		http.Error(w, "Storage quota exceeded. Please contact your administrator.", http.StatusForbidden)
-		return
-	}
-
-	// Update the media record with the actual size.
-	if err := db.UpdateMediaSize(h.DB, mediaID, totalBytes); err != nil {
-		cleanup()
-		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 

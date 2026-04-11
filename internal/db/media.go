@@ -130,6 +130,29 @@ func UpdateMediaSize(db *sql.DB, id string, sizeBytes int) error {
 	return err
 }
 
+// UpdateMediaSizeWithQuotaCheck atomically verifies that adding sizeBytes
+// for userID would not exceed quota, then updates the media record.
+// Returns (true, nil) on success, (false, nil) if quota would be exceeded.
+func UpdateMediaSizeWithQuotaCheck(database *sql.DB, id, userID string, sizeBytes, quota int) (bool, error) {
+	tx, err := database.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	var currentBytes int
+	if err := tx.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM media WHERE user_id = ?`, userID).Scan(&currentBytes); err != nil {
+		return false, err
+	}
+	if currentBytes+sizeBytes > quota {
+		return false, nil
+	}
+	if _, err := tx.Exec(`UPDATE media SET size_bytes = ? WHERE id = ? AND user_id = ?`, sizeBytes, id, userID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
 // ListMediaWithZeroSize returns media records that have size_bytes=0 but chunk_count>0.
 // These are uploads where the server crashed after writing chunks but before updating size.
 func ListMediaWithZeroSize(db *sql.DB) ([]MediaSummary, error) {

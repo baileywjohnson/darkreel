@@ -1340,7 +1340,7 @@ async function showAdminPanel() {
     galleryView.classList.add('hidden');
     settingsView.classList.add('hidden');
     adminView.classList.remove('hidden');
-    adminStickyBack.classList.add('hidden');
+    hideStickyBacks();
     sessionStorage.setItem('activeView', 'admin');
     updateNavActive('admin');
     adminContent.classList.add('hidden');
@@ -1852,7 +1852,7 @@ function showSettingsPanel() {
     galleryView.classList.add('hidden');
     adminView.classList.add('hidden');
     settingsView.classList.remove('hidden');
-    settingsStickyBack.classList.add('hidden');
+    hideStickyBacks();
     sessionStorage.setItem('activeView', 'settings');
     updateNavActive('settings');
     resetSettingsForm();
@@ -2023,6 +2023,11 @@ document.getElementById('settings-change-pw-form').addEventListener('submit', as
         settingsChangePwBtn.disabled = true;
         settingsPwReqs.classList.add('hidden');
         settingsConfirmHint.classList.add('hidden');
+
+        // Show new recovery code modal (recovery code is rotated on password change)
+        if (res.recovery_code) {
+            showRecoveryModal(res.recovery_code);
+        }
     } catch (err) {
         btnReset(settingsChangePwBtn);
         errEl.textContent = err.message || 'Failed to change password';
@@ -5027,6 +5032,20 @@ function showUploadErrorModal(message) {
     okBtn.addEventListener('click', close);
     document.addEventListener('keydown', onKey);
     modal.addEventListener('click', onOverlay);
+    okBtn.focus();
+}
+
+function showRecoveryModal(code) {
+    const modal = document.getElementById('recovery-modal');
+    document.getElementById('recovery-modal-code').textContent = code;
+    modal.classList.remove('hidden');
+    const okBtn = document.getElementById('recovery-modal-ok');
+    const close = () => {
+        modal.classList.add('hidden');
+        okBtn.removeEventListener('click', close);
+    };
+    // Only dismiss via the OK button — no Escape, no overlay click
+    okBtn.addEventListener('click', close);
     okBtn.focus();
 }
 

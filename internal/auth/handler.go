@@ -373,6 +373,19 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	newPasswordHash := crypto.HashPassword(req.NewPassword, newAuthSalt)
 
+	// Rotate recovery code so old recovery codes are invalidated on password change
+	newRecoveryCode, err := crypto.GenerateRecoveryCode()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer clear(newRecoveryCode)
+	newRecoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, newRecoveryCode, userIDBytes)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	tx, err := h.DB.Begin()
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -384,11 +397,17 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	if err := db.UpdateUserRecoveryMKTx(tx, user.ID, newRecoveryMK); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	if err := tx.Commit(); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+
+	recoveryCodeB64 := base64.URLEncoding.EncodeToString(newRecoveryCode)
 
 	// Invalidate all existing sessions (including attacker sessions)
 	Sessions.DeleteAllForUser(user.ID)
@@ -419,6 +438,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		"token":                newToken,
 		"kdf_salt":             base64.StdEncoding.EncodeToString(newKdfSalt),
 		"encrypted_master_key": base64.StdEncoding.EncodeToString(newEncMKForClient),
+		"recovery_code":        recoveryCodeB64,
 	})
 }
 

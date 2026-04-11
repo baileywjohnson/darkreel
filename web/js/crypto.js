@@ -276,11 +276,8 @@ export function modifyHash(data, mimeType, nonce) {
     if (lower.includes('mp4') || lower.includes('m4v') || lower.includes('quicktime') || lower.includes('mov')) {
         return modifyMP4(data, nonce);
     }
-    // For other types, append nonce directly (no identifying marker)
-    const result = new Uint8Array(data.length + nonce.length);
-    result.set(data, 0);
-    result.set(nonce, data.length);
-    return result;
+    // Unsupported format — throw instead of silently appending
+    throw new Error('Hash modification not supported for: ' + mimeType);
 }
 
 function modifyMP4(data, nonce) {
