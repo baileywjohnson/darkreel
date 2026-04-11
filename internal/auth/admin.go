@@ -126,20 +126,7 @@ func (h *Handler) SetUserQuota(w http.ResponseWriter, r *http.Request) {
 		defaultQuota, _ = strconv.Atoi(val)
 	}
 
-	// Quota can only be raised above the server default (or set to 0 to use default)
-	if req.StorageQuota != 0 && defaultQuota > 0 && req.StorageQuota < defaultQuota {
-		http.Error(w, "per-user quota cannot be lower than the server default", http.StatusBadRequest)
-		return
-	}
-
-	// Validate that the new total allocation fits on disk.
-	// Compute: current total with old value, then adjust for the change.
-	currentTotal, err := db.GetTotalAllocatedQuota(h.DB, defaultQuota)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	// Get the user's current effective quota to compute the delta.
+	// Get the user's current effective quota.
 	user, err := db.GetUserByID(h.DB, targetID)
 	if err != nil {
 		http.Error(w, "user not found", http.StatusNotFound)
@@ -152,6 +139,19 @@ func (h *Handler) SetUserQuota(w http.ResponseWriter, r *http.Request) {
 	newEffective := req.StorageQuota
 	if newEffective <= 0 {
 		newEffective = defaultQuota
+	}
+
+	// Quotas can only be raised, never lowered.
+	if newEffective < oldEffective {
+		http.Error(w, "quota can only be raised, not lowered", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that the new total allocation fits on disk.
+	currentTotal, err := db.GetTotalAllocatedQuota(h.DB, defaultQuota)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 	newTotal := currentTotal - oldEffective + newEffective
 

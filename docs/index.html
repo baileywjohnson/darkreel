@@ -783,7 +783,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">storage quotas</div>
-        <div class="feature-desc">Mandatory per-user quotas validated against available disk capacity. A 2 GB reserve protects the database and OS. The server will never over-allocate.</div>
+        <div class="feature-desc">Mandatory per-user quotas in GB, tracked in bytes for accuracy. Per-user quotas can only be raised. Validated against available disk capacity with a 2 GB reserve.</div>
       </div>
       <div class="feature">
         <div class="feature-name">self-hosted</div>
@@ -985,7 +985,7 @@ a:hover { text-decoration: underline; }
 <span class="flag">PERSIST_SESSION</span>=true                  <span class="comment"># master key in sessionStorage (default: on)</span>
 <span class="flag">ALLOW_REGISTRATION</span>=false              <span class="comment"># public registration</span>
 <span class="flag">TRUST_PROXY</span>=false                     <span class="comment"># enable behind Caddy/nginx for correct rate limiting</span>
-<span class="flag">MAX_STORAGE_GB</span>=                       <span class="comment"># per-user storage quota in GB (e.g. 50)</span>
+<span class="flag">MAX_STORAGE_GB</span>=50                     <span class="comment"># default per-user storage quota in GB (setup script prompts for this)</span>
       </code>
     </div>
   </section>
@@ -1031,9 +1031,9 @@ a:hover { text-decoration: underline; }
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/admin/users</span><span class="api-desc">list users with storage usage</span></div>
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/admin/users</span><span class="api-desc">create user, returns recovery code</span></div>
       <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/admin/users/:id</span><span class="api-desc">delete user + all media</span></div>
-      <div class="api-route"><span class="api-method patch">PATCH</span><span class="api-path">/api/admin/users/:id/quota</span><span class="api-desc">set per-user storage quota</span></div>
-      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/admin/storage</span><span class="api-desc">storage stats (chunks, disk usage)</span></div>
-      <div class="api-route"><span class="api-method put">PUT</span><span class="api-path">/api/admin/storage/quota</span><span class="api-desc">set default storage quota</span></div>
+      <div class="api-route"><span class="api-method patch">PATCH</span><span class="api-path">/api/admin/users/:id/quota</span><span class="api-desc">raise per-user storage quota (can only increase)</span></div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/admin/storage</span><span class="api-desc">storage stats (used bytes, allocated quota, disk usage)</span></div>
+      <div class="api-route"><span class="api-method put">PUT</span><span class="api-path">/api/admin/storage/quota</span><span class="api-desc">set default storage quota for new users</span></div>
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/admin/registration</span><span class="api-desc">toggle registration</span></div>
     </div>
 
@@ -1115,7 +1115,7 @@ a:hover { text-decoration: underline; }
 <span class="output">timing mitigation</span>    <span class="comment">login and recovery endpoints do dummy work for unknown users</span>
 <span class="output">BREACH mitigation</span>    <span class="comment">compression disabled on auth endpoints that return secrets</span>
 <span class="output">last-admin guard</span>     <span class="comment">atomic transaction prevents TOCTOU race on admin deletion</span>
-<span class="output">storage quotas</span>       <span class="comment">mandatory per-user limits validated against disk capacity (2 GB reserve)</span>
+<span class="output">storage quotas</span>       <span class="comment">mandatory per-user limits in GB (byte-accurate), raise-only, validated against disk (2 GB reserve)</span>
 <span class="output">proxy-aware IPs</span>      <span class="comment">X-Forwarded-For trust off by default - opt-in via TRUST_PROXY</span>
 <span class="output">startup integrity</span>    <span class="comment">incomplete uploads cleaned up on restart</span>
 <span class="output">encrypted backups</span>    <span class="comment">AES-256-CBC with dedicated key, 30-day retention</span>

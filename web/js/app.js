@@ -1587,7 +1587,7 @@ async function loadAdminUsers() {
                     </div>
                 </div>
                 <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-                    <button class="btn" style="font-size:12px;padding:4px 10px" data-quota-uid="${escapeHtml(u.id)}" data-current-quota="${u.storage_quota}">Set Quota</button>
+                    <button class="btn" style="font-size:12px;padding:4px 10px" data-quota-uid="${escapeHtml(u.id)}" data-current-quota="${u.storage_quota}">Raise Quota</button>
                     ${u.id === userId ? '<span style="font-size:12px;color:var(--text-dim)">You</span>' : '<button class="btn btn-danger" data-delete-uid="' + escapeHtml(u.id) + '" style="font-size:12px;padding:4px 10px">Delete</button>'}
                 </div>
             </div>`;
@@ -1616,10 +1616,10 @@ async function loadAdminUsers() {
                 const username = btn.closest('.admin-user-card').querySelector('.admin-user-info').firstChild.textContent.trim();
                 const effectiveQuota = current > 0 ? current : _cachedDefaultQuota;
                 const remainingBytes = Math.max(0, _cachedMaxBytes - _cachedTotalAllocated + effectiveQuota);
-                const defaultGB = _cachedDefaultQuota > 0 ? bytesToGB(_cachedDefaultQuota).toFixed(1) : '';
+                const currentGB = effectiveQuota > 0 ? bytesToGB(effectiveQuota).toFixed(1) : '0';
                 showAdminQuotaModal(
-                    'Set Quota',
-                    'Set a quota for "' + username + '" in GB. Must be higher than the server default' + (defaultGB ? ' (' + defaultGB + ' GB)' : '') + ', or 0 to use the default. Max available: ' + formatSize(remainingBytes) + '.',
+                    'Raise Quota',
+                    'Raise quota for "' + username + '" in GB. Current: ' + currentGB + ' GB. Quotas can only be raised.',
                     effectiveQuota,
                     async (gbVal) => {
                         const bytes = gbVal === 0 ? 0 : gbToBytes(gbVal);

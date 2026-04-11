@@ -47,6 +47,7 @@ echo ""
 DOMAIN=""
 ADMIN_USER="admin"
 ADMIN_PASS=""
+STORAGE_GB=""
 SSH_USER=""
 DATA_DIR="/var/lib/darkreel"
 INSTALL_DIR="/usr/local/bin"
@@ -86,6 +87,15 @@ while true; do
   warn "Password must be at least 16 characters."
 done
 
+while true; do
+  echo ""
+  read -rp "Per-user storage quota in GB (e.g., 50): " STORAGE_GB
+  if [ -n "$STORAGE_GB" ] && echo "$STORAGE_GB" | grep -qE '^[0-9]*\.?[0-9]+$' && [ "$STORAGE_GB" != "0" ] && [ "$STORAGE_GB" != "0.0" ]; then
+    break
+  fi
+  warn "Enter a number greater than 0 (e.g., 50, 0.5, 100)"
+done
+
 echo ""
 read -rp "Create a personal SSH user? Enter username (or leave empty to skip): " SSH_USER
 
@@ -96,6 +106,7 @@ read -rp "Enable auto-updates from tagged releases? (daily check, checksum verif
 echo ""
 info "Domain:     $DOMAIN"
 info "Admin user: $ADMIN_USER"
+info "Quota:      ${STORAGE_GB} GB per user"
 info "Data dir:   $DATA_DIR"
 [ -n "$SSH_USER" ] && info "SSH user:   $SSH_USER"
 [ "$AUTO_UPDATE" = "y" ] || [ "$AUTO_UPDATE" = "Y" ] && info "Auto-update: enabled"
@@ -276,6 +287,7 @@ info "Caddy configured for $DOMAIN (automatic HTTPS via Let's Encrypt)"
 # explicitly removed after a successful health check.
 cat > /etc/darkreel/env <<EOF
 DARKREEL_ADMIN_USERNAME=${ADMIN_USER}
+MAX_STORAGE_GB=${STORAGE_GB}
 ALLOW_REGISTRATION=false
 # PERSIST_SESSION controls whether the client stores the master key in
 # sessionStorage so it survives page refreshes without re-login.

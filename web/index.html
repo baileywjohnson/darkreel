@@ -161,12 +161,7 @@
                     <div id="admin-content" class="panel-content hidden">
                         <div class="admin-create" id="admin-storage-section">
                             <h3>Storage</h3>
-                            <div id="admin-storage-stats" style="font-size:14px;color:var(--text-dim);margin-bottom:16px"></div>
-                            <label style="font-size:14px;color:var(--text-dim);display:block;margin-bottom:6px">Default per-user quota (GB)</label>
-                            <div style="display:flex;gap:8px;align-items:stretch;height:38px;box-sizing:border-box">
-                                <input type="number" id="admin-default-quota" min="0" step="any" placeholder="e.g. 50" inputmode="decimal" style="width:140px;padding:0 10px;font-size:14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);box-sizing:border-box;height:38px;margin:0;-moz-appearance:textfield">
-                                <button type="button" id="admin-save-quota" class="btn btn-primary" style="padding:0 16px;font-size:13px;box-sizing:border-box;height:38px;margin:0">Save</button>
-                            </div>
+                            <div id="admin-storage-stats" style="font-size:14px;color:var(--text-dim)"></div>
                         </div>
                         <div class="admin-create">
                             <h3>Create User</h3>
@@ -193,6 +188,11 @@
                                 <input type="checkbox" id="admin-reg-toggle">
                                 Allow new user registration
                             </label>
+                            <label style="font-size:14px;color:var(--text-dim);display:block;margin-top:16px;margin-bottom:6px">Default quota for new users (GB)</label>
+                            <div style="display:flex;gap:8px;align-items:stretch;height:38px;box-sizing:border-box">
+                                <input type="number" id="admin-default-quota" min="0" step="any" placeholder="e.g. 50" inputmode="decimal" style="width:140px;padding:0 10px;font-size:14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);box-sizing:border-box;height:38px;margin:0;-moz-appearance:textfield">
+                                <button type="button" id="admin-save-quota" class="btn btn-primary" style="padding:0 16px;font-size:13px;box-sizing:border-box;height:38px;margin:0">Save</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -400,6 +400,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-LzmM737+lLw3SErseDz6eFA1/NihbzADMsKMCmMVC3s8qyvNdbWfrbeMll95F99o" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-kN5HoJRSpPAtEx8H2TMeKwKw48BIuC3viXpXBoBbp0woKCd8LdS3VJROWS7mAWhV" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-XsUlbnfsw6l5KCx0328gvQJz3VSKj4taDsCFf42+CaOnYXiXwmlTjqIB9mX9tpPS" crossorigin="anonymous"></script>
 </body>
 </html>

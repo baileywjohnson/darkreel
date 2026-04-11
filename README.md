@@ -184,7 +184,7 @@ sudo ./setup.sh
 # systemd service, daily backups - all handled
 ```
 
-Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOcean droplet, Hetzner VPS, or similar). The script asks for your domain (verified against server IP), an admin password, and optionally a personal SSH user. Safe to re-run.
+Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOcean droplet, Hetzner VPS, or similar). The script asks for your domain (verified against server IP), an admin password, a per-user storage quota in GB, and optionally a personal SSH user. Safe to re-run.
 
 | Step | What | Why |
 |------|------|-----|
@@ -234,7 +234,7 @@ DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 | `PERSIST_SESSION` | `true` | Cache master key in sessionStorage (survives page refresh). Set to `false` for higher security - see [Session persistence](#session-persistence) |
 | `ALLOW_REGISTRATION` | `false` | Allow new user registration via the web UI |
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` / `X-Real-IP` headers for rate limiting. **Only enable when running behind a trusted reverse proxy** (Caddy, nginx). Without a proxy, clients can spoof these headers to bypass rate limits. |
-| `MAX_STORAGE_GB` | **(none)** | Per-user storage quota in GB (env var fallback). Set to `50` for 50 GB per user. Supports decimals (e.g. `0.5`). Quotas are required — uploads are blocked until a default quota is configured via the admin panel or this variable. |
+| `MAX_STORAGE_GB` | **(none)** | Default per-user storage quota in GB (env var fallback). Set to `50` for 50 GB per user. Supports decimals (e.g. `0.5`). Quotas are required — uploads are blocked until a default quota is configured via the admin panel or this variable. The setup script prompts for this automatically. |
 
 Password: 16-128 characters, at least one letter, number, and symbol. Username: 3-64 alphanumeric characters.
 
@@ -331,9 +331,9 @@ All endpoints except `/health` and `/api/config` require a JWT. JWTs contain use
 | GET | `/api/admin/users` | List users with storage usage |
 | POST | `/api/admin/users` | Create user (returns recovery code) |
 | DELETE | `/api/admin/users/:id` | Delete user and all their media |
-| PATCH | `/api/admin/users/:id/quota` | Set per-user storage quota |
-| GET | `/api/admin/storage` | Get storage stats (total chunks, allocated quota, max capacity, disk usage) |
-| PUT | `/api/admin/storage/quota` | Set server-wide default storage quota |
+| PATCH | `/api/admin/users/:id/quota` | Raise per-user storage quota (can only be increased) |
+| GET | `/api/admin/storage` | Get storage stats (used bytes, allocated quota, disk usage) |
+| PUT | `/api/admin/storage/quota` | Set default storage quota for new users |
 | POST | `/api/admin/registration` | Toggle registration on/off |
 
 ### Health
@@ -425,7 +425,7 @@ The setup script handles all of this. If deploying manually:
 - Timing side-channel mitigation - login and recovery endpoints perform dummy work for non-existent users
 - BREACH mitigation - HTTP compression disabled on auth endpoints that return secrets
 - Last-admin protection - the system prevents deletion of the last admin account (atomic transaction prevents TOCTOU race)
-- Mandatory storage quotas - quotas are required for all users. Total allocated quotas are validated against available disk capacity (with a 2 GB reserve). Uploads are blocked until a quota is configured
+- Mandatory storage quotas - quotas are required for all users, tracked in bytes for accuracy across all file types. Per-user quotas can only be raised, never lowered. Total allocated quotas are validated against available disk capacity (with a 2 GB reserve). Uploads are blocked until a quota is configured
 - Startup integrity checks - incomplete uploads (DB record without all chunk files) are cleaned up on restart
 - Proxy-aware rate limiting - `X-Forwarded-For` trust is off by default; must be explicitly enabled via `TRUST_PROXY=true` to prevent header spoofing
 - Encrypted backups - database backups encrypted with AES-256-CBC using a dedicated key
