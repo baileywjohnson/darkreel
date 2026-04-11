@@ -162,12 +162,11 @@
                         <div class="admin-create" id="admin-storage-section">
                             <h3>Storage</h3>
                             <div id="admin-storage-stats" style="font-size:14px;color:var(--text-dim);margin-bottom:16px"></div>
-                            <label style="font-size:14px;color:var(--text-dim);display:block;margin-bottom:6px">Default per-user quota (chunks)</label>
+                            <label style="font-size:14px;color:var(--text-dim);display:block;margin-bottom:6px">Default per-user quota (GB)</label>
                             <div style="display:flex;gap:8px;align-items:stretch;height:38px;box-sizing:border-box">
-                                <input type="number" id="admin-default-quota" min="0" placeholder="Required" inputmode="numeric" pattern="[0-9]*" style="width:140px;padding:0 10px;font-size:14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);box-sizing:border-box;height:38px;margin:0;-moz-appearance:textfield">
+                                <input type="number" id="admin-default-quota" min="0" step="any" placeholder="e.g. 50" inputmode="decimal" style="width:140px;padding:0 10px;font-size:14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);box-sizing:border-box;height:38px;margin:0;-moz-appearance:textfield">
                                 <button type="button" id="admin-save-quota" class="btn btn-primary" style="padding:0 16px;font-size:13px;box-sizing:border-box;height:38px;margin:0">Save</button>
                             </div>
-                            <p style="font-size:12px;color:var(--text-dim);margin-top:6px">Each chunk is ~1 MB. Example: 50000 = ~50 GB.</p>
                         </div>
                         <div class="admin-create">
                             <h3>Create User</h3>
@@ -355,7 +354,7 @@
             <div class="modal-card">
                 <h3 id="admin-quota-title">Raise Quota</h3>
                 <p id="admin-quota-message" style="font-size:14px;color:var(--text-dim);margin-bottom:12px"></p>
-                <input type="number" id="admin-quota-input" min="0" inputmode="numeric" pattern="[0-9]*" placeholder="New quota (chunks)" style="width:100%;padding:10px 12px;font-size:14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);margin-bottom:12px;box-sizing:border-box;-moz-appearance:textfield">
+                <input type="number" id="admin-quota-input" min="0" step="any" inputmode="decimal" placeholder="Quota (GB)" style="width:100%;padding:10px 12px;font-size:14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);margin-bottom:12px;box-sizing:border-box;-moz-appearance:textfield">
                 <p id="admin-quota-error" class="error hidden"></p>
                 <div class="modal-card-actions">
                     <button id="admin-quota-cancel" class="btn btn-ghost">Cancel</button>
@@ -401,6 +400,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-LzmM737+lLw3SErseDz6eFA1/NihbzADMsKMCmMVC3s8qyvNdbWfrbeMll95F99o" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-si/a4vwSjPScVKoZUgbZ7SbEZfChqogdScvlCSzsAlh4VyuJWZSaydPB3xMDna1C" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-kN5HoJRSpPAtEx8H2TMeKwKw48BIuC3viXpXBoBbp0woKCd8LdS3VJROWS7mAWhV" crossorigin="anonymous"></script>
 </body>
 </html>

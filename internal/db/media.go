@@ -6,6 +6,7 @@ type MediaItem struct {
 	ID            string
 	UserID        string
 	ChunkCount    int
+	SizeBytes     int    // total raw upload size in bytes (for quota tracking)
 	FileKeyEnc    []byte // file key encrypted with master key
 	ThumbKeyEnc   []byte // thumbnail key encrypted with master key
 	HashNonce     []byte
@@ -16,9 +17,9 @@ type MediaItem struct {
 
 func InsertMedia(db *sql.DB, m *MediaItem) error {
 	_, err := db.Exec(
-		`INSERT INTO media (id, user_id, chunk_count, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.UserID, m.ChunkCount, m.FileKeyEnc, m.ThumbKeyEnc, m.HashNonce, m.MetadataEnc, m.MetadataNonce,
+		`INSERT INTO media (id, user_id, chunk_count, size_bytes, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.UserID, m.ChunkCount, m.SizeBytes, m.FileKeyEnc, m.ThumbKeyEnc, m.HashNonce, m.MetadataEnc, m.MetadataNonce,
 	)
 	return err
 }
@@ -33,7 +34,7 @@ func ListMedia(db *sql.DB, userID string, limit, offset int) ([]*MediaItem, int,
 		return nil, 0, err
 	}
 
-	query := "SELECT id, user_id, chunk_count, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce, created_at FROM media " +
+	query := "SELECT id, user_id, chunk_count, size_bytes, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce, created_at FROM media " +
 		where + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 
@@ -46,7 +47,7 @@ func ListMedia(db *sql.DB, userID string, limit, offset int) ([]*MediaItem, int,
 	var items []*MediaItem
 	for rows.Next() {
 		m := &MediaItem{}
-		if err := rows.Scan(&m.ID, &m.UserID, &m.ChunkCount, &m.FileKeyEnc, &m.ThumbKeyEnc,
+		if err := rows.Scan(&m.ID, &m.UserID, &m.ChunkCount, &m.SizeBytes, &m.FileKeyEnc, &m.ThumbKeyEnc,
 			&m.HashNonce, &m.MetadataEnc, &m.MetadataNonce, &m.CreatedAt); err != nil {
 			return nil, 0, err
 		}
@@ -58,9 +59,9 @@ func ListMedia(db *sql.DB, userID string, limit, offset int) ([]*MediaItem, int,
 func GetMedia(db *sql.DB, id, userID string) (*MediaItem, error) {
 	m := &MediaItem{}
 	err := db.QueryRow(
-		`SELECT id, user_id, chunk_count, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce, created_at
+		`SELECT id, user_id, chunk_count, size_bytes, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce, created_at
 		 FROM media WHERE id = ? AND user_id = ?`, id, userID,
-	).Scan(&m.ID, &m.UserID, &m.ChunkCount, &m.FileKeyEnc, &m.ThumbKeyEnc,
+	).Scan(&m.ID, &m.UserID, &m.ChunkCount, &m.SizeBytes, &m.FileKeyEnc, &m.ThumbKeyEnc,
 		&m.HashNonce, &m.MetadataEnc, &m.MetadataNonce, &m.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -114,6 +115,19 @@ func GetUserChunkCount(db *sql.DB, userID string) (int, error) {
 	var count int
 	err := db.QueryRow(`SELECT COALESCE(SUM(chunk_count), 0) FROM media WHERE user_id = ?`, userID).Scan(&count)
 	return count, err
+}
+
+// GetUserStorageBytes returns the total stored bytes for a user.
+func GetUserStorageBytes(db *sql.DB, userID string) (int, error) {
+	var total int
+	err := db.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM media WHERE user_id = ?`, userID).Scan(&total)
+	return total, err
+}
+
+// UpdateMediaSize sets the actual byte size after upload completes.
+func UpdateMediaSize(db *sql.DB, id string, sizeBytes int) error {
+	_, err := db.Exec(`UPDATE media SET size_bytes = ? WHERE id = ?`, sizeBytes, id)
+	return err
 }
 
 func DeleteMedia(db *sql.DB, id, userID string) error {

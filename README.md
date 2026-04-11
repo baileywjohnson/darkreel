@@ -234,7 +234,7 @@ DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 | `PERSIST_SESSION` | `true` | Cache master key in sessionStorage (survives page refresh). Set to `false` for higher security - see [Session persistence](#session-persistence) |
 | `ALLOW_REGISTRATION` | `false` | Allow new user registration via the web UI |
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` / `X-Real-IP` headers for rate limiting. **Only enable when running behind a trusted reverse proxy** (Caddy, nginx). Without a proxy, clients can spoof these headers to bypass rate limits. |
-| `MAX_STORAGE_CHUNKS` | **(none)** | Per-user total chunk limit (env var fallback). Each chunk is ~1 MB. Set to `50000` for ~50 GB per user. Quotas are required — uploads are blocked until a default quota is configured via the admin panel or this variable. |
+| `MAX_STORAGE_GB` | **(none)** | Per-user storage quota in GB (env var fallback). Set to `50` for 50 GB per user. Supports decimals (e.g. `0.5`). Quotas are required — uploads are blocked until a default quota is configured via the admin panel or this variable. |
 
 Password: 16-128 characters, at least one letter, number, and symbol. Username: 3-64 alphanumeric characters.
 
@@ -488,7 +488,7 @@ If you lose both your password and recovery code, your data is permanently inacc
 | Max chunk | 20 MB |
 | Max chunks per file | 50,000 |
 | Max total upload | 100 GB |
-| Per-user storage | Configurable via admin panel or `MAX_STORAGE_CHUNKS` (required) |
+| Per-user storage | Configurable via admin panel or `MAX_STORAGE_GB` (required) |
 
 ### Data directory
 

@@ -17,9 +17,9 @@ import (
 )
 
 type Handler struct {
-	DB               *sql.DB
-	Storage          *storage.Layout
-	MaxStorageChunks int // per-user total chunk limit (0 = unlimited)
+	DB              *sql.DB
+	Storage         *storage.Layout
+	MaxStorageBytes int // per-user storage quota in bytes (0 = unlimited)
 }
 
 // validID returns the URL param if it is a valid UUID, or writes a 400 and returns "".
@@ -32,11 +32,11 @@ func validID(w http.ResponseWriter, r *http.Request, param string) string {
 	return id
 }
 
-// QuotaCheck returns the authenticated user's effective quota and current usage.
+// QuotaCheck returns the authenticated user's effective quota and current usage (in bytes).
 func (h *Handler) QuotaCheck(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
 
-	quota := h.MaxStorageChunks
+	quota := h.MaxStorageBytes
 	if val, err := db.GetSetting(h.DB, "default_storage_quota"); err == nil {
 		if n, err := strconv.Atoi(val); err == nil && n > 0 {
 			quota = n
@@ -46,7 +46,7 @@ func (h *Handler) QuotaCheck(w http.ResponseWriter, r *http.Request) {
 		quota = user.StorageQuota
 	}
 
-	used, err := db.GetUserChunkCount(h.DB, userID)
+	used, err := db.GetUserStorageBytes(h.DB, userID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -183,9 +183,10 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-user storage quota check (before DB insert to avoid unnecessary work).
+	// Per-user storage quota check (bytes). We do a pre-check using an estimate
+	// based on chunk count, then update with the actual size after reading all chunks.
 	// Priority: per-user DB override > server default in DB > env var fallback.
-	quota := h.MaxStorageChunks // env var fallback
+	quota := h.MaxStorageBytes // env var fallback
 	if val, err := db.GetSetting(h.DB, "default_storage_quota"); err == nil {
 		if n, err := strconv.Atoi(val); err == nil && n > 0 {
 			quota = n
@@ -198,19 +199,16 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No storage quota configured. Please contact your administrator.", http.StatusForbidden)
 		return
 	}
-	existing, err := db.GetUserChunkCount(h.DB, userID)
+	existingBytes, err := db.GetUserStorageBytes(h.DB, userID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if existing+meta.ChunkCount > quota {
-		http.Error(w, "Storage quota exceeded. Please contact your administrator.", http.StatusForbidden)
 		return
 	}
 
 	// INSERT DB record first — fails fast on duplicate media_id (PRIMARY KEY
 	// constraint), preventing a race where two concurrent uploads with the same
 	// ID both write to disk and one cleanup deletes the other's files.
+	// SizeBytes is set to 0 initially and updated after all chunks are read.
 	mediaItem := &db.MediaItem{
 		ID:            mediaID,
 		UserID:        userID,
@@ -259,8 +257,9 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read chunk parts
+	// Read chunk parts, tracking total bytes for quota enforcement.
 	chunkIndex := 0
+	totalBytes := 0
 	for {
 		part, err = mr.NextPart()
 		if err == io.EOF {
@@ -286,6 +285,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		totalBytes += len(chunkData)
+
 		if err := h.Storage.WriteChunk(userID, mediaID, chunkIndex, chunkData); err != nil {
 			cleanup()
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -297,6 +298,20 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	if chunkIndex != meta.ChunkCount {
 		cleanup()
 		http.Error(w, fmt.Sprintf("expected %d chunks, got %d", meta.ChunkCount, chunkIndex), http.StatusBadRequest)
+		return
+	}
+
+	// Enforce byte-based quota with actual upload size.
+	if existingBytes+totalBytes > quota {
+		cleanup()
+		http.Error(w, "Storage quota exceeded. Please contact your administrator.", http.StatusForbidden)
+		return
+	}
+
+	// Update the media record with the actual size.
+	if err := db.UpdateMediaSize(h.DB, mediaID, totalBytes); err != nil {
+		cleanup()
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 

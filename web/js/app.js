@@ -1343,51 +1343,56 @@ async function showAdminPanel() {
     adminContent.classList.remove('hidden');
 }
 
+function bytesToGB(bytes) { return bytes / (1024 * 1024 * 1024); }
+function gbToBytes(gb) { return Math.round(gb * 1024 * 1024 * 1024); }
+
 async function loadAdminStorage() {
     try {
         const stats = await api('/api/admin/storage');
         const statsEl = document.getElementById('admin-storage-stats');
-        const diskUsed = formatSize(stats.disk_used_bytes || 0);
-        const diskAvail = formatSize(stats.disk_avail_bytes || 0);
-        const diskTotal = formatSize((stats.disk_used_bytes || 0) + (stats.disk_avail_bytes || 0));
+        const totalUsed = stats.total_used_bytes || 0;
         const totalAllocated = stats.total_allocated_quota || 0;
-        const maxChunks = stats.max_allocatable_chunks || 0;
-        const remaining = Math.max(0, maxChunks - totalAllocated);
+        const maxBytes = stats.max_allocatable_bytes || 0;
+        const remaining = Math.max(0, maxBytes - totalAllocated);
+        const diskUsed = stats.disk_used_bytes || 0;
+        const diskAvail = stats.disk_avail_bytes || 0;
         statsEl.innerHTML = '<div style="display:flex;gap:24px;flex-wrap:wrap">' +
-            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(String(stats.total_chunks)) + '</span> chunks used</div>' +
-            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(String(totalAllocated)) + '</span> chunks allocated</div>' +
-            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(String(remaining)) + '</span> chunks available</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(formatSize(totalUsed)) + '</span> used</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(formatSize(totalAllocated)) + '</span> allocated</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(formatSize(remaining)) + '</span> available</div>' +
             '</div>' +
             '<div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:8px">' +
-            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskUsed) + '</span> disk used</div>' +
-            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskAvail) + '</span> disk available</div>' +
-            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(diskTotal) + '</span> disk total</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(formatSize(diskUsed)) + '</span> disk used</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(formatSize(diskAvail)) + '</span> disk available</div>' +
+            '<div><span style="color:var(--text);font-weight:600">' + escapeHtml(formatSize(diskUsed + diskAvail)) + '</span> disk total</div>' +
             '</div>';
         _cachedDefaultQuota = stats.default_storage_quota || 0;
-        _cachedMaxChunks = maxChunks;
+        _cachedMaxBytes = maxBytes;
         _cachedTotalAllocated = totalAllocated;
-        document.getElementById('admin-default-quota').value = stats.default_storage_quota || '';
+        const defaultGB = _cachedDefaultQuota > 0 ? bytesToGB(_cachedDefaultQuota) : '';
+        document.getElementById('admin-default-quota').value = defaultGB !== '' ? (defaultGB % 1 === 0 ? defaultGB : defaultGB.toFixed(2)) : '';
     } catch {}
 }
 
-// Only allow digits in the quota input (block e, +, -, ., etc.)
+// Allow digits and decimal point in the quota input
 document.getElementById('admin-default-quota').addEventListener('keydown', (e) => {
-    if (!/^\d$/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
+    if (!/^[\d.]$/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
     }
 });
 document.getElementById('admin-default-quota').addEventListener('paste', (e) => {
     const text = (e.clipboardData || window.clipboardData).getData('text');
-    if (!/^\d+$/.test(text)) e.preventDefault();
+    if (!/^\d+(\.\d+)?$/.test(text)) e.preventDefault();
 });
 
 document.getElementById('admin-save-quota').addEventListener('click', async () => {
     const btn = document.getElementById('admin-save-quota');
     const input = document.getElementById('admin-default-quota');
-    const val = parseInt(input.value, 10) || 0;
+    const gb = parseFloat(input.value) || 0;
+    const bytes = gbToBytes(gb);
     btnLoading(btn);
     try {
-        await api('/api/admin/storage/quota', { method: 'PUT', json: { default_storage_quota: val } });
+        await api('/api/admin/storage/quota', { method: 'PUT', json: { default_storage_quota: bytes } });
         btn.textContent = 'Saved';
         btn.disabled = false;
         setTimeout(() => { btn.textContent = 'Save'; }, 1500);
@@ -1556,7 +1561,7 @@ adminCreateForm.addEventListener('submit', async (e) => {
 });
 
 let _cachedDefaultQuota = 0;
-let _cachedMaxChunks = 0;
+let _cachedMaxBytes = 0;
 let _cachedTotalAllocated = 0;
 
 async function loadAdminUsers() {
@@ -1569,9 +1574,9 @@ async function loadAdminUsers() {
         adminUserList.innerHTML = users.map(u => {
             const effectiveQuota = u.storage_quota > 0 ? u.storage_quota : _cachedDefaultQuota;
             const quotaLabel = effectiveQuota > 0
-                ? escapeHtml(String(effectiveQuota)) + ' chunks'
+                ? escapeHtml(formatSize(effectiveQuota))
                 : '<span style="color:var(--danger)">not set</span>';
-            const usage = escapeHtml(String(u.chunk_count)) + ' chunks';
+            const usage = escapeHtml(formatSize(u.used_bytes || 0));
             return `
             <div class="admin-user-card" style="flex-wrap:wrap;gap:8px">
                 <div class="admin-user-info" style="flex:1;min-width:0">
@@ -1610,13 +1615,15 @@ async function loadAdminUsers() {
                 const current = parseInt(btn.dataset.currentQuota, 10) || 0;
                 const username = btn.closest('.admin-user-card').querySelector('.admin-user-info').firstChild.textContent.trim();
                 const effectiveQuota = current > 0 ? current : _cachedDefaultQuota;
-                const quotaRemaining = Math.max(0, _cachedMaxChunks - _cachedTotalAllocated + effectiveQuota);
+                const remainingBytes = Math.max(0, _cachedMaxBytes - _cachedTotalAllocated + effectiveQuota);
+                const defaultGB = _cachedDefaultQuota > 0 ? bytesToGB(_cachedDefaultQuota).toFixed(1) : '';
                 showAdminQuotaModal(
                     'Set Quota',
-                    'Set a chunk quota for "' + username + '". Must be higher than the server default' + (_cachedDefaultQuota > 0 ? ' (' + _cachedDefaultQuota + ')' : '') + ', or 0 to use the default. Max available: ' + quotaRemaining + ' chunks.',
+                    'Set a quota for "' + username + '" in GB. Must be higher than the server default' + (defaultGB ? ' (' + defaultGB + ' GB)' : '') + ', or 0 to use the default. Max available: ' + formatSize(remainingBytes) + '.',
                     effectiveQuota,
-                    async (val) => {
-                        await api('/api/admin/users/' + uid + '/quota', { method: 'PATCH', json: { storage_quota: val } });
+                    async (gbVal) => {
+                        const bytes = gbVal === 0 ? 0 : gbToBytes(gbVal);
+                        await api('/api/admin/users/' + uid + '/quota', { method: 'PATCH', json: { storage_quota: bytes } });
                         loadAdminUsers();
                     }
                 );
@@ -1683,21 +1690,22 @@ const adminQuotaError = document.getElementById('admin-quota-error');
 const adminQuotaConfirmBtn = document.getElementById('admin-quota-confirm');
 const adminQuotaCancelBtn = document.getElementById('admin-quota-cancel');
 
-// Only allow digits
+// Allow digits and decimal point
 adminQuotaInput.addEventListener('keydown', (e) => {
-    if (!/^\d$/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
+    if (!/^[\d.]$/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
     }
 });
 adminQuotaInput.addEventListener('paste', (e) => {
     const text = (e.clipboardData || window.clipboardData).getData('text');
-    if (!/^\d+$/.test(text)) e.preventDefault();
+    if (!/^\d+(\.\d+)?$/.test(text)) e.preventDefault();
 });
 
-function showAdminQuotaModal(title, message, currentValue, onConfirm) {
+function showAdminQuotaModal(title, message, currentValueBytes, onConfirm) {
     adminQuotaTitle.textContent = title;
     adminQuotaMessage.textContent = message;
-    adminQuotaInput.value = currentValue > 0 ? String(currentValue) : '';
+    const currentGB = currentValueBytes > 0 ? bytesToGB(currentValueBytes) : 0;
+    adminQuotaInput.value = currentGB > 0 ? (currentGB % 1 === 0 ? String(currentGB) : currentGB.toFixed(2)) : '';
     adminQuotaError.classList.add('hidden');
     btnReset(adminQuotaConfirmBtn);
     adminQuotaConfirmBtn.textContent = 'Save';
@@ -1715,7 +1723,7 @@ function showAdminQuotaModal(title, message, currentValue, onConfirm) {
     };
 
     const handleConfirm = async () => {
-        const val = parseInt(adminQuotaInput.value, 10);
+        const val = parseFloat(adminQuotaInput.value);
         if (isNaN(val) || val < 0) {
             adminQuotaError.textContent = 'Enter a valid number (0 or higher)';
             adminQuotaError.classList.remove('hidden');

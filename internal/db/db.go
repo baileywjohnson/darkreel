@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -101,5 +102,34 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
-	return tx.Commit()
+	// Add size_bytes column to media for accurate byte-based quota tracking.
+	if _, err := tx.Exec(`ALTER TABLE media ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !isDuplicateColumnError(err) {
+			return fmt.Errorf("add size_bytes column: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// One-time migration: convert chunk-based quotas to byte-based quotas.
+	// Detect by checking for a 'quota_unit' setting — absent means still chunk-based.
+	if err := db.QueryRow(`SELECT value FROM settings WHERE key = 'quota_unit'`).Scan(new(string)); err != nil {
+		// Not yet migrated. Backfill size_bytes from chunk_count (estimate 1 MB/chunk).
+		db.Exec(`UPDATE media SET size_bytes = chunk_count * 1048576 WHERE size_bytes = 0 AND chunk_count > 0`)
+		// Convert per-user storage_quota from chunks to bytes.
+		db.Exec(`UPDATE users SET storage_quota = storage_quota * 1048576 WHERE storage_quota > 0`)
+		// Convert default_storage_quota setting from chunks to bytes.
+		var oldQuota string
+		if err := db.QueryRow(`SELECT value FROM settings WHERE key = 'default_storage_quota'`).Scan(&oldQuota); err == nil {
+			if n, err := strconv.Atoi(oldQuota); err == nil && n > 0 {
+				db.Exec(`UPDATE settings SET value = ? WHERE key = 'default_storage_quota'`, strconv.Itoa(n*1048576))
+			}
+		}
+		// Mark migration complete.
+		db.Exec(`INSERT INTO settings (key, value) VALUES ('quota_unit', 'bytes') ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+	}
+
+	return nil
 }

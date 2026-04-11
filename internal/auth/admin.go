@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"syscall"
@@ -16,9 +15,6 @@ import (
 )
 
 const (
-	// Conservative estimate: most chunks pad to 1 MB, but larger buckets exist (2/4/8/16 MB).
-	// 2 MB per chunk accounts for larger chunks and thumbnail overhead.
-	bytesPerChunk = 2 * 1024 * 1024
 	// Reserve 2 GB for database, OS, logs, and filesystem overhead.
 	reservedBytes = 2 * 1024 * 1024 * 1024
 )
@@ -38,14 +34,14 @@ func (h *Handler) getDiskInfo() (uint64, uint64) {
 	return used, avail
 }
 
-// maxAllocatableChunks returns the maximum number of chunks that can be allocated
+// maxAllocatableBytes returns the maximum bytes that can be allocated
 // based on available disk space, after subtracting the reserved buffer.
-func (h *Handler) maxAllocatableChunks() int {
+func (h *Handler) maxAllocatableBytes() int {
 	_, avail := h.getDiskInfo()
 	if avail <= reservedBytes {
 		return 0
 	}
-	return int((avail - reservedBytes) / bytesPerChunk)
+	return int(avail - reservedBytes)
 }
 
 // AdminMiddleware returns middleware that verifies admin status from the database
@@ -81,7 +77,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		Username     string `json:"username"`
 		IsAdmin      bool   `json:"is_admin"`
 		StorageQuota int    `json:"storage_quota"`
-		ChunkCount   int    `json:"chunk_count"`
+		UsedBytes    int    `json:"used_bytes"`
 		CreatedAt    string `json:"created_at"`
 	}
 
@@ -92,7 +88,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 			Username:     u.Username,
 			IsAdmin:      u.IsAdmin,
 			StorageQuota: u.StorageQuota,
-			ChunkCount:   u.ChunkCount,
+			UsedBytes:    u.UsedBytes,
 			CreatedAt:    u.CreatedAt,
 		}
 	}
@@ -159,9 +155,9 @@ func (h *Handler) SetUserQuota(w http.ResponseWriter, r *http.Request) {
 	}
 	newTotal := currentTotal - oldEffective + newEffective
 
-	maxChunks := h.maxAllocatableChunks()
-	if maxChunks > 0 && newTotal > maxChunks {
-		http.Error(w, fmt.Sprintf("total allocated quota (%d chunks) would exceed available disk capacity (%d chunks)", newTotal, maxChunks), http.StatusBadRequest)
+	maxBytes := h.maxAllocatableBytes()
+	if maxBytes > 0 && newTotal > maxBytes {
+		http.Error(w, "total allocated quota would exceed available disk capacity", http.StatusBadRequest)
 		return
 	}
 
@@ -175,7 +171,7 @@ func (h *Handler) SetUserQuota(w http.ResponseWriter, r *http.Request) {
 
 // GetStorageStats returns total storage statistics (admin only).
 func (h *Handler) GetStorageStats(w http.ResponseWriter, r *http.Request) {
-	totalChunks, err := db.GetTotalChunkCount(h.DB)
+	totalBytes, err := db.GetTotalStorageBytes(h.DB)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -190,14 +186,14 @@ func (h *Handler) GetStorageStats(w http.ResponseWriter, r *http.Request) {
 
 	// Get disk usage info from the storage layer
 	diskUsed, diskAvail := h.getDiskInfo()
-	maxChunks := h.maxAllocatableChunks()
+	maxBytes := h.maxAllocatableBytes()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"total_chunks":          totalChunks,
+		"total_used_bytes":      totalBytes,
 		"default_storage_quota": defaultQuota,
 		"total_allocated_quota": totalAllocated,
-		"max_allocatable_chunks": maxChunks,
+		"max_allocatable_bytes": maxBytes,
 		"disk_used_bytes":       diskUsed,
 		"disk_avail_bytes":      diskAvail,
 	})
@@ -225,9 +221,9 @@ func (h *Handler) SetDefaultQuota(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	maxChunks := h.maxAllocatableChunks()
-	if maxChunks > 0 && newTotal > maxChunks {
-		http.Error(w, fmt.Sprintf("total allocated quota (%d chunks) would exceed available disk capacity (%d chunks)", newTotal, maxChunks), http.StatusBadRequest)
+	maxBytes := h.maxAllocatableBytes()
+	if maxBytes > 0 && newTotal > maxBytes {
+		http.Error(w, "total allocated quota would exceed available disk capacity", http.StatusBadRequest)
 		return
 	}
 

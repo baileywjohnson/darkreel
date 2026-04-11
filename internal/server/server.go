@@ -27,7 +27,7 @@ type Server struct {
 	PersistSession    bool
 	AllowRegistration bool
 	TrustProxy        bool // trust X-Forwarded-For/X-Real-IP (only enable behind a reverse proxy)
-	MaxStorageChunks  int  // per-user chunk limit (0 = unlimited)
+	MaxStorageBytes   int  // per-user storage quota in bytes (0 = unlimited)
 	httpServer        *http.Server
 }
 
@@ -73,7 +73,7 @@ func (s *Server) routes() chi.Router {
 	accountLimiter := auth.NewAccountLimiter(10, 15*time.Minute)
 
 	authHandler := &auth.Handler{DB: s.DB, Storage: s.Storage, AccountLimiter: accountLimiter, DataDir: s.Storage.BaseDir}
-	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage, MaxStorageChunks: s.MaxStorageChunks}
+	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage, MaxStorageBytes: s.MaxStorageBytes}
 
 	// Auth rate limiter: 5 attempts per minute per IP
 	authLimiter := RateLimit(5, time.Minute)

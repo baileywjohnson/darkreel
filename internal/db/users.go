@@ -14,7 +14,7 @@ type User struct {
 	EncryptedMK  []byte // master key encrypted with KDF-derived key
 	RecoveryMK   []byte // master key encrypted with recovery code
 	IsAdmin      bool
-	StorageQuota int // per-user chunk limit override (0 = use server default)
+	StorageQuota int // per-user storage quota in bytes (0 = use server default)
 	CreatedAt    string
 }
 
@@ -30,16 +30,18 @@ func CreateUser(db *sql.DB, u *User) error {
 	return err
 }
 
-// UserWithUsage extends User with chunk usage for admin display.
+// UserWithUsage extends User with storage usage for admin display.
 type UserWithUsage struct {
 	User
 	ChunkCount int
+	UsedBytes  int
 }
 
 func ListUsersWithUsage(db *sql.DB) ([]UserWithUsage, error) {
 	rows, err := db.Query(`
 		SELECT u.id, u.username, u.is_admin, u.storage_quota, u.created_at,
-		       COALESCE(SUM(m.chunk_count), 0) AS chunk_count
+		       COALESCE(SUM(m.chunk_count), 0) AS chunk_count,
+		       COALESCE(SUM(m.size_bytes), 0) AS used_bytes
 		FROM users u
 		LEFT JOIN media m ON m.user_id = u.id
 		GROUP BY u.id
@@ -52,7 +54,7 @@ func ListUsersWithUsage(db *sql.DB) ([]UserWithUsage, error) {
 	for rows.Next() {
 		var uu UserWithUsage
 		var isAdmin int
-		if err := rows.Scan(&uu.ID, &uu.Username, &isAdmin, &uu.StorageQuota, &uu.CreatedAt, &uu.ChunkCount); err != nil {
+		if err := rows.Scan(&uu.ID, &uu.Username, &isAdmin, &uu.StorageQuota, &uu.CreatedAt, &uu.ChunkCount, &uu.UsedBytes); err != nil {
 			return nil, err
 		}
 		uu.IsAdmin = isAdmin != 0
@@ -204,21 +206,21 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 	return u, nil
 }
 
-// UpdateUserQuota sets a per-user storage quota override. Quota must be >= current server default
-// or 0 (meaning use server default). Callers enforce the "only raise" rule.
+// UpdateUserQuota sets a per-user storage quota override (in bytes).
+// Quota must be >= current server default or 0 (meaning use server default).
 func UpdateUserQuota(db *sql.DB, userID string, quota int) error {
 	_, err := db.Exec(`UPDATE users SET storage_quota = ? WHERE id = ?`, quota, userID)
 	return err
 }
 
-// GetTotalChunkCount returns the total number of chunks across all users.
-func GetTotalChunkCount(db *sql.DB) (int, error) {
-	var count int
-	err := db.QueryRow(`SELECT COALESCE(SUM(chunk_count), 0) FROM media`).Scan(&count)
-	return count, err
+// GetTotalStorageBytes returns the total stored bytes across all users.
+func GetTotalStorageBytes(db *sql.DB) (int, error) {
+	var total int
+	err := db.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM media`).Scan(&total)
+	return total, err
 }
 
-// GetTotalAllocatedQuota returns the sum of effective quotas across all users.
+// GetTotalAllocatedQuota returns the sum of effective quotas (in bytes) across all users.
 // Users with a per-user override use that value; others use the provided default.
 func GetTotalAllocatedQuota(db *sql.DB, defaultQuota int) (int, error) {
 	var total int

@@ -109,10 +109,15 @@ func main() {
 	// Start session cleanup goroutine (removes expired sessions every minute)
 	auth.Sessions.StartCleanup()
 
-	maxChunks := 0 // 0 = unlimited
-	if v := os.Getenv("MAX_STORAGE_CHUNKS"); v != "" {
+	maxBytes := 0 // 0 = unlimited
+	if v := os.Getenv("MAX_STORAGE_GB"); v != "" {
+		if gb, err := strconv.ParseFloat(v, 64); err == nil && gb > 0 {
+			maxBytes = int(gb * 1024 * 1024 * 1024)
+		}
+	} else if v := os.Getenv("MAX_STORAGE_CHUNKS"); v != "" {
+		// Legacy: convert chunk count to bytes (1 MB per chunk estimate).
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			maxChunks = n
+			maxBytes = n * 1048576
 		}
 	}
 
@@ -124,7 +129,7 @@ func main() {
 		PersistSession:    os.Getenv("PERSIST_SESSION") != "false",
 		AllowRegistration: os.Getenv("ALLOW_REGISTRATION") == "true", // default false
 		TrustProxy:        os.Getenv("TRUST_PROXY") == "true",        // default false — only enable behind a reverse proxy
-		MaxStorageChunks:  maxChunks,
+		MaxStorageBytes:   maxBytes,
 	}
 
 	// Graceful shutdown: drain in-flight requests, then close DB
