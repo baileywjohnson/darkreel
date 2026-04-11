@@ -2921,6 +2921,7 @@ async function loadMedia() {
 
 // Silent background poll — only adds new items, no spinner, no grid reset
 async function pollMedia() {
+    if (pendingUploads.size > 0) return; // skip entirely during uploads
     try {
         const res = await api(`/api/media?page=${currentPage}&limit=${PAGE_SIZE}`);
         const rawItems = res.items || [];
