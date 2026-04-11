@@ -3378,6 +3378,9 @@ function initTouchDrag(el, getData) {
 
     el.addEventListener('touchstart', (e) => {
         if (_touchDragState) return;
+        // Disable native draggable during touch to prevent browser drag
+        // from consuming touch events (causes touchcancel on some browsers)
+        if (el.draggable) el.draggable = false;
         const touch = e.touches[0];
         startX = touch.clientX;
         startY = touch.clientY;
@@ -3433,10 +3436,12 @@ function initTouchDrag(el, getData) {
 
     el.addEventListener('touchend', () => {
         if (timer) { clearTimeout(timer); timer = null; }
+        el.draggable = true;
     });
 
     el.addEventListener('touchcancel', () => {
         if (timer) { clearTimeout(timer); timer = null; }
+        el.draggable = true;
     });
 }
 
@@ -3444,6 +3449,7 @@ function cleanupTouchDrag() {
     if (!_touchDragState) return;
     _touchDragState.ghost.remove();
     _touchDragState.sourceEl.classList.remove('dragging');
+    _touchDragState.sourceEl.draggable = true;
     _touchDragState = null;
     draggedItem = null;
     draggedFolder = null;
