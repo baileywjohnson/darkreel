@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/baileywjohnson/darkreel/internal/auth"
+	"github.com/baileywjohnson/darkreel/internal/db"
 	"github.com/baileywjohnson/darkreel/internal/media"
 	"github.com/baileywjohnson/darkreel/internal/storage"
 	"github.com/go-chi/chi/v5"
@@ -37,6 +38,8 @@ func (s *Server) Run() error {
 		Addr:              s.Addr,
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Minute, // generous for large uploads (up to 100 GB)
+		WriteTimeout:      30 * time.Minute, // generous for large downloads/streaming
 	}
 	log.Printf("Darkreel listening on %s", s.Addr)
 	return s.httpServer.ListenAndServe()
@@ -78,12 +81,17 @@ func (s *Server) routes() chi.Router {
 	// Auth rate limiter: 5 attempts per minute per IP
 	authLimiter := RateLimit(5, time.Minute)
 
-	// Registration state — mutable by admins at runtime
+	// Registration state — persisted to DB so it survives restarts.
+	// On first start, uses the ALLOW_REGISTRATION env var as the initial value.
 	type regState struct {
 		sync.RWMutex
 		allowed bool
 	}
-	registration := &regState{allowed: s.AllowRegistration}
+	initialReg := s.AllowRegistration
+	if val, err := db.GetSetting(s.DB, "allow_registration"); err == nil {
+		initialReg = val == "true"
+	}
+	registration := &regState{allowed: initialReg}
 
 	// Health check (no auth, no rate limit)
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -164,6 +172,14 @@ func (s *Server) routes() chi.Router {
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, "invalid request body", http.StatusBadRequest)
+				return
+			}
+			val := "false"
+			if req.Enabled {
+				val = "true"
+			}
+			if err := db.SetSetting(s.DB, "allow_registration", val); err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
 			registration.Lock()

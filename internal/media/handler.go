@@ -204,6 +204,11 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// Pre-check: reject if already at or over quota before writing any chunks.
+	if existingBytes >= quota {
+		http.Error(w, "Storage quota exceeded. Please contact your administrator.", http.StatusForbidden)
+		return
+	}
 
 	// INSERT DB record first — fails fast on duplicate media_id (PRIMARY KEY
 	// constraint), preventing a race where two concurrent uploads with the same
@@ -301,8 +306,15 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enforce byte-based quota with actual upload size.
-	if existingBytes+totalBytes > quota {
+	// Re-read current usage to close the TOCTOU window: another concurrent
+	// upload may have completed between our initial read and now.
+	currentBytes, err := db.GetUserStorageBytes(h.DB, userID)
+	if err != nil {
+		cleanup()
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if currentBytes+totalBytes > quota {
 		cleanup()
 		http.Error(w, "Storage quota exceeded. Please contact your administrator.", http.StatusForbidden)
 		return

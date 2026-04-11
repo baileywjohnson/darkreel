@@ -173,6 +173,8 @@ These are deliberate:
 
 - **SSD deletion is best-effort.** The 3-pass overwrite works on HDDs. On SSDs, wear leveling may retain old data. See [Disk encryption (LUKS)](#disk-encryption-luks) for the recommended mitigation.
 
+- **Quotas track logical size, not disk size.** Storage quotas are enforced against the raw encrypted byte count, not the padded on-disk size. Because every chunk is padded to a bucket boundary (1/2/4/8/16 MB), actual disk usage is higher than the quota suggests. This is intentional — exposing padded sizes in the quota display would leak information about per-chunk sizes, weakening the size-fingerprinting resistance that padding provides.
+
 ## Deploy
 
 ### One command on a fresh VPS
@@ -232,7 +234,7 @@ DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 | `DARKREEL_ADMIN_USERNAME` | `admin` | Admin username (first-run bootstrap only) |
 | `DARKREEL_ADMIN_PASSWORD` | **(required on first run)** | Admin password (first-run bootstrap only) |
 | `PERSIST_SESSION` | `true` | Cache master key in sessionStorage (survives page refresh). Set to `false` for higher security - see [Session persistence](#session-persistence) |
-| `ALLOW_REGISTRATION` | `false` | Allow new user registration via the web UI |
+| `ALLOW_REGISTRATION` | `false` | Initial registration state on first run. Once an admin toggles registration via the admin panel, that setting is persisted to the database and takes precedence over this variable on subsequent restarts. |
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` / `X-Real-IP` headers for rate limiting. **Only enable when running behind a trusted reverse proxy** (Caddy, nginx). Without a proxy, clients can spoof these headers to bypass rate limits. |
 | `MAX_STORAGE_GB` | **(none)** | Default per-user storage quota in GB (env var fallback). Set to `50` for 50 GB per user. Supports decimals (e.g. `0.5`). Quotas are required — uploads are blocked until a default quota is configured via the admin panel or this variable. The setup script prompts for this automatically. |
 
@@ -426,7 +428,7 @@ The setup script handles all of this. If deploying manually:
 - BREACH mitigation - HTTP compression disabled on auth endpoints that return secrets
 - Last-admin protection - the system prevents deletion of the last admin account (atomic transaction prevents TOCTOU race)
 - Mandatory storage quotas - quotas are required for all users, tracked in bytes for accuracy across all file types. Per-user quotas can only be raised, never lowered. Total allocated quotas are validated against available disk capacity (with a 2 GB reserve). Uploads are blocked until a quota is configured
-- Startup integrity checks - incomplete uploads (DB record without all chunk files) are cleaned up on restart
+- Startup integrity checks - incomplete uploads (DB record without all chunk files) are cleaned up on restart. Uploads where the server crashed after writing chunks but before recording the size are detected and backfilled.
 - Proxy-aware rate limiting - `X-Forwarded-For` trust is off by default; must be explicitly enabled via `TRUST_PROXY=true` to prevent header spoofing
 - Encrypted backups - database backups encrypted with AES-256-CBC using a dedicated key
 

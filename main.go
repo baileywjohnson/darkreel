@@ -106,6 +106,24 @@ func main() {
 		}
 	}
 
+	// Backfill size_bytes for uploads where the server crashed after writing
+	// chunks but before updating the DB record with the actual size.
+	if zeroItems, err := db.ListMediaWithZeroSize(database); err != nil {
+		log.Printf("Warning: size_bytes backfill skipped — failed to list: %v", err)
+	} else {
+		backfilled := 0
+		for _, item := range zeroItems {
+			if size := store.MediaChunkBytes(item.UserID, item.ID, item.ChunkCount); size > 0 {
+				if err := db.UpdateMediaSize(database, item.ID, size); err == nil {
+					backfilled++
+				}
+			}
+		}
+		if backfilled > 0 {
+			log.Printf("Backfilled size_bytes for %d media records", backfilled)
+		}
+	}
+
 	// Start session cleanup goroutine (removes expired sessions every minute)
 	auth.Sessions.StartCleanup()
 

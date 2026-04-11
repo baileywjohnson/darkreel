@@ -115,20 +115,31 @@ func migrate(db *sql.DB) error {
 
 	// One-time migration: convert chunk-based quotas to byte-based quotas.
 	// Detect by checking for a 'quota_unit' setting — absent means still chunk-based.
+	// Wrapped in a transaction so a crash mid-migration can't double-multiply quotas.
 	if err := db.QueryRow(`SELECT value FROM settings WHERE key = 'quota_unit'`).Scan(new(string)); err != nil {
-		// Not yet migrated. Backfill size_bytes from chunk_count (estimate 1 MB/chunk).
-		db.Exec(`UPDATE media SET size_bytes = chunk_count * 1048576 WHERE size_bytes = 0 AND chunk_count > 0`)
+		mtx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin quota migration: %w", err)
+		}
+		defer mtx.Rollback()
+
+		// Backfill size_bytes from chunk_count (estimate 1 MB/chunk).
+		mtx.Exec(`UPDATE media SET size_bytes = chunk_count * 1048576 WHERE size_bytes = 0 AND chunk_count > 0`)
 		// Convert per-user storage_quota from chunks to bytes.
-		db.Exec(`UPDATE users SET storage_quota = storage_quota * 1048576 WHERE storage_quota > 0`)
+		mtx.Exec(`UPDATE users SET storage_quota = storage_quota * 1048576 WHERE storage_quota > 0`)
 		// Convert default_storage_quota setting from chunks to bytes.
 		var oldQuota string
-		if err := db.QueryRow(`SELECT value FROM settings WHERE key = 'default_storage_quota'`).Scan(&oldQuota); err == nil {
+		if err := mtx.QueryRow(`SELECT value FROM settings WHERE key = 'default_storage_quota'`).Scan(&oldQuota); err == nil {
 			if n, err := strconv.Atoi(oldQuota); err == nil && n > 0 {
-				db.Exec(`UPDATE settings SET value = ? WHERE key = 'default_storage_quota'`, strconv.Itoa(n*1048576))
+				mtx.Exec(`UPDATE settings SET value = ? WHERE key = 'default_storage_quota'`, strconv.Itoa(n*1048576))
 			}
 		}
 		// Mark migration complete.
-		db.Exec(`INSERT INTO settings (key, value) VALUES ('quota_unit', 'bytes') ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+		mtx.Exec(`INSERT INTO settings (key, value) VALUES ('quota_unit', 'bytes') ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+
+		if err := mtx.Commit(); err != nil {
+			return fmt.Errorf("commit quota migration: %w", err)
+		}
 	}
 
 	return nil

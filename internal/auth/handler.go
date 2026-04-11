@@ -406,8 +406,8 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate new token with fresh session ID
-	newToken, err := GenerateToken(user.ID, newSessionID, claims.IsAdmin)
+	// Generate new token with fresh session ID (use DB admin status, not stale JWT claim)
+	newToken, err := GenerateToken(user.ID, newSessionID, user.IsAdmin)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

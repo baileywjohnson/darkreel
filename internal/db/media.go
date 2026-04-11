@@ -130,6 +130,25 @@ func UpdateMediaSize(db *sql.DB, id string, sizeBytes int) error {
 	return err
 }
 
+// ListMediaWithZeroSize returns media records that have size_bytes=0 but chunk_count>0.
+// These are uploads where the server crashed after writing chunks but before updating size.
+func ListMediaWithZeroSize(db *sql.DB) ([]MediaSummary, error) {
+	rows, err := db.Query(`SELECT id, user_id, chunk_count FROM media WHERE size_bytes = 0 AND chunk_count > 0`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaSummary
+	for rows.Next() {
+		var s MediaSummary
+		if err := rows.Scan(&s.ID, &s.UserID, &s.ChunkCount); err != nil {
+			return nil, err
+		}
+		items = append(items, s)
+	}
+	return items, rows.Err()
+}
+
 func DeleteMedia(db *sql.DB, id, userID string) error {
 	_, err := db.Exec(`DELETE FROM media WHERE id = ? AND user_id = ?`, id, userID)
 	return err

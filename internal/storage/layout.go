@@ -108,6 +108,20 @@ func (l *Layout) IsMediaComplete(userID, mediaID string, chunkCount int) bool {
 	return true
 }
 
+// MediaChunkBytes returns the total raw (pre-padding) byte size of all chunks for a media item.
+// Used to backfill size_bytes for records where the server crashed before updating the DB.
+func (l *Layout) MediaChunkBytes(userID, mediaID string, chunkCount int) int {
+	total := 0
+	for i := 0; i < chunkCount; i++ {
+		data, err := l.ReadChunk(userID, mediaID, i)
+		if err != nil {
+			return 0 // incomplete — caller should handle
+		}
+		total += len(data)
+	}
+	return total
+}
+
 // RemoveMedia securely shreds all files for a media item, then removes the directory.
 func (l *Layout) RemoveMedia(userID, mediaID string) error {
 	dir := l.MediaDir(userID, mediaID)
