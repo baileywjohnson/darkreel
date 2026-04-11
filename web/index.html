@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css" integrity="sha384-DNgwyYRZgj4rRML2vObhWxSMLQuYkQFNetJ72bMpxuqS1ab0oG6l713nmS7DJy5S" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css" integrity="sha384-jDGERKIN7jGIqKZXC5uuBbZziuWsmM2AYk5tJXovVJs6dxSKpsP3uwZ3cj11bGf9" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -263,6 +263,10 @@
 
         </main>
 
+        <!-- Sticky back buttons (outside main to escape its stacking context) -->
+        <button id="admin-sticky-back" class="sticky-back hidden" aria-label="Back to gallery"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+        <button id="settings-sticky-back" class="sticky-back hidden" aria-label="Back to gallery"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+
         <!-- Viewer overlay (outside main to escape its stacking context) -->
         <div id="viewer" class="viewer hidden">
             <div class="viewer-header">
@@ -321,7 +325,7 @@
         <div id="rename-modal" class="modal-overlay hidden">
             <div class="modal-card">
                 <h3 id="rename-title">Rename</h3>
-                <input type="text" id="rename-input" placeholder="New name" autocomplete="off">
+                <input type="text" id="rename-input" placeholder="New name" autocomplete="off" maxlength="255">
                 <p id="rename-error" class="error hidden"></p>
                 <div class="modal-card-actions">
                     <button id="rename-cancel" class="btn btn-ghost">Cancel</button>
@@ -400,6 +404,6 @@
     </div>
 
     <script src="/js/crypto.js" type="module" integrity="sha384-LzmM737+lLw3SErseDz6eFA1/NihbzADMsKMCmMVC3s8qyvNdbWfrbeMll95F99o" crossorigin="anonymous"></script>
-    <script src="/js/app.js" type="module" integrity="sha384-XsUlbnfsw6l5KCx0328gvQJz3VSKj4taDsCFf42+CaOnYXiXwmlTjqIB9mX9tpPS" crossorigin="anonymous"></script>
+    <script src="/js/app.js" type="module" integrity="sha384-YYRGlsOrpXUEocfBY4d6y9oJvBbTuSIPY7qK9/sB6zgu4hhqpY/QG5ynzxyLJr2n" crossorigin="anonymous"></script>
 </body>
 </html>

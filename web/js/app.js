@@ -6,6 +6,18 @@ import {
     bufferToBase64, base64ToBuffer, formatSize
 } from './crypto.js';
 
+const MAX_NAME_LENGTH = 255;
+
+function truncateName(name) {
+    if (name.length <= MAX_NAME_LENGTH) return name;
+    const dot = name.lastIndexOf('.');
+    if (dot > 0) {
+        const ext = name.substring(dot);
+        return name.substring(0, MAX_NAME_LENGTH - ext.length) + ext;
+    }
+    return name.substring(0, MAX_NAME_LENGTH);
+}
+
 // ─── MP4 → fMP4 remuxing (using mp4box.js, ~144KB, no WASM) ───
 //
 // Remuxes regular MP4 to fragmented MP4 for MSE streaming playback.
@@ -1328,6 +1340,7 @@ async function showAdminPanel() {
     galleryView.classList.add('hidden');
     settingsView.classList.add('hidden');
     adminView.classList.remove('hidden');
+    adminStickyBack.classList.add('hidden');
     sessionStorage.setItem('activeView', 'admin');
     updateNavActive('admin');
     adminContent.classList.add('hidden');
@@ -1411,7 +1424,43 @@ document.getElementById('admin-back-btn').addEventListener('click', () => {
     sessionStorage.setItem('activeView', 'gallery');
     updateNavActive('gallery');
     renderBreadcrumb();
+    adminStickyBack.style.opacity = '0';
+    adminStickyBack.style.pointerEvents = 'none';
+    adminStickyBack.classList.add('hidden');
 });
+
+// Sticky back buttons — appear when the page title scrolls out of view
+const adminStickyBack = document.getElementById('admin-sticky-back');
+const settingsStickyBack = document.getElementById('settings-sticky-back');
+
+function hideStickyBacks() {
+    adminStickyBack.style.opacity = '0';
+    adminStickyBack.style.pointerEvents = 'none';
+    adminStickyBack.classList.add('hidden');
+    settingsStickyBack.style.opacity = '0';
+    settingsStickyBack.style.pointerEvents = 'none';
+    settingsStickyBack.classList.add('hidden');
+}
+
+adminStickyBack.addEventListener('click', () => { hideStickyBacks(); document.getElementById('admin-back-btn').click(); });
+settingsStickyBack.addEventListener('click', () => { hideStickyBacks(); document.getElementById('settings-back-btn').click(); });
+
+function updateStickyBack(view, stickyBtn) {
+    const header = view.querySelector('.admin-header');
+    if (!header || view.classList.contains('hidden')) { stickyBtn.style.opacity = '0'; stickyBtn.style.pointerEvents = 'none'; return; }
+    const rect = header.getBoundingClientRect();
+    const fadeStart = 60;
+    const fadeEnd = -10;
+    const progress = Math.max(0, Math.min(1, (fadeStart - rect.bottom) / (fadeStart - fadeEnd)));
+    stickyBtn.style.opacity = progress;
+    stickyBtn.style.pointerEvents = progress > 0.3 ? 'auto' : 'none';
+    stickyBtn.classList.remove('hidden');
+}
+
+window.addEventListener('scroll', () => {
+    if (!adminView.classList.contains('hidden')) updateStickyBack(adminView, adminStickyBack);
+    if (!settingsView.classList.contains('hidden')) updateStickyBack(settingsView, settingsStickyBack);
+}, { passive: true });
 
 // Admin create user validation
 const adminUsername = document.getElementById('admin-new-username');
@@ -1803,6 +1852,7 @@ function showSettingsPanel() {
     galleryView.classList.add('hidden');
     adminView.classList.add('hidden');
     settingsView.classList.remove('hidden');
+    settingsStickyBack.classList.add('hidden');
     sessionStorage.setItem('activeView', 'settings');
     updateNavActive('settings');
     resetSettingsForm();
@@ -1822,6 +1872,9 @@ document.getElementById('settings-back-btn').addEventListener('click', () => {
     sessionStorage.setItem('activeView', 'gallery');
     updateNavActive('gallery');
     renderBreadcrumb();
+    settingsStickyBack.style.opacity = '0';
+    settingsStickyBack.style.pointerEvents = 'none';
+    settingsStickyBack.classList.add('hidden');
 });
 
 // Theme picker
@@ -3061,6 +3114,7 @@ document.addEventListener('click', () => viewerMoreMenu.classList.add('hidden'))
 // Keyboard navigation
 document.addEventListener('keydown', (e) => {
     if (viewer.classList.contains('hidden')) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     if (e.key === 'ArrowLeft') { e.preventDefault(); navigateViewer(-1); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); navigateViewer(1); }
     else if (e.key === 'Escape') { e.preventDefault(); closeViewer(); }
@@ -4758,6 +4812,11 @@ function showRenameModal(title, currentName, onConfirm, opts = {}) {
     const handleConfirm = () => {
         const newName = renameInput.value.trim();
         if (!newName || newName === currentName) { cleanup(); return; }
+        if (newName.length > MAX_NAME_LENGTH) {
+            renameError.textContent = `Name must be ${MAX_NAME_LENGTH} characters or less.`;
+            renameError.classList.remove('hidden');
+            return;
+        }
         const err = onConfirm(newName);
         if (err) {
             renameError.textContent = err;
@@ -5002,7 +5061,7 @@ async function uploadFile(file, itemEl, targetFolderId) {
 
     // Strip extension only for files that will be remuxed (container changes to MP4).
     // Keep original extension for non-remuxable formats so downloads get the right type.
-    const baseName = canRemux ? (file.name.replace(/\.[^.]+$/, '') || file.name) : file.name;
+    const baseName = truncateName(canRemux ? (file.name.replace(/\.[^.]+$/, '') || file.name) : file.name);
     const uploadName = uniqueFileName(baseName, targetFolderId);
     let detectedCodecs = null;
     let fmp4Segments = null;
