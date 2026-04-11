@@ -1647,7 +1647,7 @@ async function loadAdminUsers() {
                 </div>
                 <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
                     <button class="btn" style="font-size:12px;padding:4px 10px" data-quota-uid="${escapeHtml(u.id)}" data-current-quota="${u.storage_quota}">Raise Quota</button>
-                    ${u.id === userId ? '<span style="font-size:12px;color:var(--text-dim)">You</span>' : '<button class="btn btn-danger" data-delete-uid="' + escapeHtml(u.id) + '" style="font-size:12px;padding:4px 10px">Delete</button>'}
+                    ${u.id === userId ? '<span style="font-size:12px;color:var(--text-dim);margin-left:4px">You</span>' : '<button class="btn btn-danger" data-delete-uid="' + escapeHtml(u.id) + '" style="font-size:12px;padding:4px 10px">Delete</button>'}
                 </div>
             </div>`;
         }).join('');
@@ -1684,6 +1684,7 @@ async function loadAdminUsers() {
                         const bytes = gbVal === 0 ? 0 : gbToBytes(gbVal);
                         await api('/api/admin/users/' + uid + '/quota', { method: 'PATCH', json: { storage_quota: bytes } });
                         loadAdminUsers();
+                        loadAdminStorage();
                     }
                 );
             });
