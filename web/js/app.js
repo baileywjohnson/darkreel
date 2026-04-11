@@ -3367,6 +3367,8 @@ document.addEventListener('drop', (e) => {
 
 // --- Touch drag-and-drop (mobile) ---
 let _touchDragState = null;
+let _lastTouchX = 0;
+let _lastTouchY = 0;
 
 function initTouchDrag(el, getData) {
     let timer = null;
@@ -3379,6 +3381,8 @@ function initTouchDrag(el, getData) {
         const touch = e.touches[0];
         startX = touch.clientX;
         startY = touch.clientY;
+        _lastTouchX = startX;
+        _lastTouchY = startY;
         timer = setTimeout(() => {
             timer = null;
             const data = getData();
@@ -3416,6 +3420,8 @@ function initTouchDrag(el, getData) {
         if (!_touchDragState) return;
         e.preventDefault();
         const touch = e.touches[0];
+        _lastTouchX = touch.clientX;
+        _lastTouchY = touch.clientY;
         _touchDragState.ghost.style.left = (touch.clientX - _touchDragState.ghost.offsetWidth / 2) + 'px';
         _touchDragState.ghost.style.top = (touch.clientY - _touchDragState.ghost.offsetHeight / 2) + 'px';
 
@@ -3497,11 +3503,14 @@ document.addEventListener('touchend', (e) => {
 document.addEventListener('touchcancel', (e) => {
     if (!_touchDragState) return;
 
-    // On iOS Firefox, touchcancel fires instead of touchend on long-press drag.
-    // Treat it as a drop if we have a valid target.
+    // Some mobile browsers (Firefox Android, iOS Firefox) fire touchcancel instead
+    // of touchend on long-press drag release. changedTouches may be empty, so fall
+    // back to the last known touch position tracked during touchmove.
     const touch = e.changedTouches?.[0];
-    if (touch) {
-        const target = findDropTarget(touch.clientX, touch.clientY);
+    const dropX = touch ? touch.clientX : _lastTouchX;
+    const dropY = touch ? touch.clientY : _lastTouchY;
+    {
+        const target = findDropTarget(dropX, dropY);
         document.querySelectorAll('.touch-drag-over').forEach(el => el.classList.remove('touch-drag-over'));
 
         if (target) {
