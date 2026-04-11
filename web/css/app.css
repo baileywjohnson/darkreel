@@ -540,7 +540,10 @@ main { padding-top: 0; position: relative; z-index: 1; }
     width: 100%;
     height: 100%;
     object-fit: cover;
+    -webkit-touch-callout: none;
+    pointer-events: none;
 }
+.gallery-item { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
 .gallery-item .thumb-fallback {
     width: 100%;
     height: 100%;

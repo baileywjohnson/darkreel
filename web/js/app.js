@@ -3390,7 +3390,9 @@ function initTouchDrag(el, getData) {
             timer = null;
             const data = getData();
             if (!data) return;
-            e.preventDefault();
+
+            // Lock touch handling to prevent browser from stealing the gesture
+            el.style.touchAction = 'none';
 
             // Create ghost
             const ghost = el.cloneNode(true);
@@ -3450,6 +3452,7 @@ function cleanupTouchDrag() {
     _touchDragState.ghost.remove();
     _touchDragState.sourceEl.classList.remove('dragging');
     _touchDragState.sourceEl.draggable = true;
+    _touchDragState.sourceEl.style.touchAction = '';
     _touchDragState = null;
     draggedItem = null;
     draggedFolder = null;
