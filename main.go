@@ -54,7 +54,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to create admin user: %v", err)
 		}
-		log.Printf("Admin user %q created", adminUser)
+		log.Printf("Admin user created")
 
 		// Write recovery code to a temp file instead of stderr to avoid
 		// it persisting in journald. The file is chmod 0600 and should
@@ -67,7 +67,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "  %s\n", recoveryCode)
 			fmt.Fprintf(os.Stderr, "========================================\n\n")
 		} else {
-			log.Printf("Recovery code written to %s — read and delete this file immediately", rcPath)
+			log.Printf("Recovery code written to data directory — read and delete the .recovery-code file immediately")
 		}
 	}
 
@@ -82,7 +82,7 @@ func main() {
 		for _, uid := range userIDs {
 			mediaIDs, err := db.ListMediaIDsByUser(database, uid)
 			if err != nil {
-				log.Printf("Warning: orphan cleanup skipped — failed to list media for user %s: %v", uid, err)
+				log.Printf("Warning: orphan cleanup skipped — failed to list media: %v", err)
 				allOK = false
 				break
 			}

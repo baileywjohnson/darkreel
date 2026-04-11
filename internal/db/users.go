@@ -24,7 +24,7 @@ func CreateUser(db *sql.DB, u *User) error {
 		isAdmin = 1
 	}
 	_, err := db.Exec(
-		`INSERT INTO users (id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, is_admin, storage_quota) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO users (id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, is_admin, storage_quota, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y', 'now'))`,
 		u.ID, u.Username, u.PasswordHash, u.AuthSalt, u.KDFSalt, u.EncryptedMK, u.RecoveryMK, isAdmin, u.StorageQuota,
 	)
 	return err

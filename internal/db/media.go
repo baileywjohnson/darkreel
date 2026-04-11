@@ -12,13 +12,13 @@ type MediaItem struct {
 	HashNonce     []byte
 	MetadataEnc   []byte // encrypted metadata blob (name, type, mime, size, dimensions, duration)
 	MetadataNonce []byte
-	CreatedAt     string // coarse timestamp (year-week) to limit metadata leakage
+	CreatedAt     string // coarse timestamp (year-only) to limit metadata leakage
 }
 
 func InsertMedia(db *sql.DB, m *MediaItem) error {
 	_, err := db.Exec(
-		`INSERT INTO media (id, user_id, chunk_count, size_bytes, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO media (id, user_id, chunk_count, size_bytes, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y', 'now'))`,
 		m.ID, m.UserID, m.ChunkCount, m.SizeBytes, m.FileKeyEnc, m.ThumbKeyEnc, m.HashNonce, m.MetadataEnc, m.MetadataNonce,
 	)
 	return err

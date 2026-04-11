@@ -142,7 +142,7 @@ function mergeInitSegments(segments) {
 
         // Extract sample_rate and channels from mp4a header
         const channels = (stsd.data[entryOff + 24] << 8) | stsd.data[entryOff + 25];
-        const sampleRate = (stsd.data[entryOff + 28] << 8) | stsd.data[entryOff + 29]; // 16.16 fixed-point, take integer part
+        const sampleRate = (stsd.data[entryOff + 32] << 8) | stsd.data[entryOff + 33]; // 16.16 fixed-point, take integer part
         const esds = mkEsds(sampleRate, channels);
 
         // Rebuild stsd with esds injected into mp4a
@@ -252,6 +252,37 @@ async function remuxToFMP4(data) {
             if (arr) for (const s of samples) arr.push(s);
         };
         mp4box.start();
+
+        // Apply edit list compensation to align track start times.
+        // MP4 files commonly have edit lists (elst) that handle AAC encoder
+        // priming delay and B-frame composition offsets. mp4box.js does NOT
+        // apply these when extracting samples, so without compensation the
+        // raw media timestamps cause audio/video desync — audio priming
+        // samples play at time 0 instead of being trimmed, shifting audio
+        // ahead of video. MOV files from iPhones typically don't need this
+        // because Apple's encoder produces pre-aligned streams.
+        for (const t of avTracks) {
+            const samples = trackSamples.get(t.id);
+            if (!samples || samples.length === 0 || !t.edits || t.edits.length === 0) continue;
+
+            // Find the first edit with a valid media_time (skip empty/dwell edits where media_time = -1)
+            const edit = t.edits.find(e => e.media_time >= 0);
+            if (!edit || edit.media_time === 0) continue;
+
+            const mediaTime = edit.media_time; // in track timescale
+
+            // Remove samples that end before the edit start point
+            // (these are encoder priming samples not intended for presentation)
+            while (samples.length > 0 && samples[0].dts + samples[0].duration <= mediaTime) {
+                samples.shift();
+            }
+
+            // Shift remaining samples so the edit start becomes time 0
+            for (const s of samples) {
+                s.dts -= mediaTime;
+                s.cts -= mediaTime;
+            }
+        }
 
         // Build codec strings
         const codecStrings = [];

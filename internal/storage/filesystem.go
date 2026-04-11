@@ -81,39 +81,58 @@ func (l *Layout) ReadChunk(userID, mediaID string, index int) ([]byte, error) {
 	return padded[4 : 4+realLen], nil
 }
 
-// ReadChunkStream reads an encrypted chunk, strips padding, and returns a reader.
+// ReadChunkStream reads an encrypted chunk, strips padding, and returns a
+// streaming reader. Only the 4-byte length prefix is read into memory;
+// the chunk data is streamed directly from the file handle.
 func (l *Layout) ReadChunkStream(userID, mediaID string, index int) (io.ReadCloser, int64, error) {
-	data, err := l.ReadChunk(userID, mediaID, index)
+	path := l.ChunkPath(userID, mediaID, index)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, err
 	}
-	return io.NopCloser(io.NewSectionReader(readerAt(data), 0, int64(len(data)))), int64(len(data)), nil
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(f, lenBuf[:]); err != nil {
+		f.Close()
+		return nil, 0, fmt.Errorf("read chunk length: %w", err)
+	}
+	realLen := int64(binary.BigEndian.Uint32(lenBuf[:]))
+	return struct {
+		io.Reader
+		io.Closer
+	}{io.LimitReader(f, realLen), f}, realLen, nil
 }
 
-// ReadChunkPadded reads the full padded chunk file (length prefix + data + padding).
-// Sent over the network so Content-Length reveals only the bucket size, not the real size.
-func (l *Layout) ReadChunkPadded(userID, mediaID string, index int) ([]byte, error) {
+// ReadChunkPaddedFile opens the full padded chunk file for streaming.
+// The caller is responsible for closing the returned file.
+// Content-Length reveals only the bucket size, not the real chunk size.
+func (l *Layout) ReadChunkPaddedFile(userID, mediaID string, index int) (*os.File, int64, error) {
 	path := l.ChunkPath(userID, mediaID, index)
-	return os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, 0, err
+	}
+	return f, info.Size(), nil
 }
 
-// ReadThumbnailPadded reads the full padded thumbnail file.
-func (l *Layout) ReadThumbnailPadded(userID, mediaID string) ([]byte, error) {
+// ReadThumbnailPaddedFile opens the full padded thumbnail file for streaming.
+// The caller is responsible for closing the returned file.
+func (l *Layout) ReadThumbnailPaddedFile(userID, mediaID string) (*os.File, int64, error) {
 	path := l.ThumbnailPath(userID, mediaID)
-	return os.ReadFile(path)
-}
-
-type readerAt []byte
-
-func (r readerAt) ReadAt(p []byte, off int64) (n int, err error) {
-	if off >= int64(len(r)) {
-		return 0, io.EOF
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, err
 	}
-	n = copy(p, r[off:])
-	if n < len(p) {
-		err = io.EOF
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, 0, err
 	}
-	return
+	return f, info.Size(), nil
 }
 
 // WriteThumbnail writes an encrypted thumbnail to disk, padded to a fixed size.

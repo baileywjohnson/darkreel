@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"net/http"
 	"sync"
@@ -88,7 +90,11 @@ func RateLimit(max int, window time.Duration) func(http.Handler) http.Handler {
 			if host, _, err := net.SplitHostPort(ip); err == nil {
 				ip = host
 			}
-			if !rl.allow(ip) {
+			// Hash IP to avoid storing plaintext addresses in memory
+			// where they could be recovered from a process memory dump.
+			h := sha256.Sum256([]byte(ip))
+			key := hex.EncodeToString(h[:16])
+			if !rl.allow(key) {
 				http.Error(w, "too many requests", http.StatusTooManyRequests)
 				return
 			}

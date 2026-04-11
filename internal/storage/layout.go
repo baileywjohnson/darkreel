@@ -1,11 +1,14 @@
 package storage
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/baileywjohnson/darkreel/internal/crypto"
+	"github.com/google/uuid"
 )
 
 // Layout manages the directory structure for encrypted media storage.
@@ -18,7 +21,15 @@ func NewLayout(baseDir string) *Layout {
 }
 
 // MediaDir returns the directory for a specific media item's chunks.
+// Defense-in-depth: validates IDs as UUIDs to prevent path traversal.
+// Upstream handlers already validate, but we verify at the storage layer too.
 func (l *Layout) MediaDir(userID, mediaID string) string {
+	if _, err := uuid.Parse(userID); err != nil {
+		return filepath.Join(l.BaseDir, "_invalid", "_invalid")
+	}
+	if _, err := uuid.Parse(mediaID); err != nil {
+		return filepath.Join(l.BaseDir, "_invalid", "_invalid")
+	}
 	return filepath.Join(l.BaseDir, userID, mediaID)
 }
 
@@ -110,14 +121,22 @@ func (l *Layout) IsMediaComplete(userID, mediaID string, chunkCount int) bool {
 
 // MediaChunkBytes returns the total raw (pre-padding) byte size of all chunks for a media item.
 // Used to backfill size_bytes for records where the server crashed before updating the DB.
+// Only reads the 4-byte length prefix from each chunk file instead of loading entire chunks.
 func (l *Layout) MediaChunkBytes(userID, mediaID string, chunkCount int) int {
 	total := 0
 	for i := 0; i < chunkCount; i++ {
-		data, err := l.ReadChunk(userID, mediaID, i)
+		path := l.ChunkPath(userID, mediaID, i)
+		f, err := os.Open(path)
 		if err != nil {
 			return 0 // incomplete — caller should handle
 		}
-		total += len(data)
+		var lenBuf [4]byte
+		_, err = io.ReadFull(f, lenBuf[:])
+		f.Close()
+		if err != nil {
+			return 0
+		}
+		total += int(binary.BigEndian.Uint32(lenBuf[:]))
 	}
 	return total
 }

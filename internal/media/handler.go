@@ -309,6 +309,15 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Enforce chunk count during the loop to prevent disk exhaustion
+		// from a client sending more chunks than declared in metadata.
+		if chunkIndex >= meta.ChunkCount {
+			part.Close()
+			cleanup()
+			http.Error(w, "too many chunks", http.StatusBadRequest)
+			return
+		}
+
 		chunkData, err := io.ReadAll(io.LimitReader(part, maxChunkSize))
 		if err != nil {
 			cleanup()
@@ -388,19 +397,21 @@ func (h *Handler) GetChunk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send the full padded chunk so Content-Length reveals only the bucket
+	// Stream the full padded chunk so Content-Length reveals only the bucket
 	// size (1/2/4/8/16 MB), not the real encrypted chunk size. The client
 	// reads the 4-byte length prefix and strips the padding.
-	data, err := h.Storage.ReadChunkPadded(userID, mediaID, index)
+	// Streamed directly from disk to avoid buffering entire chunks in memory.
+	f, size, err := h.Storage.ReadChunkPaddedFile(userID, mediaID, index)
 	if err != nil {
 		http.Error(w, "chunk not found", http.StatusNotFound)
 		return
 	}
+	defer f.Close()
 
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	w.Write(data)
+	io.Copy(w, f)
 }
 
 func (h *Handler) GetThumbnail(w http.ResponseWriter, r *http.Request) {
@@ -416,18 +427,20 @@ func (h *Handler) GetThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send the full padded thumbnail so Content-Length is always the fixed
+	// Stream the full padded thumbnail so Content-Length is always the fixed
 	// padded size (256 KB), preventing thumbnail size fingerprinting.
-	data, err := h.Storage.ReadThumbnailPadded(userID, mediaID)
+	// Streamed directly from disk to avoid buffering in memory.
+	f, size, err := h.Storage.ReadThumbnailPaddedFile(userID, mediaID)
 	if err != nil {
 		http.Error(w, "thumbnail not found", http.StatusNotFound)
 		return
 	}
+	defer f.Close()
 
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	w.Write(data)
+	io.Copy(w, f)
 }
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -450,7 +463,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Storage.RemoveMedia(userID, mediaID); err != nil {
-		log.Printf("Warning: failed to remove storage for %s/%s: %v", userID, mediaID, err)
+		log.Printf("Warning: failed to remove media storage: %v", err)
 		return
 	}
 
@@ -477,7 +490,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < item.ChunkCount; i++ {
 		rc, _, err := h.Storage.ReadChunkStream(userID, mediaID, i)
 		if err != nil {
-			log.Printf("Warning: download truncated for %s/%s at chunk %d/%d: %v", userID, mediaID, i, item.ChunkCount, err)
+			log.Printf("Warning: download truncated at chunk %d/%d: %v", i, item.ChunkCount, err)
 			return // connection already started, can't send error
 		}
 		io.Copy(w, rc)

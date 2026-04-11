@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	jwtSecret   []byte
-	jwtSecretMu sync.RWMutex
+	jwtSecret []byte
+	jwtOnce   sync.Once
 )
 
 const tokenExpiry = 24 * time.Hour
@@ -25,29 +25,27 @@ type Claims struct {
 }
 
 // initSecret generates a random JWT secret if one hasn't been set.
+// Uses sync.Once to eliminate the race between SetSecret and auto-generation.
 func initSecret() {
-	jwtSecretMu.Lock()
-	defer jwtSecretMu.Unlock()
-	if jwtSecret != nil {
-		return
-	}
-	jwtSecret = make([]byte, 64)
-	if _, err := rand.Read(jwtSecret); err != nil {
-		panic("failed to generate JWT secret: " + err.Error())
-	}
+	jwtOnce.Do(func() {
+		jwtSecret = make([]byte, 64)
+		if _, err := rand.Read(jwtSecret); err != nil {
+			panic("failed to generate JWT secret: " + err.Error())
+		}
+	})
 }
 
 // SetSecret allows setting a persistent JWT secret (e.g., from config).
-// Must be called before any token operations.
+// Must be called before any token operations. If called after initSecret
+// has already auto-generated a secret, the provided secret is ignored.
 func SetSecret(secret []byte) {
-	jwtSecretMu.Lock()
-	defer jwtSecretMu.Unlock()
-	jwtSecret = secret
+	jwtOnce.Do(func() {
+		jwtSecret = make([]byte, len(secret))
+		copy(jwtSecret, secret)
+	})
 }
 
 func getSecret() []byte {
-	jwtSecretMu.RLock()
-	defer jwtSecretMu.RUnlock()
 	return jwtSecret
 }
 

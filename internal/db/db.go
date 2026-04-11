@@ -22,13 +22,13 @@ func Open(dataDir string) (*sql.DB, error) {
 	}
 
 	dbPath := filepath.Join(dataDir, "darkreel.db")
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON&_secure_delete=ON")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(2)
 
 	if err := migrate(db); err != nil {
 		db.Close()
@@ -62,7 +62,7 @@ func migrate(db *sql.DB) error {
 			encrypted_mk  BLOB NOT NULL,
 			recovery_mk   BLOB,
 			is_admin      INTEGER NOT NULL DEFAULT 0,
-			created_at    TEXT DEFAULT (strftime('%Y-%W', 'now'))
+			created_at    TEXT DEFAULT (strftime('%Y', 'now'))
 		);
 
 		CREATE TABLE IF NOT EXISTS user_data (

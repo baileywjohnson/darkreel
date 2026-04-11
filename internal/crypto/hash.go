@@ -101,10 +101,10 @@ func buildPNGChunk(chunkType string, chunkData []byte) []byte {
 	return buf
 }
 
-// crc32PNG computes the CRC32 used by PNG (same as zlib/IEEE).
-func crc32PNG(data []byte) uint32 {
-	// Using the standard CRC-32/ISO-HDLC polynomial
-	var table [256]uint32
+// crc32Table is precomputed for the standard CRC-32/ISO-HDLC polynomial.
+var crc32Table [256]uint32
+
+func init() {
 	for i := 0; i < 256; i++ {
 		c := uint32(i)
 		for j := 0; j < 8; j++ {
@@ -114,11 +114,15 @@ func crc32PNG(data []byte) uint32 {
 				c >>= 1
 			}
 		}
-		table[i] = c
+		crc32Table[i] = c
 	}
+}
+
+// crc32PNG computes the CRC32 used by PNG (same as zlib/IEEE).
+func crc32PNG(data []byte) uint32 {
 	crc := uint32(0xFFFFFFFF)
 	for _, b := range data {
-		crc = table[byte(crc)^b] ^ (crc >> 8)
+		crc = crc32Table[byte(crc)^b] ^ (crc >> 8)
 	}
 	return crc ^ 0xFFFFFFFF
 }

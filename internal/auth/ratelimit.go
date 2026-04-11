@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"sync"
 	"time"
 )
@@ -49,13 +51,22 @@ func (al *AccountLimiter) cleanup() {
 	}
 }
 
+// hashUsername returns a hex-encoded SHA-256 hash of the username.
+// Avoids storing plaintext usernames in memory where they could be
+// recovered from a process memory dump.
+func hashUsername(username string) string {
+	h := sha256.Sum256([]byte(username))
+	return hex.EncodeToString(h[:16]) // 128-bit prefix is sufficient for bucketing
+}
+
 // Allow returns true if the username has not exceeded its rate limit.
 func (al *AccountLimiter) Allow(username string) bool {
 	al.mu.Lock()
 	defer al.mu.Unlock()
 
+	key := hashUsername(username)
 	now := time.Now()
-	v, ok := al.visitors[username]
+	v, ok := al.visitors[key]
 	if !ok || now.After(v.resetAt) {
 		if len(al.visitors) >= accountMaxVisitors {
 			// First pass: evict expired entries
@@ -82,7 +93,7 @@ func (al *AccountLimiter) Allow(username string) bool {
 				}
 			}
 		}
-		al.visitors[username] = &accountVisitor{count: 1, resetAt: now.Add(al.window)}
+		al.visitors[key] = &accountVisitor{count: 1, resetAt: now.Add(al.window)}
 		return true
 	}
 	v.count++

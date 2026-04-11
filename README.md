@@ -42,7 +42,7 @@ data/
       thumb.enc    [256 KB]        # encrypted thumbnail
 ```
 
-Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded to 1, 2, 4, 8, or 16 MB with random data. Upload dates are coarsened to year + week number. An attacker with root on your server sees uniform blobs with no meaningful metadata.
+Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded to 1, 2, 4, 8, or 16 MB with random data. Upload dates are coarsened to year only. An attacker with root on your server sees uniform blobs with no meaningful metadata.
 
 | Data | Visible to server? |
 |------|--------------------|
@@ -56,7 +56,7 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 | Usernames | yes |
 | File count per user | yes (database row count) |
 | Approximate total storage | yes (quantized to 256 KB buckets, padding obscures per-file) |
-| Upload timestamps | year + week only (coarsened) |
+| Upload timestamps | year only (coarsened) |
 
 ## Features
 
@@ -165,7 +165,7 @@ These are deliberate:
 
 - **Chunk padding wastes disk space and bandwidth.** A 3 MB file becomes 4 MB on disk and over the wire. A 5 MB file becomes 8 MB. Thumbnails are always 256 KB regardless of actual size. This is the cost of preventing size fingerprinting — if an observer can correlate chunk sizes to known files, encryption is weakened.
 
-- **Timestamps are coarsened.** Upload dates are stored as year + week only. Precise timestamps reveal usage patterns. That precision is deliberately discarded.
+- **Timestamps are coarsened.** Upload dates are stored as year only. Precise timestamps reveal usage patterns. That precision is deliberately discarded.
 
 - **No server-side thumbnails.** The server can't see your files, so it can't generate thumbnails. The browser encrypts them before upload with a separate per-file key.
 
@@ -440,6 +440,11 @@ The setup script handles all of this. If deploying manually:
 - Recovery code rotation - recovery code is rotated on every password change; old codes are immediately invalidated
 - Signed auto-updates - auto-updater refuses to install binaries without a valid Ed25519 signature (hard failure on missing signing key)
 - Caddy access log control - setup script offers to disable Caddy access logs for privacy (client IPs and request paths are not logged)
+- SQLite secure deletion - `PRAGMA secure_delete=ON` zeroes deleted database pages before reuse, preventing forensic recovery of deleted records from the database file and WAL journal
+- Hashed rate-limiter identifiers - IP addresses and usernames are SHA-256 hashed before storage in rate limiters, so a process memory dump cannot reveal plaintext identifiers
+- Privacy-safe logging - server logs contain no usernames, user IDs, media IDs, IP addresses, or file paths. Only generic operational messages are logged
+- Storage-layer path validation - media directory paths are validated as UUIDs at the storage layer (defense-in-depth against path traversal, in addition to handler-level validation)
+- Upload chunk count enforcement - the server rejects excess chunks immediately during the upload loop, preventing disk exhaustion from clients sending more chunks than declared
 
 ### Session persistence
 
