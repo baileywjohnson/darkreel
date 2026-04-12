@@ -136,10 +136,13 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 const (
-	maxThumbnailSize = 256 * 1024 // must match storage.paddedThumbSize to prevent truncation
-	maxChunkSize     = 20 << 20  // 20 MB (large fMP4 segments + GCM overhead)
-	maxChunkCount    = 50000     // ~50 GB at 1MB chunks
-	maxRequestSize   = 100 << 30 // 100 GB hard limit
+	maxThumbnailSize   = 256 * 1024 // must match storage.paddedThumbSize to prevent truncation
+	maxChunkSize       = 20 << 20   // 20 MB (large fMP4 segments + GCM overhead)
+	maxChunkCount      = 50000      // ~50 GB at 1MB chunks
+	maxRequestSize     = 100 << 30  // 100 GB hard limit
+	maxKeyEncLen       = 128        // generous headroom over expected 60 bytes
+	maxNonceLen        = 64         // generous headroom over expected 12-32 bytes
+	maxMetadataEncLen  = 65536      // 64 KB
 )
 
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
@@ -220,9 +223,6 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	// file_key_enc / thumb_key_enc: AES-256-GCM(32-byte key) = 12 nonce + 32 ct + 16 tag = 60 bytes
 	// hash_nonce: 32 bytes, metadata_nonce: 12 bytes (GCM nonce)
 	// metadata_enc: encrypted JSON (filename, type, dims, etc.) — cap at 64 KB
-	const maxKeyEncLen = 128       // generous headroom over expected 60 bytes
-	const maxNonceLen = 64         // generous headroom over expected 12-32 bytes
-	const maxMetadataEncLen = 65536 // 64 KB
 	if len(fileKeyBytes) > maxKeyEncLen || len(thumbKeyBytes) > maxKeyEncLen {
 		http.Error(w, "encrypted key too large", http.StatusBadRequest)
 		return
@@ -525,6 +525,14 @@ func (h *Handler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(encBytes) == 0 || len(nonceBytes) == 0 {
 		http.Error(w, "invalid metadata", http.StatusBadRequest)
+		return
+	}
+	if len(encBytes) > maxMetadataEncLen {
+		http.Error(w, "encrypted metadata too large", http.StatusBadRequest)
+		return
+	}
+	if len(nonceBytes) > maxNonceLen {
+		http.Error(w, "nonce too large", http.StatusBadRequest)
 		return
 	}
 

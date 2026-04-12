@@ -17,6 +17,8 @@ type Shredder struct {
 	layout *Layout
 	queue  chan string // directory paths to shred
 	wg     sync.WaitGroup
+	mu     sync.Mutex
+	closed bool
 }
 
 // NewShredder starts a pool of background workers that securely delete
@@ -46,16 +48,28 @@ func (s *Shredder) worker() {
 }
 
 // QueueMedia enqueues a media directory for background shredding.
-func (s *Shredder) QueueMedia(userID, mediaID string) {
+// Returns false if the shredder has been shut down (the caller should
+// fall back to synchronous removal via RemoveMedia).
+func (s *Shredder) QueueMedia(userID, mediaID string) bool {
 	dir := s.layout.MediaDir(userID, mediaID)
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return false
+	}
 	s.wg.Add(1)
+	s.mu.Unlock()
 	s.queue <- dir
+	return true
 }
 
 // Shutdown closes the queue and blocks until all in-flight shred
 // operations complete. Call this during graceful server shutdown.
 func (s *Shredder) Shutdown() {
+	s.mu.Lock()
+	s.closed = true
 	close(s.queue)
+	s.mu.Unlock()
 	s.wg.Wait()
 }
 

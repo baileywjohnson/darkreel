@@ -46,7 +46,7 @@ func isValidUsername(u string) bool {
 
 // MediaShredder queues media directories for background secure deletion.
 type MediaShredder interface {
-	QueueMedia(userID, mediaID string)
+	QueueMedia(userID, mediaID string) bool
 }
 
 type Handler struct {

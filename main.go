@@ -76,16 +76,20 @@ func main() {
 	// Run startup integrity checks concurrently. Each operates on independent
 	// data sets: orphan cleanup shreds dirs NOT in DB, incomplete upload cleanup
 	// shreds dirs IN DB with missing files, size backfill only reads files.
+	// Query media summaries once and share across goroutines (read-only).
+	summaries, err := db.ListAllMediaSummaries(database)
+	if err != nil {
+		log.Printf("Warning: startup integrity checks skipped — failed to list media: %v", err)
+		summaries = nil
+	}
+
 	var startupWg sync.WaitGroup
 	startupWg.Add(3)
 
 	// 1. Clean up orphaned data directories not referenced in DB.
 	go func() {
 		defer startupWg.Done()
-		// Single query to get all valid user_id/media_id pairs (avoids N+1)
-		summaries, err := db.ListAllMediaSummaries(database)
-		if err != nil {
-			log.Printf("Warning: orphan cleanup skipped — failed to list media: %v", err)
+		if summaries == nil {
 			return
 		}
 		validPaths := make(map[string]bool, len(summaries))
@@ -103,9 +107,7 @@ func main() {
 	// Uses a worker pool for parallel stat() checks.
 	go func() {
 		defer startupWg.Done()
-		summaries, err := db.ListAllMediaSummaries(database)
-		if err != nil {
-			log.Printf("Warning: incomplete upload cleanup skipped — failed to list media: %v", err)
+		if summaries == nil {
 			return
 		}
 
