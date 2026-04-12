@@ -2685,7 +2685,7 @@ async function renderGalleryItems() {
             const ph = document.createElement('div');
             ph.className = 'gallery-item';
             ph.dataset.pendingUpload = id;
-            ph.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span style="font-size:12px;color:var(--text-dim)">' + escapeHtml(upload.name) + '</span></div>';
+            ph.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span class="upload-tile-status" style="font-size:12px;color:var(--text-dim)">' + escapeHtml(upload.name) + '</span><div class="upload-tile-progress"><div class="upload-tile-fill"' + (upload.progress ? ' style="width:' + upload.progress + '%"' : '') + '></div></div></div>';
             fragment.appendChild(ph);
         }
     }
@@ -3646,7 +3646,7 @@ async function handleDropUpload(files, targetFolderId) {
             const placeholder = document.createElement('div');
             placeholder.className = 'gallery-item';
             placeholder.dataset.pendingUpload = uploadId;
-            placeholder.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span class="upload-tile-status" style="font-size:12px;color:var(--text-dim)">' + escapeHtml(file.name) + '</span></div>';
+            placeholder.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px"><div class="spinner"></div><span class="upload-tile-status" style="font-size:12px;color:var(--text-dim)">' + escapeHtml(file.name) + '</span><div class="upload-tile-progress"><div class="upload-tile-fill"></div></div></div>';
             galleryGrid.appendChild(placeholder);
         }
         addRefreshButton();
@@ -3656,14 +3656,24 @@ async function handleDropUpload(files, targetFolderId) {
             const dummyEl = createUploadItem(file.name);
             dummyEl.style.display = 'none';
             document.body.appendChild(dummyEl);
-            // Observe status changes on the hidden element and mirror to visible tile
+            // Observe status and progress changes on the hidden element and mirror to visible tile
             const observer = new MutationObserver(() => {
+                const tile = document.querySelector(`[data-pending-upload="${uploadId}"]`);
+                if (!tile) return;
                 const status = dummyEl.querySelector('.status')?.textContent;
-                if (!status) return;
-                const tile = document.querySelector(`[data-pending-upload="${uploadId}"] .upload-tile-status`);
-                if (tile) tile.textContent = status;
+                if (status) {
+                    const statusEl = tile.querySelector('.upload-tile-status');
+                    if (statusEl) statusEl.textContent = status;
+                }
+                const srcFill = dummyEl.querySelector('.fill');
+                const dstFill = tile.querySelector('.upload-tile-fill');
+                if (srcFill && dstFill) {
+                    dstFill.style.width = srcFill.style.width;
+                    const entry = pendingUploads.get(uploadId);
+                    if (entry) entry.progress = parseFloat(srcFill.style.width) || 0;
+                }
             });
-            observer.observe(dummyEl, { childList: true, subtree: true, characterData: true });
+            observer.observe(dummyEl, { childList: true, subtree: true, characterData: true, attributes: true });
             await uploadFile(file, dummyEl, targetFolderId);
             observer.disconnect();
             dummyEl.remove();
@@ -5277,17 +5287,28 @@ async function uploadFile(file, itemEl, targetFolderId) {
     formData.append('thumbnail', new Blob([encThumb]));
     for (let i = 0; i < encChunks.length; i++) {
         formData.append(`chunk_${i}`, new Blob([encChunks[i]]));
-        setUploadProgress(itemEl, 50 + Math.round(((i + 1) / encChunks.length) * 50));
     }
 
-    const res = await fetch('/api/media/upload', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData,
+    await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/media/upload');
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+                setUploadProgress(itemEl, 50 + Math.round((e.loaded / e.total) * 50));
+            }
+        };
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                setUploadProgress(itemEl, 100);
+                resolve();
+            } else {
+                reject(new Error(xhr.responseText));
+            }
+        };
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.send(formData);
     });
-
-    if (!res.ok) throw new Error(await res.text());
-    setUploadProgress(itemEl, 100);
 }
 
 function getVideoInfo(file) {

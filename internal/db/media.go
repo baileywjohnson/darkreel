@@ -9,7 +9,7 @@ type MediaItem struct {
 	ID            string
 	UserID        string
 	ChunkCount    int
-	SizeBytes     int    // total raw upload size in bytes (for quota tracking)
+	SizeBytes     int64  // total raw upload size in bytes (for quota tracking)
 	FileKeyEnc    []byte // file key encrypted with master key
 	ThumbKeyEnc   []byte // thumbnail key encrypted with master key
 	HashNonce     []byte
@@ -121,17 +121,17 @@ func GetUserChunkCount(db *sql.DB, userID string) (int, error) {
 }
 
 // GetUserStorageBytes returns the total stored bytes for a user.
-func GetUserStorageBytes(db *sql.DB, userID string) (int, error) {
-	var total int
+func GetUserStorageBytes(db *sql.DB, userID string) (int64, error) {
+	var total int64
 	err := db.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM media WHERE user_id = ?`, userID).Scan(&total)
 	return total, err
 }
 
 // QuotaInfo holds the result of a combined quota pre-check query.
 type QuotaInfo struct {
-	UserQuota    int // per-user override (0 = use default)
-	DefaultQuota int // server default from settings (0 = not set)
-	UsedBytes    int // current total bytes for the user
+	UserQuota    int64 // per-user override (0 = use default)
+	DefaultQuota int64 // server default from settings (0 = not set)
+	UsedBytes    int64 // current total bytes for the user
 }
 
 // GetQuotaInfo fetches user quota override, server default quota, and current
@@ -150,13 +150,13 @@ func GetQuotaInfo(database *sql.DB, userID string) (*QuotaInfo, error) {
 		return nil, err
 	}
 	if defaultStr.Valid {
-		qi.DefaultQuota, _ = strconv.Atoi(defaultStr.String)
+		qi.DefaultQuota, _ = strconv.ParseInt(defaultStr.String, 10, 64)
 	}
 	return qi, nil
 }
 
 // UpdateMediaSize sets the actual byte size after upload completes.
-func UpdateMediaSize(db *sql.DB, id string, sizeBytes int) error {
+func UpdateMediaSize(db *sql.DB, id string, sizeBytes int64) error {
 	_, err := db.Exec(`UPDATE media SET size_bytes = ? WHERE id = ?`, sizeBytes, id)
 	return err
 }
@@ -164,14 +164,14 @@ func UpdateMediaSize(db *sql.DB, id string, sizeBytes int) error {
 // UpdateMediaSizeWithQuotaCheck atomically verifies that adding sizeBytes
 // for userID would not exceed quota, then updates the media record.
 // Returns (true, nil) on success, (false, nil) if quota would be exceeded.
-func UpdateMediaSizeWithQuotaCheck(database *sql.DB, id, userID string, sizeBytes, quota int) (bool, error) {
+func UpdateMediaSizeWithQuotaCheck(database *sql.DB, id, userID string, sizeBytes, quota int64) (bool, error) {
 	tx, err := database.Begin()
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
 
-	var currentBytes int
+	var currentBytes int64
 	if err := tx.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM media WHERE user_id = ?`, userID).Scan(&currentBytes); err != nil {
 		return false, err
 	}

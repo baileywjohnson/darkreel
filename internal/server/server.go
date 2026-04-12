@@ -29,7 +29,7 @@ type Server struct {
 	PersistSession    bool
 	AllowRegistration bool
 	TrustProxy        bool // trust X-Forwarded-For/X-Real-IP (only enable behind a reverse proxy)
-	MaxStorageBytes   int  // per-user storage quota in bytes (0 = unlimited)
+	MaxStorageBytes   int64 // per-user storage quota in bytes (0 = unlimited)
 	httpServer        *http.Server
 }
 

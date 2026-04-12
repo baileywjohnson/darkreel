@@ -186,15 +186,15 @@ func main() {
 	// Start session cleanup goroutine (removes expired sessions every minute)
 	auth.Sessions.StartCleanup()
 
-	maxBytes := 0 // 0 = unlimited
+	var maxBytes int64 // 0 = unlimited
 	if v := os.Getenv("MAX_STORAGE_GB"); v != "" {
 		if gb, err := strconv.ParseFloat(v, 64); err == nil && gb > 0 {
-			maxBytes = int(gb * 1024 * 1024 * 1024)
+			maxBytes = int64(gb * 1024 * 1024 * 1024)
 		}
 	} else if v := os.Getenv("MAX_STORAGE_CHUNKS"); v != "" {
 		// Legacy: convert chunk count to bytes (1 MB per chunk estimate).
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			maxBytes = n * 1048576
+			maxBytes = int64(n) * 1048576
 		}
 	}
 

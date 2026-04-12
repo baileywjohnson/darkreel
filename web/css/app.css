@@ -640,6 +640,17 @@ main { padding-top: 0; position: relative; z-index: 1; }
     animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.upload-tile-progress {
+    width: 60%; height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.upload-tile-fill {
+    height: 100%; width: 0%;
+    background: var(--accent);
+    transition: width 0.2s;
+}
 .spinner-sm { width: 18px; height: 18px; border-width: 2px; margin: 0 auto; }
 
 /* Pagination */

@@ -36,12 +36,12 @@ func (h *Handler) getDiskInfo() (uint64, uint64) {
 
 // maxAllocatableBytes returns the maximum bytes that can be allocated
 // based on available disk space, after subtracting the reserved buffer.
-func (h *Handler) maxAllocatableBytes() int {
+func (h *Handler) maxAllocatableBytes() int64 {
 	_, avail := h.getDiskInfo()
 	if avail <= reservedBytes {
 		return 0
 	}
-	return int(avail - reservedBytes)
+	return int64(avail - reservedBytes)
 }
 
 // AdminMiddleware returns middleware that verifies admin status from the database
@@ -76,8 +76,8 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		ID           string `json:"id"`
 		Username     string `json:"username"`
 		IsAdmin      bool   `json:"is_admin"`
-		StorageQuota int    `json:"storage_quota"`
-		UsedBytes    int    `json:"used_bytes"`
+		StorageQuota int64  `json:"storage_quota"`
+		UsedBytes    int64  `json:"used_bytes"`
 		CreatedAt    string `json:"created_at"`
 	}
 
@@ -108,7 +108,7 @@ func (h *Handler) SetUserQuota(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 	var req struct {
-		StorageQuota int `json:"storage_quota"`
+		StorageQuota int64 `json:"storage_quota"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -121,9 +121,9 @@ func (h *Handler) SetUserQuota(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get server default quota
-	defaultQuota := 0
+	var defaultQuota int64
 	if val, err := db.GetSetting(h.DB, "default_storage_quota"); err == nil {
-		defaultQuota, _ = strconv.Atoi(val)
+		defaultQuota, _ = strconv.ParseInt(val, 10, 64)
 	}
 
 	// Get the user's current effective quota.
@@ -177,9 +177,9 @@ func (h *Handler) GetStorageStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defaultQuota := 0
+	var defaultQuota int64
 	if val, err := db.GetSetting(h.DB, "default_storage_quota"); err == nil {
-		defaultQuota, _ = strconv.Atoi(val)
+		defaultQuota, _ = strconv.ParseInt(val, 10, 64)
 	}
 
 	totalAllocated, _ := db.GetTotalAllocatedQuota(h.DB, defaultQuota)
@@ -203,7 +203,7 @@ func (h *Handler) GetStorageStats(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) SetDefaultQuota(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 	var req struct {
-		DefaultStorageQuota int `json:"default_storage_quota"`
+		DefaultStorageQuota int64 `json:"default_storage_quota"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -227,7 +227,7 @@ func (h *Handler) SetDefaultQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.SetSetting(h.DB, "default_storage_quota", strconv.Itoa(req.DefaultStorageQuota)); err != nil {
+	if err := db.SetSetting(h.DB, "default_storage_quota", strconv.FormatInt(req.DefaultStorageQuota, 10)); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

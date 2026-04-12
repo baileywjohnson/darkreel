@@ -27,8 +27,8 @@ func Open(dataDir string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(4) // match MaxOpenConns to avoid connection churn
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(8) // match MaxOpenConns to avoid connection churn
 
 	if err := migrate(db); err != nil {
 		db.Close()

@@ -132,8 +132,8 @@ func (l *Layout) IsMediaComplete(userID, mediaID string, chunkCount int) bool {
 // MediaChunkBytes returns the total raw (pre-padding) byte size of all chunks for a media item.
 // Used to backfill size_bytes for records where the server crashed before updating the DB.
 // Only reads the 4-byte length prefix from each chunk file instead of loading entire chunks.
-func (l *Layout) MediaChunkBytes(userID, mediaID string, chunkCount int) int {
-	total := 0
+func (l *Layout) MediaChunkBytes(userID, mediaID string, chunkCount int) int64 {
+	var total int64
 	for i := 0; i < chunkCount; i++ {
 		path := l.ChunkPath(userID, mediaID, i)
 		f, err := os.Open(path)
@@ -146,7 +146,7 @@ func (l *Layout) MediaChunkBytes(userID, mediaID string, chunkCount int) int {
 		if err != nil {
 			return 0
 		}
-		total += int(binary.BigEndian.Uint32(lenBuf[:]))
+		total += int64(binary.BigEndian.Uint32(lenBuf[:]))
 	}
 	return total
 }

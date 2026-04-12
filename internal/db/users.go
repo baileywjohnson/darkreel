@@ -14,7 +14,7 @@ type User struct {
 	EncryptedMK  []byte // master key encrypted with KDF-derived key
 	RecoveryMK   []byte // master key encrypted with recovery code
 	IsAdmin      bool
-	StorageQuota int // per-user storage quota in bytes (0 = use server default)
+	StorageQuota int64 // per-user storage quota in bytes (0 = use server default)
 	CreatedAt    string
 }
 
@@ -34,7 +34,7 @@ func CreateUser(db *sql.DB, u *User) error {
 type UserWithUsage struct {
 	User
 	ChunkCount int
-	UsedBytes  int
+	UsedBytes  int64
 }
 
 func ListUsersWithUsage(db *sql.DB) ([]UserWithUsage, error) {
@@ -208,22 +208,22 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 
 // UpdateUserQuota sets a per-user storage quota override (in bytes).
 // Quota must be >= current server default or 0 (meaning use server default).
-func UpdateUserQuota(db *sql.DB, userID string, quota int) error {
+func UpdateUserQuota(db *sql.DB, userID string, quota int64) error {
 	_, err := db.Exec(`UPDATE users SET storage_quota = ? WHERE id = ?`, quota, userID)
 	return err
 }
 
 // GetTotalStorageBytes returns the total stored bytes across all users.
-func GetTotalStorageBytes(db *sql.DB) (int, error) {
-	var total int
+func GetTotalStorageBytes(db *sql.DB) (int64, error) {
+	var total int64
 	err := db.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM media`).Scan(&total)
 	return total, err
 }
 
 // GetTotalAllocatedQuota returns the sum of effective quotas (in bytes) across all users.
 // Users with a per-user override use that value; others use the provided default.
-func GetTotalAllocatedQuota(db *sql.DB, defaultQuota int) (int, error) {
-	var total int
+func GetTotalAllocatedQuota(db *sql.DB, defaultQuota int64) (int64, error) {
+	var total int64
 	err := db.QueryRow(
 		`SELECT COALESCE(SUM(CASE WHEN storage_quota > 0 THEN storage_quota ELSE ? END), 0) FROM users`,
 		defaultQuota,

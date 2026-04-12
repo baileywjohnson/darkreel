@@ -1,6 +1,7 @@
 package media
 
 import (
+	crand "crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -22,7 +23,7 @@ type Handler struct {
 	DB              *sql.DB
 	Storage         *storage.Layout
 	Shredder        *storage.Shredder // async secure file deletion
-	MaxStorageBytes int               // per-user storage quota in bytes (0 = unlimited)
+	MaxStorageBytes int64              // per-user storage quota in bytes (0 = unlimited)
 
 	uploadMu   sync.Mutex
 	uploadSems map[string]chan struct{} // per-user upload semaphores
@@ -67,7 +68,7 @@ func (h *Handler) QuotaCheck(w http.ResponseWriter, r *http.Request) {
 
 	quota := h.MaxStorageBytes
 	if val, err := db.GetSetting(h.DB, "default_storage_quota"); err == nil {
-		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+		if n, err := strconv.ParseInt(val, 10, 64); err == nil && n > 0 {
 			quota = n
 		}
 	}
@@ -82,7 +83,7 @@ func (h *Handler) QuotaCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]int{"quota": quota, "used": used})
+	json.NewEncoder(w).Encode(map[string]int64{"quota": quota, "used": used})
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -299,10 +300,15 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "second part must be thumbnail", http.StatusBadRequest)
 		return
 	}
-	thumbData, err := io.ReadAll(io.LimitReader(part, maxThumbnailSize))
+	thumbData, err := io.ReadAll(io.LimitReader(part, maxThumbnailSize+1))
 	if err != nil {
 		cleanup()
 		http.Error(w, "failed to read thumbnail", http.StatusBadRequest)
+		return
+	}
+	if int64(len(thumbData)) > maxThumbnailSize {
+		cleanup()
+		http.Error(w, "thumbnail exceeds maximum size", http.StatusBadRequest)
 		return
 	}
 	part.Close()
@@ -316,7 +322,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	// Stream chunk parts directly to disk, tracking total bytes for quota enforcement.
 	// Each chunk is streamed without buffering the entire chunk in memory.
 	chunkIndex := 0
-	totalBytes := 0
+	var totalBytes int64
 	for {
 		part, err = mr.NextPart()
 		if err == io.EOF {
@@ -351,7 +357,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		totalBytes += n
+		totalBytes += int64(n)
 		chunkIndex++
 	}
 
@@ -584,7 +590,7 @@ func (h *Handler) SaveFolders(w http.ResponseWriter, r *http.Request) {
 }
 
 // padFolderTree pads encrypted folder tree data to a power-of-2 KB bucket.
-// Format: [4 bytes big-endian real length][data][zero padding]
+// Format: [4 bytes big-endian real length][data][random padding]
 func padFolderTree(data []byte) []byte {
 	bucket := 1024 // 1 KB minimum
 	needed := 4 + len(data)
@@ -597,6 +603,11 @@ func padFolderTree(data []byte) []byte {
 	padded[2] = byte(len(data) >> 8)
 	padded[3] = byte(len(data))
 	copy(padded[4:], data)
+	// Fill padding with random bytes so a DB-level attacker cannot distinguish
+	// padding from encrypted data and infer the exact folder tree size.
+	if padStart := 4 + len(data); padStart < bucket {
+		crand.Read(padded[padStart:])
+	}
 	return padded
 }
 
