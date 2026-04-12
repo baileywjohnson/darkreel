@@ -23,6 +23,7 @@ import (
 type Server struct {
 	DB                *sql.DB
 	Storage           *storage.Layout
+	Shredder          *storage.Shredder // background secure file deletion
 	WebFS             embed.FS
 	Addr              string
 	PersistSession    bool
@@ -75,8 +76,8 @@ func (s *Server) routes() chi.Router {
 	// Defends against distributed brute-force even when per-IP limits are bypassed.
 	accountLimiter := auth.NewAccountLimiter(10, 15*time.Minute)
 
-	authHandler := &auth.Handler{DB: s.DB, Storage: s.Storage, AccountLimiter: accountLimiter, DataDir: s.Storage.BaseDir}
-	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage, MaxStorageBytes: s.MaxStorageBytes}
+	authHandler := &auth.Handler{DB: s.DB, Storage: s.Storage, Shredder: s.Shredder, AccountLimiter: accountLimiter, DataDir: s.Storage.BaseDir}
+	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage, Shredder: s.Shredder, MaxStorageBytes: s.MaxStorageBytes}
 
 	// Auth rate limiter: 5 attempts per minute per IP
 	authLimiter := RateLimit(5, time.Minute)
@@ -136,8 +137,8 @@ func (s *Server) routes() chi.Router {
 		r.Use(auth.Middleware)
 
 		r.Post("/api/auth/logout", authHandler.Logout)
-		r.Post("/api/auth/change-password", authHandler.ChangePassword)
-		r.Delete("/api/auth/account", authHandler.DeleteOwnAccount)
+		r.With(authLimiter).Post("/api/auth/change-password", authHandler.ChangePassword)
+		r.With(authLimiter).Delete("/api/auth/account", authHandler.DeleteOwnAccount)
 
 		r.Get("/api/media", mediaHandler.List)
 		r.Get("/api/media/quota", mediaHandler.QuotaCheck)
@@ -146,7 +147,6 @@ func (s *Server) routes() chi.Router {
 		r.Delete("/api/media/{id}", mediaHandler.Delete)
 		r.Get("/api/media/{id}/chunk/{index}", mediaHandler.GetChunk)
 		r.Get("/api/media/{id}/thumbnail", mediaHandler.GetThumbnail)
-		r.Get("/api/media/{id}/download", mediaHandler.Download)
 		r.Patch("/api/media/{id}", mediaHandler.UpdateMetadata)
 
 		r.Get("/api/folders", mediaHandler.GetFolders)
@@ -204,6 +204,18 @@ func (s *Server) routes() chi.Router {
 		}
 		if f, err := webRoot.Open(path[1:]); err == nil {
 			f.Close()
+			// Set cache headers based on asset type.
+			// index.html: always revalidate (references versioned asset URLs).
+			// JS/CSS: long-lived cache (URLs contain ?v=hash for cache busting).
+			// Fonts: immutable (content never changes).
+			switch {
+			case path == "/index.html":
+				w.Header().Set("Cache-Control", "no-cache")
+			case strings.HasSuffix(path, ".woff2"):
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			case strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css"):
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
 			fileServer.ServeHTTP(w, r)
 			return
 		}
@@ -214,15 +226,19 @@ func (s *Server) routes() chi.Router {
 	return r
 }
 
-// selectiveCompress applies HTTP compression to all routes except /api/auth/*,
-// which carry secrets (encrypted master keys, KDF salts) that are vulnerable
-// to BREACH-style compression side-channel attacks.
+// selectiveCompress applies HTTP compression to all routes except:
+//   - /api/auth/* — carries secrets vulnerable to BREACH-style compression attacks
+//   - chunk/thumbnail/download — encrypted data is random bytes that don't compress;
+//     skipping compression saves CPU and enables sendfile(2) zero-copy transfer
 func selectiveCompress(level int) func(http.Handler) http.Handler {
 	compressor := middleware.Compress(level)
 	return func(next http.Handler) http.Handler {
 		compressed := compressor(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasPrefix(r.URL.Path, "/api/auth/") {
+			if strings.HasPrefix(r.URL.Path, "/api/auth/") ||
+				strings.Contains(r.URL.Path, "/chunk/") ||
+				strings.HasSuffix(r.URL.Path, "/thumbnail") ||
+				strings.HasSuffix(r.URL.Path, "/download") {
 				next.ServeHTTP(w, r)
 				return
 			}

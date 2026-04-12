@@ -14,17 +14,27 @@ perl -i -pe "s|MP4BOX_SRI = '[^']*'|MP4BOX_SRI = '${MP4BOX_HASH}'|" web/js/app.j
 
 APP_HASH="sha384-$(openssl dgst -sha384 -binary web/js/app.js | openssl base64 -A)"
 
-# Update integrity attributes in index.html
-# Match lines by their src/href filename, replace the integrity value
-perl -i -pe "s|(href=\"/css/app\.css\".*?integrity=\")sha384-[A-Za-z0-9+/=]+|\1${CSS_HASH}|" web/index.html
-perl -i -pe "s|(src=\"/js/crypto\.js\".*?integrity=\")sha384-[A-Za-z0-9+/=]+|\1${CRYPTO_HASH}|" web/index.html
-perl -i -pe "s|(src=\"/js/app\.js\".*?integrity=\")sha384-[A-Za-z0-9+/=]+|\1${APP_HASH}|" web/index.html
+# Generate short content hashes for cache-busting query parameters.
+# When file content changes, the ?v= param changes, busting browser caches.
+CSS_VER=$(openssl dgst -sha256 -binary web/css/app.css | xxd -p -l 8)
+CRYPTO_VER=$(openssl dgst -sha256 -binary web/js/crypto.js | xxd -p -l 8)
+APP_VER=$(openssl dgst -sha256 -binary web/js/app.js | xxd -p -l 8)
+
+# Update integrity attributes and cache-busting version params in index.html.
+# Match lines by their src/href filename, replace integrity and add/update ?v= param.
+perl -i -pe "s|href=\"/css/app\.css(\?v=[a-f0-9]+)?\"(.*?)integrity=\"sha384-[A-Za-z0-9+/=]+\"|href=\"/css/app.css?v=${CSS_VER}\"\2integrity=\"${CSS_HASH}\"|" web/index.html
+perl -i -pe "s|src=\"/js/crypto\.js(\?v=[a-f0-9]+)?\"(.*?)integrity=\"sha384-[A-Za-z0-9+/=]+\"|src=\"/js/crypto.js?v=${CRYPTO_VER}\"\2integrity=\"${CRYPTO_HASH}\"|" web/index.html
+perl -i -pe "s|src=\"/js/app\.js(\?v=[a-f0-9]+)?\"(.*?)integrity=\"sha384-[A-Za-z0-9+/=]+\"|src=\"/js/app.js?v=${APP_VER}\"\2integrity=\"${APP_HASH}\"|" web/index.html
 
 echo "SRI hashes updated:"
 echo "  app.css:    ${CSS_HASH}"
 echo "  crypto.js:  ${CRYPTO_HASH}"
 echo "  mp4box.js:  ${MP4BOX_HASH}"
 echo "  app.js:     ${APP_HASH}"
+echo "Cache-bust versions:"
+echo "  app.css:    ${CSS_VER}"
+echo "  crypto.js:  ${CRYPTO_VER}"
+echo "  app.js:     ${APP_VER}"
 
 # Verify module checksums against go.sum before building
 go mod verify

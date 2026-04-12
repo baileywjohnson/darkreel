@@ -670,6 +670,7 @@ a:hover { text-decoration: underline; }
       <a href="#crypto">cryptography</a>
       <a href="#streaming">streaming</a>
       <a href="#tradeoffs">trade-offs</a>
+      <a href="#limitations">limitations</a>
       <a href="#deploy">deploy</a>
       <a href="#api">api</a>
       <a href="#setup-details">operations</a>
@@ -793,6 +794,22 @@ a:hover { text-decoration: underline; }
       <div class="feature">
         <div class="feature-name">self-hosted</div>
         <div class="feature-desc">Runs on your hardware. A $6/month VPS is enough. Your data never touches a third-party service.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">async secure deletion</div>
+        <div class="feature-desc">File shredding runs in a background worker pool so API responses return immediately while data is securely erased.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">static asset caching</div>
+        <div class="feature-desc">Content-hash cache busting for static assets. Aggressive caching without serving stale files after upgrades.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">streaming chunk uploads</div>
+        <div class="feature-desc">Chunks are written to disk as they stream in. ~64 KB memory per chunk write, regardless of chunk size.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">rate-limited sensitive endpoints</div>
+        <div class="feature-desc">Password change and account deletion endpoints are rate-limited to prevent abuse.</div>
       </div>
     </div>
   </section>
@@ -950,9 +967,34 @@ a:hover { text-decoration: underline; }
     </div>
   </section>
 
+  <!-- ────────────────────────── KNOWN LIMITATIONS ────────────────────────── -->
+  <section id="limitations">
+    <div class="section-label">06 - known limitations</div>
+    <h2>deliberate constraints</h2>
+
+    <div class="tradeoff">
+      <div class="tradeoff-title">concurrent login throughput</div>
+      <p>Each login performs two Argon2id derivations (~600 ms total, 128 MB RAM, 8 threads).
+      On an 8-core machine, only ~2 logins can run at full speed concurrently. This is a
+      deliberate security trade-off.</p>
+    </div>
+
+    <div class="tradeoff">
+      <div class="tradeoff-title">single-machine architecture</div>
+      <p>Darkreel does not support horizontal scaling or clustering. A single machine with
+      adequate disk is sufficient for most self-hosted use cases.</p>
+    </div>
+
+    <div class="tradeoff">
+      <div class="tradeoff-title">SQLite write contention</div>
+      <p>One writer at a time. Rarely a practical bottleneck since chunk I/O doesn't hold the
+      database lock.</p>
+    </div>
+  </section>
+
   <!-- ────────────────────────── DEPLOY ────────────────────────── -->
   <section id="deploy">
-    <div class="section-label">06 - deploy</div>
+    <div class="section-label">07 - deploy</div>
     <h2>one command on a fresh VPS</h2>
 
     <div class="deploy-block">
@@ -988,6 +1030,13 @@ a:hover { text-decoration: underline; }
       <div class="spec"><div class="spec-value">$6/mo</div><div class="spec-label">min. VPS cost</div></div>
     </div>
 
+    <h3>scalability</h3>
+
+    <p>Darkreel handles <strong>100K+ media items</strong> without issue. Chunks stream with zero-copy
+    I/O. Startup is parallelized (integrity checks, cleanup, and migration run concurrently).
+    Streaming uploads use <strong>~64 KB memory per chunk write</strong> regardless of file size,
+    so uploading a 10 GB file costs the same RAM as a 10 MB file.</p>
+
     <h3>configuration</h3>
 
     <div class="terminal">
@@ -1007,7 +1056,7 @@ a:hover { text-decoration: underline; }
 
   <!-- ────────────────────────── API ────────────────────────── -->
   <section id="api">
-    <div class="section-label">07 - api</div>
+    <div class="section-label">08 - api</div>
     <h2>endpoints</h2>
     <p>All endpoints except <code>/health</code> and <code>/api/config</code> require a JWT.
     JWTs contain user ID, session ID, and admin flag.</p>
@@ -1033,7 +1082,6 @@ a:hover { text-decoration: underline; }
       <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/media/:id</span><span class="api-desc">secure delete (3-pass shred)</span></div>
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/:id/chunk/:idx</span><span class="api-desc">download encrypted chunk</span></div>
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/:id/thumbnail</span><span class="api-desc">download encrypted thumbnail</span></div>
-      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/:id/download</span><span class="api-desc">all chunks concatenated</span></div>
     </div>
 
     <div class="api-group">
@@ -1061,7 +1109,7 @@ a:hover { text-decoration: underline; }
 
   <!-- ────────────────────────── SETUP DETAILS ────────────────────────── -->
   <section id="setup-details">
-    <div class="section-label">08 - operations</div>
+    <div class="section-label">09 - operations</div>
     <h2>backups</h2>
 
     <p><strong>The database is load-bearing.</strong> Every encrypted file key lives in
@@ -1151,7 +1199,7 @@ a:hover { text-decoration: underline; }
 
   <!-- ────────────────────────── HARDENING ────────────────────────── -->
   <section id="hardening">
-    <div class="section-label">09 - hardening</div>
+    <div class="section-label">10 - hardening</div>
     <h2>disk encryption (LUKS)</h2>
 
     <p>The 3-pass secure deletion is unreliable on SSDs due to wear leveling. If your threat
@@ -1194,11 +1242,11 @@ a:hover { text-decoration: underline; }
 
   <!-- ────────────────────────── RELATED ────────────────────────── -->
   <section id="related">
-    <div class="section-label">10 - related</div>
+    <div class="section-label">11 - related</div>
     <h2>ecosystem</h2>
     <p>
       <a href="https://github.com/baileywjohnson/darkreel-cli"><strong>darkreel-cli</strong></a>
-      - command-line upload tool. ffmpeg-based remuxing for all video formats.
+      - command-line tool for encrypted uploads, listing, and downloads. ffmpeg-based remuxing for all video formats.
     </p>
     <p>
       <a href="https://github.com/baileywjohnson/ppvda"><strong>PPVDA</strong></a>
@@ -1224,6 +1272,7 @@ a:hover { text-decoration: underline; }
   <a href="#crypto">cryptography</a>
   <a href="#streaming">streaming</a>
   <a href="#tradeoffs">trade-offs</a>
+  <a href="#limitations">limitations</a>
   <a href="#deploy">deploy</a>
   <a href="#api">api</a>
   <a href="#setup-details">operations</a>

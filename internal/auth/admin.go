@@ -357,9 +357,9 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 	Sessions.DeleteAllForUser(targetID)
 
-	// Shred files after DB deletion (orphan cleanup handles crashes here)
+	// Queue async shred — file keys already deleted from DB
 	for _, mid := range mediaIDs {
-		h.Storage.RemoveMedia(targetID, mid)
+		h.Shredder.QueueMedia(targetID, mid)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

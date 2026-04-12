@@ -8,9 +8,11 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -71,57 +73,99 @@ func main() {
 		}
 	}
 
-	// Clean up orphaned data directories not referenced in DB.
-	// Abort if DB queries fail — incomplete valid-paths would cause data loss.
-	validPaths := make(map[string]bool)
-	userIDs, err := db.ListUserIDs(database)
-	if err != nil {
-		log.Printf("Warning: orphan cleanup skipped — failed to list users: %v", err)
-	} else {
-		allOK := true
+	// Run startup integrity checks concurrently. Each operates on independent
+	// data sets: orphan cleanup shreds dirs NOT in DB, incomplete upload cleanup
+	// shreds dirs IN DB with missing files, size backfill only reads files.
+	var startupWg sync.WaitGroup
+	startupWg.Add(3)
+
+	// 1. Clean up orphaned data directories not referenced in DB.
+	go func() {
+		defer startupWg.Done()
+		validPaths := make(map[string]bool)
+		userIDs, err := db.ListUserIDs(database)
+		if err != nil {
+			log.Printf("Warning: orphan cleanup skipped — failed to list users: %v", err)
+			return
+		}
 		for _, uid := range userIDs {
 			mediaIDs, err := db.ListMediaIDsByUser(database, uid)
 			if err != nil {
 				log.Printf("Warning: orphan cleanup skipped — failed to list media: %v", err)
-				allOK = false
-				break
+				return
 			}
 			for _, mid := range mediaIDs {
 				validPaths[uid+"/"+mid] = true
 			}
 		}
-		if allOK {
-			if removed, err := store.CleanupOrphans(validPaths); err != nil {
-				log.Printf("Warning: orphan cleanup failed: %v", err)
-			} else if removed > 0 {
-				log.Printf("Cleaned up %d orphaned media directories", removed)
-			}
+		if removed, err := store.CleanupOrphans(validPaths); err != nil {
+			log.Printf("Warning: orphan cleanup failed: %v", err)
+		} else if removed > 0 {
+			log.Printf("Cleaned up %d orphaned media directories", removed)
 		}
-	}
+	}()
 
-	// Clean up incomplete uploads — DB records whose chunk files are missing
-	// (e.g., server crashed after DB INSERT but before all chunks were written).
-	if summaries, err := db.ListAllMediaSummaries(database); err != nil {
-		log.Printf("Warning: incomplete upload cleanup skipped — failed to list media: %v", err)
-	} else {
-		cleaned := 0
+	// 2. Clean up incomplete uploads — DB records whose chunk files are missing.
+	// Uses a worker pool for parallel stat() checks.
+	go func() {
+		defer startupWg.Done()
+		summaries, err := db.ListAllMediaSummaries(database)
+		if err != nil {
+			log.Printf("Warning: incomplete upload cleanup skipped — failed to list media: %v", err)
+			return
+		}
+
+		type incompleteItem struct {
+			UserID string
+			ID     string
+		}
+		var incompleteMu sync.Mutex
+		var incomplete []incompleteItem
+
+		// Parallel completeness checks (stat-heavy)
+		workers := runtime.NumCPU()
+		if workers > 8 {
+			workers = 8
+		}
+		work := make(chan db.MediaSummary, workers*2)
+		var checkWg sync.WaitGroup
+		for i := 0; i < workers; i++ {
+			checkWg.Add(1)
+			go func() {
+				defer checkWg.Done()
+				for s := range work {
+					if !store.IsMediaComplete(s.UserID, s.ID, s.ChunkCount) {
+						incompleteMu.Lock()
+						incomplete = append(incomplete, incompleteItem{s.UserID, s.ID})
+						incompleteMu.Unlock()
+					}
+				}
+			}()
+		}
 		for _, s := range summaries {
-			if !store.IsMediaComplete(s.UserID, s.ID, s.ChunkCount) {
-				store.RemoveMedia(s.UserID, s.ID)
-				db.DeleteMediaByID(database, s.ID)
-				cleaned++
-			}
+			work <- s
 		}
-		if cleaned > 0 {
-			log.Printf("Cleaned up %d incomplete uploads", cleaned)
-		}
-	}
+		close(work)
+		checkWg.Wait()
 
-	// Backfill size_bytes for uploads where the server crashed after writing
+		for _, item := range incomplete {
+			store.RemoveMedia(item.UserID, item.ID)
+			db.DeleteMediaByID(database, item.ID)
+		}
+		if len(incomplete) > 0 {
+			log.Printf("Cleaned up %d incomplete uploads", len(incomplete))
+		}
+	}()
+
+	// 3. Backfill size_bytes for uploads where the server crashed after writing
 	// chunks but before updating the DB record with the actual size.
-	if zeroItems, err := db.ListMediaWithZeroSize(database); err != nil {
-		log.Printf("Warning: size_bytes backfill skipped — failed to list: %v", err)
-	} else {
+	go func() {
+		defer startupWg.Done()
+		zeroItems, err := db.ListMediaWithZeroSize(database)
+		if err != nil {
+			log.Printf("Warning: size_bytes backfill skipped — failed to list: %v", err)
+			return
+		}
 		backfilled := 0
 		const sizeQuantum = 256 * 1024
 		for _, item := range zeroItems {
@@ -135,7 +179,9 @@ func main() {
 		if backfilled > 0 {
 			log.Printf("Backfilled size_bytes for %d media records", backfilled)
 		}
-	}
+	}()
+
+	startupWg.Wait()
 
 	// Start session cleanup goroutine (removes expired sessions every minute)
 	auth.Sessions.StartCleanup()
@@ -152,9 +198,12 @@ func main() {
 		}
 	}
 
+	shredder := storage.NewShredder(store, 0) // workers default to NumCPU (capped at 8)
+
 	srv := &server.Server{
 		DB:                database,
 		Storage:           store,
+		Shredder:          shredder,
 		WebFS:             webFS,
 		Addr:              *addr,
 		PersistSession:    os.Getenv("PERSIST_SESSION") != "false",
@@ -163,7 +212,7 @@ func main() {
 		MaxStorageBytes:   maxBytes,
 	}
 
-	// Graceful shutdown: drain in-flight requests, then close DB
+	// Graceful shutdown: drain in-flight requests, finish pending shreds, then close DB
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -174,6 +223,8 @@ func main() {
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Printf("HTTP shutdown error: %v", err)
 		}
+		log.Println("Waiting for pending shred operations...")
+		shredder.Shutdown()
 	}()
 
 	if err := srv.Run(); err != nil && err != http.ErrServerClosed {

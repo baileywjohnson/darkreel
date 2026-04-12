@@ -1,6 +1,9 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"strconv"
+)
 
 type MediaItem struct {
 	ID            string
@@ -122,6 +125,34 @@ func GetUserStorageBytes(db *sql.DB, userID string) (int, error) {
 	var total int
 	err := db.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM media WHERE user_id = ?`, userID).Scan(&total)
 	return total, err
+}
+
+// QuotaInfo holds the result of a combined quota pre-check query.
+type QuotaInfo struct {
+	UserQuota    int // per-user override (0 = use default)
+	DefaultQuota int // server default from settings (0 = not set)
+	UsedBytes    int // current total bytes for the user
+}
+
+// GetQuotaInfo fetches user quota override, server default quota, and current
+// usage in a single query to avoid multiple round trips during upload pre-check.
+func GetQuotaInfo(database *sql.DB, userID string) (*QuotaInfo, error) {
+	qi := &QuotaInfo{}
+	var defaultStr sql.NullString
+	err := database.QueryRow(`
+		SELECT u.storage_quota,
+		       (SELECT value FROM settings WHERE key = 'default_storage_quota'),
+		       COALESCE((SELECT SUM(m.size_bytes) FROM media m WHERE m.user_id = ?), 0)
+		FROM users u WHERE u.id = ?`,
+		userID, userID,
+	).Scan(&qi.UserQuota, &defaultStr, &qi.UsedBytes)
+	if err != nil {
+		return nil, err
+	}
+	if defaultStr.Valid {
+		qi.DefaultQuota, _ = strconv.Atoi(defaultStr.String)
+	}
+	return qi, nil
 }
 
 // UpdateMediaSize sets the actual byte size after upload completes.

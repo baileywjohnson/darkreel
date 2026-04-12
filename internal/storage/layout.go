@@ -44,8 +44,18 @@ func (l *Layout) ThumbnailPath(userID, mediaID string) string {
 }
 
 // EnsureMediaDir creates the media directory if it doesn't exist.
+// Sets mtimes on both user and media directories to the fixed epoch
+// so directory timestamps don't leak when uploads occurred.
 func (l *Layout) EnsureMediaDir(userID, mediaID string) error {
-	return os.MkdirAll(l.MediaDir(userID, mediaID), 0700)
+	mediaDir := l.MediaDir(userID, mediaID)
+	if err := os.MkdirAll(mediaDir, 0700); err != nil {
+		return err
+	}
+	// Coarsen directory timestamps to match file epoch
+	userDir := filepath.Join(l.BaseDir, userID)
+	os.Chtimes(userDir, epoch, epoch)
+	os.Chtimes(mediaDir, epoch, epoch)
+	return nil
 }
 
 // CleanupOrphans removes data directories that are not referenced in the DB.

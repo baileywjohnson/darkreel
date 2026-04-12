@@ -22,13 +22,13 @@ func Open(dataDir string) (*sql.DB, error) {
 	}
 
 	dbPath := filepath.Join(dataDir, "darkreel.db")
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON&_secure_delete=ON")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON&_secure_delete=FAST")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
 	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(2)
+	db.SetMaxIdleConns(4) // match MaxOpenConns to avoid connection churn
 
 	if err := migrate(db); err != nil {
 		db.Close()
@@ -80,7 +80,7 @@ func migrate(db *sql.DB) error {
 			hash_nonce     BLOB NOT NULL,
 			metadata_enc   BLOB NOT NULL,
 			metadata_nonce BLOB NOT NULL,
-			created_at     TEXT DEFAULT (strftime('%Y-%W', 'now'))
+			created_at     TEXT DEFAULT (strftime('%Y', 'now'))
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_media_user ON media(user_id, created_at DESC);
@@ -107,6 +107,11 @@ func migrate(db *sql.DB) error {
 		if !isDuplicateColumnError(err) {
 			return fmt.Errorf("add size_bytes column: %w", err)
 		}
+	}
+
+	// Covering index for quota queries — must be after size_bytes column exists.
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_media_user_size ON media(user_id, size_bytes)`); err != nil {
+		return fmt.Errorf("create idx_media_user_size: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

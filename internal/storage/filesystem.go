@@ -64,6 +64,65 @@ func (l *Layout) WriteChunk(userID, mediaID string, index int, data []byte) erro
 	return os.Chtimes(path, epoch, epoch)
 }
 
+// padBufSize is the buffer size used for streaming random padding to disk.
+const padBufSize = 64 * 1024
+
+// WriteChunkFromReader streams an encrypted chunk from r directly to disk,
+// avoiding buffering the entire chunk in memory. Returns bytes written (data
+// only, excluding the 4-byte length prefix and padding).
+func (l *Layout) WriteChunkFromReader(userID, mediaID string, index int, r io.Reader, maxBytes int64) (int, error) {
+	path := l.ChunkPath(userID, mediaID, index)
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	// Write placeholder length prefix (will be updated after streaming)
+	var lenBuf [4]byte
+	if _, err := f.Write(lenBuf[:]); err != nil {
+		return 0, err
+	}
+
+	// Stream data from reader to file, counting bytes
+	n, err := io.Copy(f, io.LimitReader(r, maxBytes))
+	if err != nil {
+		return 0, err
+	}
+	dataLen := int(n)
+
+	// Update length prefix now that we know the real size
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(dataLen))
+	if _, err := f.WriteAt(lenBuf[:], 0); err != nil {
+		return 0, err
+	}
+
+	// Write random padding to reach bucket size
+	padSize := paddedSize(dataLen)
+	remaining := padSize - dataLen
+	buf := make([]byte, padBufSize)
+	for remaining > 0 {
+		n := remaining
+		if n > padBufSize {
+			n = padBufSize
+		}
+		if _, err := rand.Read(buf[:n]); err != nil {
+			return 0, fmt.Errorf("generate chunk padding: %w", err)
+		}
+		if _, err := f.Write(buf[:n]); err != nil {
+			return 0, err
+		}
+		remaining -= n
+	}
+
+	if err := f.Sync(); err != nil {
+		return 0, err
+	}
+	f.Close()
+	return dataLen, os.Chtimes(path, epoch, epoch)
+}
+
 // ReadChunk reads an encrypted chunk from disk, stripping the padding.
 func (l *Layout) ReadChunk(userID, mediaID string, index int) ([]byte, error) {
 	path := l.ChunkPath(userID, mediaID, index)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"sync"
@@ -22,7 +21,8 @@ const maxConcurrentUploads = 3 // per-user concurrent upload limit
 type Handler struct {
 	DB              *sql.DB
 	Storage         *storage.Layout
-	MaxStorageBytes int // per-user storage quota in bytes (0 = unlimited)
+	Shredder        *storage.Shredder // async secure file deletion
+	MaxStorageBytes int               // per-user storage quota in bytes (0 = unlimited)
 
 	uploadMu   sync.Mutex
 	uploadSems map[string]chan struct{} // per-user upload semaphores
@@ -216,29 +216,47 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-user storage quota check (bytes). We do a pre-check using an estimate
-	// based on chunk count, then update with the actual size after reading all chunks.
-	// Priority: per-user DB override > server default in DB > env var fallback.
-	quota := h.MaxStorageBytes // env var fallback
-	if val, err := db.GetSetting(h.DB, "default_storage_quota"); err == nil {
-		if n, err := strconv.Atoi(val); err == nil && n > 0 {
-			quota = n
-		}
+	// Validate decoded blob sizes to prevent DB bloat via oversized metadata.
+	// file_key_enc / thumb_key_enc: AES-256-GCM(32-byte key) = 12 nonce + 32 ct + 16 tag = 60 bytes
+	// hash_nonce: 32 bytes, metadata_nonce: 12 bytes (GCM nonce)
+	// metadata_enc: encrypted JSON (filename, type, dims, etc.) — cap at 64 KB
+	const maxKeyEncLen = 128       // generous headroom over expected 60 bytes
+	const maxNonceLen = 64         // generous headroom over expected 12-32 bytes
+	const maxMetadataEncLen = 65536 // 64 KB
+	if len(fileKeyBytes) > maxKeyEncLen || len(thumbKeyBytes) > maxKeyEncLen {
+		http.Error(w, "encrypted key too large", http.StatusBadRequest)
+		return
 	}
-	if user, err := db.GetUserByID(h.DB, userID); err == nil && user.StorageQuota > 0 {
-		quota = user.StorageQuota
+	if len(hashNonceBytes) > maxNonceLen || len(metadataNonceBytes) > maxNonceLen {
+		http.Error(w, "nonce too large", http.StatusBadRequest)
+		return
+	}
+	if len(metadataEncBytes) > maxMetadataEncLen {
+		http.Error(w, "encrypted metadata too large", http.StatusBadRequest)
+		return
+	}
+
+	// Per-user storage quota check (bytes). Single query fetches user override,
+	// server default, and current usage to avoid multiple DB round trips.
+	// Priority: per-user DB override > server default in DB > env var fallback.
+	qi, err := db.GetQuotaInfo(h.DB, userID)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	quota := h.MaxStorageBytes // env var fallback
+	if qi.DefaultQuota > 0 {
+		quota = qi.DefaultQuota
+	}
+	if qi.UserQuota > 0 {
+		quota = qi.UserQuota
 	}
 	if quota <= 0 {
 		http.Error(w, "No storage quota configured. Please contact your administrator.", http.StatusForbidden)
 		return
 	}
-	existingBytes, err := db.GetUserStorageBytes(h.DB, userID)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
 	// Pre-check: reject if already at or over quota before writing any chunks.
-	if existingBytes >= quota {
+	if qi.UsedBytes >= quota {
 		http.Error(w, "Storage quota exceeded. Please contact your administrator.", http.StatusForbidden)
 		return
 	}
@@ -295,7 +313,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read chunk parts, tracking total bytes for quota enforcement.
+	// Stream chunk parts directly to disk, tracking total bytes for quota enforcement.
+	// Each chunk is streamed without buffering the entire chunk in memory.
 	chunkIndex := 0
 	totalBytes := 0
 	for {
@@ -318,27 +337,21 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		chunkData, err := io.ReadAll(io.LimitReader(part, maxChunkSize))
+		n, err := h.Storage.WriteChunkFromReader(userID, mediaID, chunkIndex, part, maxChunkSize)
+		part.Close()
 		if err != nil {
 			cleanup()
-			http.Error(w, "failed to read chunk data", http.StatusBadRequest)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		part.Close()
 
-		if len(chunkData) == 0 {
+		if n == 0 {
 			cleanup()
 			http.Error(w, "empty chunk not allowed", http.StatusBadRequest)
 			return
 		}
 
-		totalBytes += len(chunkData)
-
-		if err := h.Storage.WriteChunk(userID, mediaID, chunkIndex, chunkData); err != nil {
-			cleanup()
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
+		totalBytes += n
 		chunkIndex++
 	}
 
@@ -455,47 +468,17 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete DB record first, then shred storage. If the server crashes between
-	// these steps, orphaned storage is cleaned up at startup.
+	// Delete DB record first, then queue async shred. The file key is now
+	// gone from the DB, making the encrypted data on disk unrecoverable.
+	// If the server crashes before shredding completes, startup orphan
+	// cleanup handles the leftover files.
 	if err := db.DeleteMedia(h.DB, mediaID, userID); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	if err := h.Storage.RemoveMedia(userID, mediaID); err != nil {
-		log.Printf("Warning: failed to remove media storage: %v", err)
-		return
-	}
-
+	h.Shredder.QueueMedia(userID, mediaID)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserID(r)
-	mediaID := validID(w, r, "id")
-	if mediaID == "" {
-		return
-	}
-
-	item, err := db.GetMedia(h.DB, mediaID, userID)
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment")
-
-	// Stream all encrypted chunks sequentially
-	for i := 0; i < item.ChunkCount; i++ {
-		rc, _, err := h.Storage.ReadChunkStream(userID, mediaID, i)
-		if err != nil {
-			log.Printf("Warning: download truncated at chunk %d/%d: %v", i, item.ChunkCount, err)
-			return // connection already started, can't send error
-		}
-		io.Copy(w, rc)
-		rc.Close()
-	}
 }
 
 // UpdateMetadata allows the client to update an item's encrypted metadata

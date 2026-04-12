@@ -44,11 +44,17 @@ func isValidUsername(u string) bool {
 	return true
 }
 
+// MediaShredder queues media directories for background secure deletion.
+type MediaShredder interface {
+	QueueMedia(userID, mediaID string)
+}
+
 type Handler struct {
 	DB             *sql.DB
 	Storage        interface{ RemoveMedia(userID, mediaID string) error }
-	AccountLimiter *AccountLimiter // per-username rate limiter for login/recovery
-	DataDir        string          // data directory path (for disk usage stats)
+	Shredder       MediaShredder     // async secure file deletion (used by HTTP handlers)
+	AccountLimiter *AccountLimiter   // per-username rate limiter for login/recovery
+	DataDir        string            // data directory path (for disk usage stats)
 }
 
 // BootstrapAdmin creates the initial admin user if no users exist.
@@ -493,9 +499,11 @@ func (h *Handler) DeleteOwnAccount(w http.ResponseWriter, r *http.Request) {
 
 	Sessions.DeleteAllForUser(user.ID)
 
-	// Shred files after DB deletion
+	// Queue async shred — file keys are already deleted from DB,
+	// making encrypted data unrecoverable. Startup orphan cleanup
+	// handles any leftovers if the server crashes before shredding.
 	for _, mid := range mediaIDs {
-		h.Storage.RemoveMedia(user.ID, mid)
+		h.Shredder.QueueMedia(user.ID, mid)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

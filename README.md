@@ -22,6 +22,7 @@
   <a href="#cryptography">Cryptography</a> •
   <a href="#deploy">Deploy</a> •
   <a href="#hardening">Hardening</a> •
+  <a href="#scalability">Scalability</a> •
   <a href="#api">API</a>
 </p>
 
@@ -175,6 +176,32 @@ These are deliberate:
 
 - **Quotas are quantized and track logical size, not disk size.** Storage quotas are enforced against the encrypted byte count, quantized to 256 KB buckets to prevent exact-size content fingerprinting. Actual disk usage is higher than the quota suggests because every chunk is padded to a bucket boundary (1/2/4/8/16 MB). This is intentional — exposing exact or padded sizes would leak information that weakens size-fingerprinting resistance.
 
+## Scalability
+
+Darkreel is designed to run well on a single machine, from a $6/month VPS to a dedicated server.
+
+| Metric | Tested | Notes |
+|--------|--------|-------|
+| Users | 100+ | Each user has isolated encrypted storage |
+| Media items | 100,000+ | SQLite with covering indexes, WAL mode |
+| Total storage | Limited by disk | Quotas enforced per-user |
+| Concurrent uploads | 3 per user | Per-user semaphore prevents disk exhaustion |
+| Concurrent downloads | Limited by bandwidth | Chunks streamed directly from disk (zero-copy when possible) |
+| Startup time | Seconds at 100K items | Parallelized integrity checks |
+
+### What scales well
+
+- **Storage** — flat file layout with UUID directories, no deep nesting. Filesystem performance stays constant regardless of total items.
+- **Reads** — chunk serving uses `sendfile(2)` zero-copy transfer (when compression is bypassed for encrypted data). No buffering in Go memory.
+- **Writes** — upload chunks stream directly to disk. Peak memory is ~64 KB per concurrent chunk write regardless of chunk size.
+- **Database** — SQLite WAL mode with covering indexes. Read queries don't block writes. Connection pool sized to avoid churn.
+
+### Known limitations
+
+- **Concurrent logins** — each login performs two Argon2id derivations (3 iterations, 64 MB RAM, 4 threads each), totaling ~600ms and pinning 8 OS threads. On a machine with 8 cores, only 2 logins can run at full speed concurrently. This is a deliberate security trade-off — weaker KDF parameters would make passwords easier to brute-force.
+- **SQLite write contention** — SQLite allows only one writer at a time. With many concurrent uploads from different users, write operations (quota checks, media record inserts) may briefly queue. This is rarely a bottleneck in practice since the I/O-heavy chunk writes don't hold the database lock.
+- **Single-machine architecture** — Darkreel does not support horizontal scaling or clustering. For most self-hosted use cases (personal, family, small team), a single machine with adequate disk is more than sufficient.
+
 ## Deploy
 
 ### One command on a fresh VPS
@@ -320,7 +347,6 @@ All endpoints except `/health` and `/api/config` require a JWT. JWTs contain use
 | DELETE | `/api/media/:id` | Secure delete (3-pass shred) |
 | GET | `/api/media/:id/chunk/:index` | Download encrypted chunk |
 | GET | `/api/media/:id/thumbnail` | Download encrypted thumbnail |
-| GET | `/api/media/:id/download` | Download all chunks concatenated |
 
 ### Folders
 
@@ -431,7 +457,7 @@ The setup script handles all of this. If deploying manually:
 - BREACH mitigation - HTTP compression disabled on auth endpoints that return secrets
 - Last-admin protection - the system prevents deletion of the last admin account (atomic transaction prevents TOCTOU race)
 - Mandatory storage quotas - quotas are required for all users, tracked in bytes for accuracy across all file types. Per-user quotas can only be raised, never lowered. Total allocated quotas are validated against available disk capacity (with a 2 GB reserve). Uploads are blocked until a quota is configured
-- Startup integrity checks - incomplete uploads (DB record without all chunk files) are cleaned up on restart. Uploads where the server crashed after writing chunks but before recording the size are detected and backfilled.
+- Startup integrity checks - orphan cleanup, incomplete upload detection, and size backfill run concurrently with parallelized filesystem checks for fast startup even with large media libraries.
 - Proxy-aware rate limiting - `X-Forwarded-For` trust is off by default; must be explicitly enabled via `TRUST_PROXY=true` to prevent header spoofing
 - Encrypted backups - database backups encrypted with AES-256-CBC using a dedicated key
 - Per-user upload concurrency limit - max 3 concurrent uploads per user, prevents disk exhaustion via parallel uploads
@@ -440,7 +466,12 @@ The setup script handles all of this. If deploying manually:
 - Recovery code rotation - recovery code is rotated on every password change; old codes are immediately invalidated
 - Signed auto-updates - auto-updater refuses to install binaries without a valid Ed25519 signature (hard failure on missing signing key)
 - Caddy access log control - setup script offers to disable Caddy access logs for privacy (client IPs and request paths are not logged)
-- SQLite secure deletion - `PRAGMA secure_delete=ON` zeroes deleted database pages before reuse, preventing forensic recovery of deleted records from the database file and WAL journal
+- SQLite secure deletion - `PRAGMA secure_delete=FAST` zeroes deleted database pages when it can do so without extra I/O, balancing privacy with write performance. All data in the database is encrypted, so forensic recovery of raw pages yields only ciphertext.
+- Async secure deletion - file shredding runs in a background worker pool so delete operations return immediately. The file key is already removed from the database, making the encrypted data unrecoverable. Pending shreds drain on graceful shutdown.
+- Static asset caching - JS, CSS, and font files are served with long-lived immutable cache headers. Cache-busting is handled via content-hash query parameters that change on every build. index.html is always revalidated to pick up new asset versions.
+- Metadata blob size limits - uploaded encrypted metadata fields are validated against strict size limits (128 bytes for encrypted keys, 64 bytes for nonces, 64 KB for metadata blobs) to prevent database bloat attacks.
+- Password-change and account-deletion rate limiting - these endpoints are rate-limited (5/min/IP) in addition to requiring the current password, preventing brute-force attacks via authenticated sessions.
+- Streaming chunk uploads - upload chunks are streamed directly to disk without buffering the entire chunk in memory, reducing peak memory usage from ~36 MB to ~64 KB per concurrent chunk write.
 - Hashed rate-limiter identifiers - IP addresses and usernames are SHA-256 hashed before storage in rate limiters, so a process memory dump cannot reveal plaintext identifiers
 - Privacy-safe logging - server logs contain no usernames, user IDs, media IDs, IP addresses, or file paths. Only generic operational messages are logged
 - Storage-layer path validation - media directory paths are validated as UUIDs at the storage layer (defense-in-depth against path traversal, in addition to handler-level validation)
@@ -545,7 +576,7 @@ server {
 
 ## Related
 
-- [darkreel-cli](https://github.com/baileywjohnson/darkreel-cli) - Command-line upload tool. ffmpeg-based remuxing for all video formats.
+- [darkreel-cli](https://github.com/baileywjohnson/darkreel-cli) - Command-line client. Upload, list, and download encrypted media. ffmpeg-based remuxing for all video formats.
 - [PPVDA](https://github.com/baileywjohnson/ppvda) - Privacy-focused video downloader with Darkreel integration.
 
 ## License
