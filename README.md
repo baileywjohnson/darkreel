@@ -72,6 +72,7 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **Generic file storage** - Not just media. Upload any file type — PDFs, documents, archives, code. Everything is encrypted with the same zero-knowledge scheme.
 - **Encrypted folders** - Organize your files into folders. The folder structure is encrypted - only you can see it. Drag-and-drop to reorganize (desktop and mobile touch).
 - **Folder download** - Download an entire folder (including subfolders) as a ZIP file, decrypted client-side.
+- **Upload progress tracking** - Real-time progress bar on gallery tiles during upload. Encryption progress (0-50%) and network transfer progress (50-100%) via XHR upload events.
 - **Image rotation** - Rotate images at the pixel level. The original is securely deleted and replaced with a freshly encrypted copy using new keys.
 - **6 color themes** - Classic, cool, forest, neon, ocean, and warm. Stored in localStorage.
 - **Recovery codes** - 256-bit recovery code generated at account creation and rotated on every password change. If you lose your password, this is the only way back in. Lose both and your data is gone.
@@ -476,6 +477,8 @@ The setup script handles all of this. If deploying manually:
 - Privacy-safe logging - server logs contain no usernames, user IDs, media IDs, IP addresses, or file paths. Only generic operational messages are logged
 - Storage-layer path validation - media directory paths are validated as UUIDs at the storage layer (defense-in-depth against path traversal, in addition to handler-level validation)
 - Upload chunk count enforcement - the server rejects excess chunks immediately during the upload loop, preventing disk exhaustion from clients sending more chunks than declared
+- Oversized thumbnail rejection - thumbnails exceeding the 256 KB limit are rejected with a clear error instead of silently truncated, preventing corrupted encrypted data from being stored
+- Folder tree random padding - encrypted folder tree blobs are padded with random bytes (not zeros), preventing a database-level attacker from determining exact folder structure size
 
 ### Session persistence
 

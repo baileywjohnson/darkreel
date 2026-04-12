@@ -804,6 +804,10 @@ a:hover { text-decoration: underline; }
         <div class="feature-desc">Content-hash cache busting for static assets. Aggressive caching without serving stale files after upgrades.</div>
       </div>
       <div class="feature">
+        <div class="feature-name">upload progress tracking</div>
+        <div class="feature-desc">Real-time progress bar on gallery tiles during upload. Encryption progress (0-50%) and network transfer progress (50-100%) via XHR upload events.</div>
+      </div>
+      <div class="feature">
         <div class="feature-name">streaming chunk uploads</div>
         <div class="feature-desc">Chunks are written to disk as they stream in. ~64 KB memory per chunk write, regardless of chunk size.</div>
       </div>
@@ -1193,6 +1197,8 @@ a:hover { text-decoration: underline; }
 <span class="output">recovery rotation</span>   <span class="comment">recovery code rotated on every password change</span>
 <span class="output">signed updates</span>       <span class="comment">auto-updater requires valid Ed25519 signature, hard failure on missing key</span>
 <span class="output">access log control</span>  <span class="comment">setup offers to disable Caddy access logs for privacy</span>
+<span class="output">thumbnail validation</span> <span class="comment">oversized thumbnails rejected with clear error, not silently truncated</span>
+<span class="output">folder tree padding</span> <span class="comment">encrypted folder blobs padded with random bytes, not zeros - prevents DB-level size inference</span>
       </code>
     </div>
   </section>
