@@ -1,32 +1,28 @@
 package storage
 
 import (
-	crand "crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"os"
 	"time"
+
+	"github.com/baileywjohnson/darkreel/internal/crypto"
 )
 
-// padRNG is a fast PRNG seeded from crypto/rand, used for generating padding
-// bytes. Padding does not need cryptographic randomness — it only needs to be
-// indistinguishable from AES-GCM ciphertext, which ChaCha8 satisfies.
-var padRNG = newPadRNG()
-
-func newPadRNG() *rand.Rand {
-	var seed [32]byte
-	if _, err := crand.Read(seed[:]); err != nil {
-		panic("failed to seed padding PRNG: " + err.Error())
-	}
-	return rand.New(rand.NewChaCha8(seed))
+// FillPadding fills buf with fast pseudo-random bytes for padding.
+// Safe for concurrent use — creates a per-call PRNG to avoid sharing
+// a non-goroutine-safe math/rand.Rand across goroutines.
+func FillPadding(buf []byte) {
+	rng := crypto.NewPadRNG()
+	crypto.FillRandBuf(rng, buf)
 }
 
-// FillPadding fills buf with fast pseudo-random bytes for padding.
-func FillPadding(buf []byte) {
+// fillPaddingWith fills buf using a caller-provided PRNG.
+// Use this in loops to avoid creating a new PRNG per iteration.
+func fillPaddingWith(rng interface{ Uint64() uint64 }, buf []byte) {
 	for i := 0; i < len(buf); i += 8 {
-		v := padRNG.Uint64()
+		v := rng.Uint64()
 		remaining := len(buf) - i
 		if remaining >= 8 {
 			binary.LittleEndian.PutUint64(buf[i:], v)
@@ -125,16 +121,18 @@ func (l *Layout) WriteChunkFromReader(userID, mediaID string, index int, r io.Re
 		return 0, err
 	}
 
-	// Write random padding to reach bucket size
+	// Write random padding to reach bucket size.
+	// Create one PRNG for the loop to avoid per-iteration allocation.
 	padSize := paddedSize(dataLen)
 	remaining := padSize - dataLen
 	buf := make([]byte, padBufSize)
+	rng := crypto.NewPadRNG()
 	for remaining > 0 {
 		n := remaining
 		if n > padBufSize {
 			n = padBufSize
 		}
-		FillPadding(buf[:n])
+		fillPaddingWith(rng, buf[:n])
 		if _, err := f.Write(buf[:n]); err != nil {
 			return 0, err
 		}

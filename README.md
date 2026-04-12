@@ -202,6 +202,7 @@ Darkreel is designed to run well on a single machine, from a $6/month VPS to a d
 - **Concurrent logins** — each login performs two Argon2id derivations (3 iterations, 64 MB RAM, 4 threads each), totaling ~600ms and pinning 8 OS threads. On a machine with 8 cores, only 2 logins can run at full speed concurrently. This is a deliberate security trade-off — weaker KDF parameters would make passwords easier to brute-force.
 - **SQLite write contention** — SQLite allows only one writer at a time. With many concurrent uploads from different users, write operations (quota checks, media record inserts) may briefly queue. This is rarely a bottleneck in practice since the I/O-heavy chunk writes don't hold the database lock.
 - **Single-machine architecture** — Darkreel does not support horizontal scaling or clustering. For most self-hosted use cases (personal, family, small team), a single machine with adequate disk is more than sufficient.
+- **Chunk count sent in plaintext** — The number of chunks per file is sent unencrypted during upload so the server can validate upload completeness. Since chunks are ~1 MB each (or fMP4 segment boundaries), this reveals approximate file size to the server. Exact sizes remain hidden by chunk padding and encrypted metadata.
 
 ## Deploy
 

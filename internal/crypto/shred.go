@@ -8,12 +8,11 @@ import (
 	"os"
 )
 
-// shredRNG is a fast PRNG seeded from crypto/rand, used for overwriting files
-// during secure deletion. The overwrite data does not need cryptographic quality —
-// the files are already AES-256-GCM encrypted and the keys are deleted before
-// shredding, so any random-looking data suffices.
-var shredRNG = newShredRNG()
-
+// newShredRNG creates a fast PRNG seeded from crypto/rand for overwriting files
+// during secure deletion. Each caller gets its own instance to avoid concurrent
+// access to a shared PRNG (math/rand.Rand is not goroutine-safe). The overwrite
+// data does not need cryptographic quality — the files are already AES-256-GCM
+// encrypted and the keys are deleted before shredding.
 func newShredRNG() *rand.Rand {
 	var seed [32]byte
 	if _, err := crand.Read(seed[:]); err != nil {
@@ -40,6 +39,7 @@ func ShredFile(path string) error {
 	}
 	size := info.Size()
 
+	rng := newShredRNG() // per-call PRNG avoids concurrent access to a shared instance
 	buf := make([]byte, 64*1024) // 64KB write buffer
 	if _, err := f.Seek(0, 0); err != nil {
 		f.Close()
@@ -51,7 +51,7 @@ func ShredFile(path string) error {
 		if n > remaining {
 			n = remaining
 		}
-		fillShredBuf(buf[:n])
+		fillRandBuf(rng, buf[:n])
 		if _, err := f.Write(buf[:n]); err != nil {
 			f.Close()
 			return fmt.Errorf("write for shred: %w", err)
@@ -67,10 +67,10 @@ func ShredFile(path string) error {
 	return os.Remove(path)
 }
 
-// fillShredBuf fills buf with fast pseudo-random bytes from the shred PRNG.
-func fillShredBuf(buf []byte) {
+// fillRandBuf fills buf with fast pseudo-random bytes from the given PRNG.
+func fillRandBuf(rng *rand.Rand, buf []byte) {
 	for i := 0; i < len(buf); i += 8 {
-		v := shredRNG.Uint64()
+		v := rng.Uint64()
 		remaining := len(buf) - i
 		if remaining >= 8 {
 			binary.LittleEndian.PutUint64(buf[i:], v)
@@ -80,4 +80,15 @@ func fillShredBuf(buf []byte) {
 			}
 		}
 	}
+}
+
+// NewPadRNG creates a new fast PRNG suitable for padding or overwrite data.
+// Each goroutine that calls FillRandBuf should use its own instance.
+func NewPadRNG() *rand.Rand {
+	return newShredRNG()
+}
+
+// FillRandBuf fills buf with fast pseudo-random bytes from rng.
+func FillRandBuf(rng *rand.Rand, buf []byte) {
+	fillRandBuf(rng, buf)
 }
