@@ -1,13 +1,42 @@
 package storage
 
 import (
-	"crypto/rand"
+	crand "crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"time"
 )
+
+// padRNG is a fast PRNG seeded from crypto/rand, used for generating padding
+// bytes. Padding does not need cryptographic randomness — it only needs to be
+// indistinguishable from AES-GCM ciphertext, which ChaCha8 satisfies.
+var padRNG = newPadRNG()
+
+func newPadRNG() *rand.Rand {
+	var seed [32]byte
+	if _, err := crand.Read(seed[:]); err != nil {
+		panic("failed to seed padding PRNG: " + err.Error())
+	}
+	return rand.New(rand.NewChaCha8(seed))
+}
+
+// FillPadding fills buf with fast pseudo-random bytes for padding.
+func FillPadding(buf []byte) {
+	for i := 0; i < len(buf); i += 8 {
+		v := padRNG.Uint64()
+		remaining := len(buf) - i
+		if remaining >= 8 {
+			binary.LittleEndian.PutUint64(buf[i:], v)
+		} else {
+			for j := 0; j < remaining; j++ {
+				buf[i+j] = byte(v >> (j * 8))
+			}
+		}
+	}
+}
 
 // paddedChunkSize is the legacy fixed size for 1 MB chunks on disk.
 // 1MB plaintext + 12 nonce + 16 tag = 1048604 bytes max encrypted chunk.
@@ -51,11 +80,9 @@ func (l *Layout) WriteChunk(userID, mediaID string, index int, data []byte) erro
 	padded := make([]byte, 4+padSize)
 	binary.BigEndian.PutUint32(padded[:4], uint32(len(data)))
 	copy(padded[4:], data)
-	// Fill remaining with random bytes so padding isn't distinguishable
+	// Fill remaining with pseudo-random bytes so padding isn't distinguishable
 	if rem := padSize - len(data); rem > 0 {
-		if _, err := rand.Read(padded[4+len(data):]); err != nil {
-			return fmt.Errorf("generate chunk padding: %w", err)
-		}
+		FillPadding(padded[4+len(data):])
 	}
 
 	if err := os.WriteFile(path, padded, 0600); err != nil {
@@ -107,18 +134,13 @@ func (l *Layout) WriteChunkFromReader(userID, mediaID string, index int, r io.Re
 		if n > padBufSize {
 			n = padBufSize
 		}
-		if _, err := rand.Read(buf[:n]); err != nil {
-			return 0, fmt.Errorf("generate chunk padding: %w", err)
-		}
+		FillPadding(buf[:n])
 		if _, err := f.Write(buf[:n]); err != nil {
 			return 0, err
 		}
 		remaining -= n
 	}
 
-	if err := f.Sync(); err != nil {
-		return 0, err
-	}
 	f.Close()
 	return dataLen, os.Chtimes(path, epoch, epoch)
 }
@@ -203,9 +225,7 @@ func (l *Layout) WriteThumbnail(userID, mediaID string, data []byte) error {
 	binary.BigEndian.PutUint32(padded[:4], uint32(len(data)))
 	copy(padded[4:], data)
 	if pad := paddedThumbSize - len(data); pad > 0 {
-		if _, err := rand.Read(padded[4+len(data):]); err != nil {
-			return fmt.Errorf("generate thumbnail padding: %w", err)
-		}
+		FillPadding(padded[4+len(data):])
 	}
 
 	if err := os.WriteFile(path, padded, 0600); err != nil {

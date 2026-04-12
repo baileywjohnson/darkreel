@@ -1,7 +1,6 @@
 package media
 
 import (
-	crand "crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -367,6 +366,14 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fsync the media directory once after all chunks are written,
+	// ensuring durability without the overhead of per-chunk fsync.
+	if err := h.Storage.SyncMediaDir(userID, mediaID); err != nil {
+		cleanup()
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	// Quantize size to 256 KB buckets to reduce content fingerprinting
 	// precision in the database. Negligible impact on quota accuracy.
 	const sizeQuantum = 256 * 1024
@@ -606,7 +613,7 @@ func padFolderTree(data []byte) []byte {
 	// Fill padding with random bytes so a DB-level attacker cannot distinguish
 	// padding from encrypted data and infer the exact folder tree size.
 	if padStart := 4 + len(data); padStart < bucket {
-		crand.Read(padded[padStart:])
+		storage.FillPadding(padded[padStart:])
 	}
 	return padded
 }

@@ -65,7 +65,7 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **Zero-knowledge metadata** - File names, types, sizes, dimensions, and durations are encrypted into a single blob. The server cannot read any of it.
 - **Encrypted streaming** - Videos stream via MSE with chunk-level decryption in a Web Worker. No server-side decryption. Playback starts after the first chunk.
 - **Size fingerprinting resistance** - Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data, both on disk and over the network. Original file sizes are unrecoverable. Storage quotas are quantized to 256 KB buckets to prevent exact-size fingerprinting in the database.
-- **Secure deletion** - Deleted files are overwritten 3 times with random data, fsynced, then unlinked. Best-effort on SSDs due to wear leveling.
+- **Secure deletion** - Deleted files are overwritten with random data, fsynced, then unlinked. The data is already AES-256-GCM encrypted and the encryption keys are deleted first, making the ciphertext computationally unrecoverable. The overwrite is defense-in-depth. Best-effort on SSDs due to wear leveling.
 - **Multi-user** - Each user has an isolated, encrypted library with their own master key. Admin panel for user management.
 - **Hash modification** - Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection.
 - **Chunk integrity verification** - Chunk counts are stored inside the encrypted metadata blob. On download/playback, the client verifies the count matches, detecting truncation attacks where an attacker deletes chunks from the server.
@@ -116,7 +116,7 @@ The master key never leaves the browser. During login, the server briefly decryp
 | Session key | PBKDF2-SHA256 | 600,000 iterations |
 | Chunk padding | Random fill | Bucketed to 1/2/4/8/16 MB per chunk (on disk and over the network) |
 | Hash modification | Nonce injection | JPEG COM, PNG tEXt, MP4 free box, WebM Void element |
-| Secure deletion | 3-pass shred | Random overwrite, fsync, then unlink |
+| Secure deletion | 1-pass shred | Random overwrite, fsync, then unlink. Keys deleted first — ciphertext is unrecoverable regardless. |
 
 ### AAD binding
 
@@ -173,7 +173,7 @@ These are deliberate:
 
 - **No recovery without codes.** Lose your password and your recovery code? Your data is cryptographically gone. No backdoor, no admin recovery, no "forgot password" email. This is correct behavior for a zero-knowledge system.
 
-- **SSD deletion is best-effort.** The 3-pass overwrite works on HDDs. On SSDs, wear leveling may retain old data. See [Disk encryption (LUKS)](#disk-encryption-luks) for the recommended mitigation.
+- **SSD deletion is best-effort.** The overwrite pass works on HDDs. On SSDs, wear leveling may retain old data. Since the encryption keys are deleted before shredding, the on-disk ciphertext is computationally unrecoverable regardless. See [Disk encryption (LUKS)](#disk-encryption-luks) for additional mitigation.
 
 - **Quotas are quantized and track logical size, not disk size.** Storage quotas are enforced against the encrypted byte count, quantized to 256 KB buckets to prevent exact-size content fingerprinting. Actual disk usage is higher than the quota suggests because every chunk is padded to a bucket boundary (1/2/4/8/16 MB). This is intentional — exposing exact or padded sizes would leak information that weakens size-fingerprinting resistance.
 
@@ -345,7 +345,7 @@ All endpoints except `/health` and `/api/config` require a JWT. JWTs contain use
 | GET | `/api/media/:id` | Get media metadata |
 | POST | `/api/media/upload` | Upload (multipart: metadata + thumbnail + chunks). Media ID is client-generated (UUID) for AAD binding. |
 | PATCH | `/api/media/:id` | Update metadata (e.g., folder assignment) |
-| DELETE | `/api/media/:id` | Secure delete (3-pass shred) |
+| DELETE | `/api/media/:id` | Secure delete (1-pass shred) |
 | GET | `/api/media/:id/chunk/:index` | Download encrypted chunk |
 | GET | `/api/media/:id/thumbnail` | Download encrypted thumbnail |
 
@@ -468,12 +468,14 @@ The setup script handles all of this. If deploying manually:
 - Signed auto-updates - auto-updater refuses to install binaries without a valid Ed25519 signature (hard failure on missing signing key)
 - Caddy access log control - setup script offers to disable Caddy access logs for privacy (client IPs and request paths are not logged)
 - SQLite secure deletion - `PRAGMA secure_delete=FAST` zeroes deleted database pages when it can do so without extra I/O, balancing privacy with write performance. All data in the database is encrypted, so forensic recovery of raw pages yields only ciphertext.
-- Async secure deletion - file shredding runs in a background worker pool so delete operations return immediately. The file key is already removed from the database, making the encrypted data unrecoverable. Pending shreds drain on graceful shutdown.
+- Async secure deletion - file shredding runs in a background worker pool so delete operations return immediately. The file key is already removed from the database, making the encrypted data unrecoverable. Pending shreds drain on graceful shutdown
+- LRU rate-limiter eviction - IP and account rate limiters evict the oldest entry when at capacity, preventing a botnet from filling the map and blocking all legitimate users
+- Batched upload durability - chunk writes are fsynced once after all chunks are written (not per-chunk), maintaining durability guarantees while minimizing I/O overhead
 - Static asset caching - JS, CSS, and font files are served with long-lived immutable cache headers. Cache-busting is handled via content-hash query parameters that change on every build. index.html is always revalidated to pick up new asset versions.
 - Metadata blob size limits - uploaded encrypted metadata fields are validated against strict size limits (128 bytes for encrypted keys, 64 bytes for nonces, 64 KB for metadata blobs) to prevent database bloat attacks.
 - Password-change and account-deletion rate limiting - these endpoints are rate-limited (5/min/IP) in addition to requiring the current password, preventing brute-force attacks via authenticated sessions.
 - Streaming chunk uploads - upload chunks are streamed directly to disk without buffering the entire chunk in memory, reducing peak memory usage from ~36 MB to ~64 KB per concurrent chunk write.
-- Hashed rate-limiter identifiers - IP addresses and usernames are SHA-256 hashed before storage in rate limiters, so a process memory dump cannot reveal plaintext identifiers
+- Hashed rate-limiter identifiers - IP addresses and usernames are FNV-64a hashed before storage in rate limiters, so a process memory dump cannot reveal plaintext identifiers
 - Privacy-safe logging - server logs contain no usernames, user IDs, media IDs, IP addresses, or file paths. Only generic operational messages are logged
 - Storage-layer path validation - media directory paths are validated as UUIDs at the storage layer (defense-in-depth against path traversal, in addition to handler-level validation)
 - Upload chunk count enforcement - the server rejects excess chunks immediately during the upload loop, preventing disk exhaustion from clients sending more chunks than declared
@@ -500,7 +502,7 @@ Then restart: `sudo systemctl restart darkreel`
 
 ### Disk encryption (LUKS)
 
-The 3-pass secure deletion works on traditional HDDs but is unreliable on SSDs due to wear leveling - the SSD controller may retain old data in spare sectors even after overwriting. If your threat model includes physical disk seizure or forensic recovery:
+The secure deletion overwrite is defense-in-depth — encryption keys are deleted first, making the ciphertext computationally unrecoverable. The overwrite pass works on traditional HDDs but is unreliable on SSDs due to wear leveling. If your threat model includes physical disk seizure or forensic recovery:
 
 ```bash
 # Set up LUKS on the data partition (do this BEFORE installing Darkreel)
@@ -510,7 +512,7 @@ sudo mkfs.ext4 /dev/mapper/darkreel-data
 sudo mount /dev/mapper/darkreel-data /var/lib/darkreel
 ```
 
-With LUKS, all data at rest is encrypted at the block level. Shredding becomes irrelevant because the underlying blocks are already encrypted - destroying the LUKS key makes all data unrecoverable regardless of SSD wear leveling.
+With LUKS, all data at rest is encrypted at the block level. The combination of Darkreel's application-layer encryption (keys deleted before shredding) and LUKS block-layer encryption provides two independent layers of protection against physical recovery.
 
 This is the recommended setup for production deployments on VPS providers where you don't control the physical hardware.
 

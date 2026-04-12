@@ -745,7 +745,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">secure deletion</div>
-        <div class="feature-desc">3-pass random overwrite, fsync, then unlink. Best-effort on SSDs due to wear leveling.</div>
+        <div class="feature-desc">Random overwrite, fsync, then unlink. Keys deleted first &mdash; ciphertext is unrecoverable regardless. Best-effort on SSDs due to wear leveling.</div>
       </div>
       <div class="feature">
         <div class="feature-name">multi-user</div>
@@ -854,7 +854,7 @@ a:hover { text-decoration: underline; }
       <tr><td>session key</td><td>PBKDF2-SHA256 - 600,000 iterations</td></tr>
       <tr><td>chunk padding</td><td>random fill to 1 / 2 / 4 / 8 / 16 MB buckets (on disk and over the network)</td></tr>
       <tr><td>hash modification</td><td>nonce injection - JPEG COM, PNG tEXt, MP4 free box, WebM Void element</td></tr>
-      <tr><td>deletion</td><td>3-pass random overwrite &rarr; fsync &rarr; unlink</td></tr>
+      <tr><td>deletion</td><td>1-pass random overwrite &rarr; fsync &rarr; unlink (keys deleted first)</td></tr>
     </table>
 
     <h3>on-disk format</h3>
@@ -949,9 +949,10 @@ a:hover { text-decoration: underline; }
 
     <div class="tradeoff">
       <div class="tradeoff-title">SSD deletion is best-effort</div>
-      <p>The 3-pass overwrite works on HDDs. On SSDs, wear leveling may retain old data.
-      LUKS full-disk encryption on the data partition closes this gap - see
-      <a href="#hardening">hardening</a>.</p>
+      <p>The overwrite pass works on HDDs. On SSDs, wear leveling may retain old data.
+      Since encryption keys are deleted before shredding, the ciphertext is computationally
+      unrecoverable regardless. LUKS full-disk encryption on the data partition provides an
+      additional layer &mdash; see <a href="#hardening">hardening</a>.</p>
     </div>
 
     <div class="tradeoff">
@@ -1083,7 +1084,7 @@ a:hover { text-decoration: underline; }
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/:id</span><span class="api-desc">get metadata</span></div>
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/media/upload</span><span class="api-desc">multipart: metadata + thumbnail + chunks</span></div>
       <div class="api-route"><span class="api-method patch">PATCH</span><span class="api-path">/api/media/:id</span><span class="api-desc">update metadata</span></div>
-      <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/media/:id</span><span class="api-desc">secure delete (3-pass shred)</span></div>
+      <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/media/:id</span><span class="api-desc">secure delete (1-pass shred)</span></div>
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/:id/chunk/:idx</span><span class="api-desc">download encrypted chunk</span></div>
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/media/:id/thumbnail</span><span class="api-desc">download encrypted thumbnail</span></div>
     </div>
@@ -1185,7 +1186,7 @@ a:hover { text-decoration: underline; }
 <span class="output">last-admin guard</span>     <span class="comment">atomic transaction prevents TOCTOU race on admin deletion</span>
 <span class="output">storage quotas</span>       <span class="comment">mandatory per-user limits in GB (byte-accurate), raise-only, validated against disk (2 GB reserve)</span>
 <span class="output">secure delete (DB)</span>   <span class="comment">PRAGMA secure_delete zeroes deleted pages - prevents forensic recovery from SQLite/WAL</span>
-<span class="output">hashed identifiers</span>   <span class="comment">IPs and usernames SHA-256 hashed in rate limiters - memory dumps reveal no plaintext</span>
+<span class="output">hashed identifiers</span>   <span class="comment">IPs and usernames FNV-64a hashed in rate limiters - memory dumps reveal no plaintext</span>
 <span class="output">privacy-safe logs</span>    <span class="comment">no usernames, user IDs, media IDs, or IP addresses in server logs</span>
 <span class="output">path validation</span>      <span class="comment">UUID validation at storage layer - defense-in-depth against path traversal</span>
 <span class="output">proxy-aware IPs</span>      <span class="comment">X-Forwarded-For trust off by default - opt-in via TRUST_PROXY</span>
@@ -1208,8 +1209,9 @@ a:hover { text-decoration: underline; }
     <div class="section-label">10 - hardening</div>
     <h2>disk encryption (LUKS)</h2>
 
-    <p>The 3-pass secure deletion is unreliable on SSDs due to wear leveling. If your threat
-    model includes physical disk seizure or forensic recovery, encrypt the data partition:</p>
+    <p>The secure deletion overwrite is defense-in-depth &mdash; encryption keys are deleted first,
+    making the ciphertext computationally unrecoverable. The overwrite is unreliable on SSDs due
+    to wear leveling. If your threat model includes physical disk seizure, encrypt the data partition:</p>
 
     <div class="terminal">
       <code>
@@ -1221,9 +1223,10 @@ a:hover { text-decoration: underline; }
       </code>
     </div>
 
-    <p>With LUKS, all data at rest is encrypted at the block level. Shredding becomes
-    irrelevant - destroying the LUKS key makes all data unrecoverable regardless
-    of SSD wear leveling. Recommended for production VPS deployments.</p>
+    <p>With LUKS, all data at rest is encrypted at the block level. The combination of
+    Darkreel&rsquo;s application-layer encryption (keys deleted before shredding) and LUKS
+    block-layer encryption provides two independent layers of protection against physical
+    recovery. Recommended for production VPS deployments.</p>
 
     <h2>session persistence</h2>
 

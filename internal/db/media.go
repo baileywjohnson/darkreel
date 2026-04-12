@@ -28,30 +28,24 @@ func InsertMedia(db *sql.DB, m *MediaItem) error {
 }
 
 func ListMedia(db *sql.DB, userID string, limit, offset int) ([]*MediaItem, int, error) {
-	where := "WHERE user_id = ?"
-	args := []any{userID}
+	query := `SELECT id, user_id, chunk_count, size_bytes, file_key_enc, thumb_key_enc,
+	                 hash_nonce, metadata_enc, metadata_nonce, created_at,
+	                 COUNT(*) OVER() AS total
+	          FROM media WHERE user_id = ?
+	          ORDER BY created_at DESC LIMIT ? OFFSET ?`
 
-	var total int
-	err := db.QueryRow("SELECT COUNT(*) FROM media "+where, args...).Scan(&total)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	query := "SELECT id, user_id, chunk_count, size_bytes, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce, created_at FROM media " +
-		where + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-	args = append(args, limit, offset)
-
-	rows, err := db.Query(query, args...)
+	rows, err := db.Query(query, userID, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
 
 	var items []*MediaItem
+	var total int
 	for rows.Next() {
 		m := &MediaItem{}
 		if err := rows.Scan(&m.ID, &m.UserID, &m.ChunkCount, &m.SizeBytes, &m.FileKeyEnc, &m.ThumbKeyEnc,
-			&m.HashNonce, &m.MetadataEnc, &m.MetadataNonce, &m.CreatedAt); err != nil {
+			&m.HashNonce, &m.MetadataEnc, &m.MetadataNonce, &m.CreatedAt, &total); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, m)

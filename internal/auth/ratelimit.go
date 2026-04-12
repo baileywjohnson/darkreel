@@ -1,8 +1,7 @@
 package auth
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"hash/fnv"
 	"sync"
 	"time"
 )
@@ -15,7 +14,7 @@ const accountMaxVisitors = 10000
 // exists via rate-limit timing differences.
 type AccountLimiter struct {
 	mu       sync.Mutex
-	visitors map[string]*accountVisitor
+	visitors map[uint64]*accountVisitor
 	max      int
 	window   time.Duration
 }
@@ -27,7 +26,7 @@ type accountVisitor struct {
 
 func NewAccountLimiter(max int, window time.Duration) *AccountLimiter {
 	al := &AccountLimiter{
-		visitors: make(map[string]*accountVisitor),
+		visitors: make(map[uint64]*accountVisitor),
 		max:      max,
 		window:   window,
 	}
@@ -51,12 +50,12 @@ func (al *AccountLimiter) cleanup() {
 	}
 }
 
-// hashUsername returns a hex-encoded SHA-256 hash of the username.
-// Avoids storing plaintext usernames in memory where they could be
-// recovered from a process memory dump.
-func hashUsername(username string) string {
-	h := sha256.Sum256([]byte(username))
-	return hex.EncodeToString(h[:16]) // 128-bit prefix is sufficient for bucketing
+// hashUsername returns a hash of the username. Avoids storing plaintext
+// usernames in memory where they could be recovered from a process memory dump.
+func hashUsername(username string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(username))
+	return h.Sum64()
 }
 
 // Allow returns true if the username has not exceeded its rate limit.
@@ -78,7 +77,7 @@ func (al *AccountLimiter) Allow(username string) bool {
 			// Second pass: if still at capacity, evict the oldest entry (LRU)
 			// to prevent a botnet from filling the map and blocking all logins
 			if len(al.visitors) >= accountMaxVisitors {
-				var oldestKey string
+				var oldestKey uint64
 				var oldestTime time.Time
 				first := true
 				for k, entry := range al.visitors {
@@ -88,7 +87,7 @@ func (al *AccountLimiter) Allow(username string) bool {
 						first = false
 					}
 				}
-				if oldestKey != "" {
+				if !first {
 					delete(al.visitors, oldestKey)
 				}
 			}

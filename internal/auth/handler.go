@@ -597,6 +597,7 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	defer clear(newRecoveryCode)
 	newRecoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, newRecoveryCode, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -628,7 +629,6 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 	Sessions.DeleteAllForUser(user.ID)
 
 	recoveryCodeB64 := base64.URLEncoding.EncodeToString(newRecoveryCode)
-	for i := range newRecoveryCode { newRecoveryCode[i] = 0 }
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{

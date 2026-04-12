@@ -1,8 +1,7 @@
 package server
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"hash/fnv"
 	"net"
 	"net/http"
 	"sync"
@@ -13,7 +12,7 @@ const maxVisitors = 10000 // cap to prevent memory exhaustion under DDoS
 
 type rateLimiter struct {
 	mu       sync.Mutex
-	visitors map[string]*visitor
+	visitors map[uint64]*visitor
 	max      int
 	window   time.Duration
 }
@@ -25,7 +24,7 @@ type visitor struct {
 
 func newRateLimiter(max int, window time.Duration) *rateLimiter {
 	rl := &rateLimiter{
-		visitors: make(map[string]*visitor),
+		visitors: make(map[uint64]*visitor),
 		max:      max,
 		window:   window,
 	}
@@ -50,7 +49,7 @@ func (rl *rateLimiter) cleanup() {
 	}
 }
 
-func (rl *rateLimiter) allow(ip string) bool {
+func (rl *rateLimiter) allow(ip uint64) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -64,9 +63,21 @@ func (rl *rateLimiter) allow(ip string) bool {
 					delete(rl.visitors, k)
 				}
 			}
-			// If still at capacity after eviction, reject to prevent unbounded growth
+			// If still at capacity after eviction, evict the oldest entry (LRU)
 			if len(rl.visitors) >= maxVisitors {
-				return false
+				var oldestKey uint64
+				var oldestTime time.Time
+				first := true
+				for k, entry := range rl.visitors {
+					if first || entry.resetAt.Before(oldestTime) {
+						oldestKey = k
+						oldestTime = entry.resetAt
+						first = false
+					}
+				}
+				if !first {
+					delete(rl.visitors, oldestKey)
+				}
 			}
 		}
 		rl.visitors[ip] = &visitor{count: 1, resetAt: now.Add(rl.window)}
@@ -92,8 +103,9 @@ func RateLimit(max int, window time.Duration) func(http.Handler) http.Handler {
 			}
 			// Hash IP to avoid storing plaintext addresses in memory
 			// where they could be recovered from a process memory dump.
-			h := sha256.Sum256([]byte(ip))
-			key := hex.EncodeToString(h[:16])
+			h := fnv.New64a()
+			h.Write([]byte(ip))
+			key := h.Sum64()
 			if !rl.allow(key) {
 				http.Error(w, "too many requests", http.StatusTooManyRequests)
 				return

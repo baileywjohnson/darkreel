@@ -47,11 +47,7 @@ func EncryptBlock(plaintext, key, aad []byte) ([]byte, error) {
 // and cross-file chunk substitution.
 // Returns: nonce (12 bytes) || ciphertext || tag (16 bytes)
 func EncryptChunk(plaintext, key []byte, chunkIndex int, mediaID string) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := newGCM(key)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +60,30 @@ func EncryptChunk(plaintext, key []byte, chunkIndex int, mediaID string) ([]byte
 	aad := chunkAAD(mediaID, chunkIndex)
 
 	return gcm.Seal(nonce, nonce, plaintext, aad), nil
+}
+
+// NewChunkCipher creates a reusable GCM cipher for encrypting multiple chunks
+// with the same key. This avoids re-computing the AES key schedule per chunk.
+func NewChunkCipher(key []byte) (cipher.AEAD, error) {
+	return newGCM(key)
+}
+
+// EncryptChunkWith encrypts a chunk using a pre-initialized GCM cipher.
+func EncryptChunkWith(gcm cipher.AEAD, plaintext []byte, chunkIndex int, mediaID string) ([]byte, error) {
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	aad := chunkAAD(mediaID, chunkIndex)
+	return gcm.Seal(nonce, nonce, plaintext, aad), nil
+}
+
+func newGCM(key []byte) (cipher.AEAD, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
 }
 
 // chunkAAD builds the additional authenticated data for chunk encryption:
@@ -79,6 +99,11 @@ func chunkAAD(mediaID string, chunkIndex int) []byte {
 // EncryptReader reads from r in ChunkSize blocks, encrypts each, and writes to w.
 // Returns the number of chunks written.
 func EncryptReader(r io.Reader, w io.Writer, key []byte, mediaID string) (int, error) {
+	gcm, err := NewChunkCipher(key)
+	if err != nil {
+		return 0, fmt.Errorf("init cipher: %w", err)
+	}
+
 	bufPtr := bufPool.Get().(*[]byte)
 	defer func() {
 		clear(*bufPtr) // zero plaintext before returning to pool
@@ -90,7 +115,7 @@ func EncryptReader(r io.Reader, w io.Writer, key []byte, mediaID string) (int, e
 	for {
 		n, err := io.ReadFull(r, buf)
 		if n > 0 {
-			enc, encErr := EncryptChunk(buf[:n], key, chunkIndex, mediaID)
+			enc, encErr := EncryptChunkWith(gcm, buf[:n], chunkIndex, mediaID)
 			if encErr != nil {
 				return chunkIndex, fmt.Errorf("encrypt chunk %d: %w", chunkIndex, encErr)
 			}

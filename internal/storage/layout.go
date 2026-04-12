@@ -58,6 +58,20 @@ func (l *Layout) EnsureMediaDir(userID, mediaID string) error {
 	return nil
 }
 
+// SyncMediaDir fsyncs the media directory to ensure all written chunks are
+// durable on disk. Called once after all chunks are written, instead of
+// per-chunk fsync, to reduce I/O overhead while maintaining durability.
+func (l *Layout) SyncMediaDir(userID, mediaID string) error {
+	dir := l.MediaDir(userID, mediaID)
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	err = f.Sync()
+	f.Close()
+	return err
+}
+
 // CleanupOrphans removes data directories that are not referenced in the DB.
 // validPaths is a set of "userID/mediaID" strings that should be kept.
 func (l *Layout) CleanupOrphans(validPaths map[string]bool) (int, error) {

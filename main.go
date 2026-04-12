@@ -82,21 +82,15 @@ func main() {
 	// 1. Clean up orphaned data directories not referenced in DB.
 	go func() {
 		defer startupWg.Done()
-		validPaths := make(map[string]bool)
-		userIDs, err := db.ListUserIDs(database)
+		// Single query to get all valid user_id/media_id pairs (avoids N+1)
+		summaries, err := db.ListAllMediaSummaries(database)
 		if err != nil {
-			log.Printf("Warning: orphan cleanup skipped — failed to list users: %v", err)
+			log.Printf("Warning: orphan cleanup skipped — failed to list media: %v", err)
 			return
 		}
-		for _, uid := range userIDs {
-			mediaIDs, err := db.ListMediaIDsByUser(database, uid)
-			if err != nil {
-				log.Printf("Warning: orphan cleanup skipped — failed to list media: %v", err)
-				return
-			}
-			for _, mid := range mediaIDs {
-				validPaths[uid+"/"+mid] = true
-			}
+		validPaths := make(map[string]bool, len(summaries))
+		for _, s := range summaries {
+			validPaths[s.UserID+"/"+s.ID] = true
 		}
 		if removed, err := store.CleanupOrphans(validPaths); err != nil {
 			log.Printf("Warning: orphan cleanup failed: %v", err)
