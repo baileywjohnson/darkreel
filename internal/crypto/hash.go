@@ -74,7 +74,11 @@ func modifyPNG(data []byte, nonce []byte) ([]byte, error) {
 		if chunkType == "IDAT" {
 			break
 		}
-		pos += 12 + int(chunkLen) // length + type + data + CRC
+		next := int64(pos) + 12 + int64(chunkLen) // length + type + data + CRC
+		if next > int64(len(data)) {
+			break
+		}
+		pos = int(next)
 	}
 
 	// Build tEXt chunk: keyword\0value
@@ -127,20 +131,11 @@ func crc32PNG(data []byte) uint32 {
 	return crc ^ 0xFFFFFFFF
 }
 
-// modifyMP4 inserts a custom 'free' box at the beginning of the file (after ftyp if present).
+// modifyMP4 appends a 'free' box at the END of the file.
+// Inserting before moov would corrupt stco/co64 byte offsets.
 func modifyMP4(data []byte, nonce []byte) ([]byte, error) {
 	if len(data) < 8 {
 		return nil, fmt.Errorf("not a valid MP4")
-	}
-
-	// Find end of ftyp box
-	pos := 0
-	if len(data) >= 8 && string(data[4:8]) == "ftyp" {
-		boxSize := binary.BigEndian.Uint32(data[0:4])
-		pos = int(boxSize)
-		if pos > len(data) {
-			pos = len(data)
-		}
 	}
 
 	// Build a 'free' box with our nonce
@@ -151,9 +146,8 @@ func modifyMP4(data []byte, nonce []byte) ([]byte, error) {
 	copy(freeBox[8:], nonce)
 
 	result := make([]byte, 0, len(data)+len(freeBox))
-	result = append(result, data[:pos]...)
+	result = append(result, data...)
 	result = append(result, freeBox...)
-	result = append(result, data[pos:]...)
 	return result, nil
 }
 

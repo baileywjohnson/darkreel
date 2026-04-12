@@ -215,7 +215,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := db.CreateUser(h.DB, user); err != nil {
-		http.Error(w, "Username is unavailable.", http.StatusConflict)
+		http.Error(w, "Registration failed.", http.StatusConflict)
 		return
 	}
 

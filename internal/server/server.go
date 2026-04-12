@@ -167,6 +167,7 @@ func (s *Server) routes() chi.Router {
 		r.Put("/api/admin/storage/quota", authHandler.SetDefaultQuota)
 
 		r.Post("/api/admin/registration", func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 			var req struct {
 				Enabled bool `json:"enabled"`
 			}

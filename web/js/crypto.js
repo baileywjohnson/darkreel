@@ -281,16 +281,8 @@ export function modifyHash(data, mimeType, nonce) {
 }
 
 function modifyMP4(data, nonce) {
-    // Insert a 'free' box after ftyp (matches server-side implementation).
-    // If no ftyp is found, insert at the beginning.
-    let pos = 0;
-    if (data.length >= 8) {
-        const type = String.fromCharCode(data[4], data[5], data[6], data[7]);
-        if (type === 'ftyp') {
-            pos = ((data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]) >>> 0;
-            if (pos > data.length) pos = data.length;
-        }
-    }
+    // Append a 'free' box at the END of the file.
+    // Inserting before moov would corrupt stco/co64 byte offsets.
     const boxSize = 8 + nonce.length;
     const freeBox = new Uint8Array(boxSize);
     freeBox[0] = (boxSize >> 24) & 0xFF;
@@ -303,9 +295,8 @@ function modifyMP4(data, nonce) {
     freeBox[7] = 0x65; // 'e'
     freeBox.set(nonce, 8);
     const result = new Uint8Array(data.length + boxSize);
-    result.set(data.subarray(0, pos), 0);
-    result.set(freeBox, pos);
-    result.set(data.subarray(pos), pos + boxSize);
+    result.set(data, 0);
+    result.set(freeBox, data.length);
     return result;
 }
 
