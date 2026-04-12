@@ -36,7 +36,7 @@ function truncateName(name) {
 //
 let _mp4boxLoaded = false;
 // SRI hash for mp4box.min.js — updated by build.sh
-const MP4BOX_SRI = 'sha384-9oK16t6TCKqCB5OpB/LwRkNa48prlRFQPTYw8tb9uj699JvQ1wjxIq7YO8Z4hn3a';
+const MP4BOX_SRI = 'sha384-i+07rr1k46m6ZQEm1w58XlCsPJlpfWscZoPXJhQjqlFNOuE2tUM3VoMNB5wzIXrE';
 
 async function loadMP4Box() {
     if (_mp4boxLoaded) return true;
@@ -44,7 +44,10 @@ async function loadMP4Box() {
     try {
         await new Promise((resolve, reject) => {
             const script = document.createElement('script');
-            script.src = '/js/vendor/mp4box.min.js';
+            // Cache-bust using a short hash derived from the SRI value so browser
+            // cache is invalidated whenever the file content changes.
+            const mp4boxVer = MP4BOX_SRI ? MP4BOX_SRI.slice(-16) : '';
+            script.src = '/js/vendor/mp4box.min.js' + (mp4boxVer ? '?v=' + mp4boxVer : '');
             if (MP4BOX_SRI) {
                 script.integrity = MP4BOX_SRI;
                 script.crossOrigin = 'anonymous';
@@ -231,8 +234,13 @@ async function remuxToFMP4(data) {
             mp4box.onError = (e) => { clearTimeout(timeout); reject(e); };
             const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
             ab.fileStart = 0;
-            mp4box.appendBuffer(ab);
-            mp4box.flush();
+            // Suppress mp4box's internal error/warn logs during initial parse —
+            // non-BMFF files trigger harmless BoxParser errors that clutter the console.
+            const _origError = Log.error, _origWarn = Log.warn;
+            Log.error = Log.warn = () => {};
+            try { mp4box.appendBuffer(ab); mp4box.flush(); } finally {
+                Log.error = _origError; Log.warn = _origWarn;
+            }
         });
 
         if (!info.tracks || info.tracks.length === 0) return null;
