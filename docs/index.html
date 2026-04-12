@@ -995,6 +995,13 @@ a:hover { text-decoration: underline; }
       <p>One writer at a time. Rarely a practical bottleneck since chunk I/O doesn't hold the
       database lock.</p>
     </div>
+
+    <div class="tradeoff">
+      <div class="tradeoff-title">chunk count sent in plaintext</div>
+      <p>The number of chunks per file is sent unencrypted during upload so the server can validate
+      upload completeness. Since chunks are ~1 MB each, this reveals approximate file size. Exact
+      sizes remain hidden by chunk padding and encrypted metadata.</p>
+    </div>
   </section>
 
   <!-- ────────────────────────── DEPLOY ────────────────────────── -->
@@ -1200,6 +1207,10 @@ a:hover { text-decoration: underline; }
 <span class="output">access log control</span>  <span class="comment">setup offers to disable Caddy access logs for privacy</span>
 <span class="output">thumbnail validation</span> <span class="comment">oversized thumbnails rejected with clear error, not silently truncated</span>
 <span class="output">folder tree padding</span> <span class="comment">encrypted folder blobs padded with random bytes, not zeros - prevents DB-level size inference</span>
+<span class="output">thread-safe PRNG</span>    <span class="comment">per-goroutine ChaCha8 instances for padding and shredding - no shared mutable state</span>
+<span class="output">shredder shutdown</span>   <span class="comment">rejects new work after shutdown begins - prevents panics during graceful shutdown</span>
+<span class="output">metadata update limits</span> <span class="comment">PATCH endpoint enforces same size limits as upload (64 KB metadata, 64B nonces)</span>
+<span class="output">dynamic cache-bust</span>  <span class="comment">dynamically loaded scripts include content-hash params - prevents stale cache after upgrades</span>
       </code>
     </div>
   </section>

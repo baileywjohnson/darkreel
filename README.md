@@ -482,6 +482,10 @@ The setup script handles all of this. If deploying manually:
 - Upload chunk count enforcement - the server rejects excess chunks immediately during the upload loop, preventing disk exhaustion from clients sending more chunks than declared
 - Oversized thumbnail rejection - thumbnails exceeding the 256 KB limit are rejected with a clear error instead of silently truncated, preventing corrupted encrypted data from being stored
 - Folder tree random padding - encrypted folder tree blobs are padded with random bytes (not zeros), preventing a database-level attacker from determining exact folder structure size
+- Thread-safe PRNG - chunk padding and file shredding use per-goroutine PRNG instances (ChaCha8-seeded from crypto/rand) to avoid data races under concurrent uploads and deletions. No shared mutable state between goroutines.
+- Graceful shredder shutdown - the background shredder rejects new work after shutdown begins, preventing panics from sends on a closed channel during graceful server shutdown
+- Metadata update size limits - the PATCH metadata endpoint enforces the same blob size limits as upload (64 KB metadata, 64-byte nonces), preventing database bloat via repeated metadata updates
+- Dynamic asset cache-busting - dynamically loaded scripts (mp4box.js) include content-hash query parameters derived from their SRI hash, preventing stale browser cache from breaking integrity checks after upgrades
 
 ### Session persistence
 
