@@ -3482,13 +3482,8 @@ function initTouchDrag(el, getData) {
 
     el.addEventListener('touchmove', (e) => {
         if (timer) {
-            const t = e.touches[0];
-            if (Math.abs(t.clientX - startX) > 10 || Math.abs(t.clientY - startY) > 10) {
-                clearTimeout(timer);
-                timer = null;
-            } else {
-                e.preventDefault(); // prevent scroll while waiting for long-press
-            }
+            clearTimeout(timer);
+            timer = null;
             return;
         }
         if (!_touchDragState) return;
