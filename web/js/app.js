@@ -3715,10 +3715,15 @@ async function handleDropUpload(files, targetFolderId) {
             }, 500);
         }, 3000);
     }
-    loadMedia();
-    if (!adminView.classList.contains('hidden')) {
-        loadAdminStorage();
-        loadAdminUsers();
+    // Only refresh the gallery when ALL concurrent uploads have finished.
+    // If another handleDropUpload is still in progress, its pendingUploads
+    // entries would conflict with server-side items, causing duplicate tiles.
+    if (pendingUploads.size === 0) {
+        loadMedia();
+        if (!adminView.classList.contains('hidden')) {
+            loadAdminStorage();
+            loadAdminUsers();
+        }
     }
 }
 
@@ -3994,6 +3999,11 @@ async function playVideoMSE(item, fileKey) {
 
     // Cache for decrypted chunks (keeps init segment + recently fetched)
     const chunkCache = new Map();
+    // Track in-flight fetch promises to prevent duplicate HTTP requests.
+    // Without this, the prefetch loop and main loop both call fetchChunk()
+    // for the same index before the first call completes, causing each
+    // chunk to be fetched 2-5x over the network.
+    const chunkInflight = new Map();
     let fetchGeneration = 0; // incremented on seek to cancel stale fetches
 
     function waitForUpdate() {
@@ -4004,16 +4014,22 @@ async function playVideoMSE(item, fileKey) {
         });
     }
 
-    async function fetchChunk(index) {
-        if (chunkCache.has(index)) return chunkCache.get(index);
-        const res = await fetchRetry(`/api/media/${item.id}/chunk/${index}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
-        const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
-        const dec = await workerDecrypt('decryptChunk', encData, fileKey, index, item.id);
-        chunkCache.set(index, dec);
-        return dec;
+    function fetchChunk(index) {
+        if (chunkCache.has(index)) return Promise.resolve(chunkCache.get(index));
+        if (chunkInflight.has(index)) return chunkInflight.get(index);
+        const promise = (async () => {
+            const res = await fetchRetry(`/api/media/${item.id}/chunk/${index}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
+            const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
+            const dec = await workerDecrypt('decryptChunk', encData, fileKey, index, item.id);
+            chunkCache.set(index, dec);
+            chunkInflight.delete(index);
+            return dec;
+        })();
+        chunkInflight.set(index, promise);
+        return promise;
     }
 
     async function appendData(data, gen) {
@@ -4091,9 +4107,13 @@ async function playVideoMSE(item, fileKey) {
             await appendData(dec, generation);
             if (aborted || generation !== fetchGeneration) return;
 
-            // Throttle: wait if we're far ahead of playback or ManagedMediaSource paused streaming
+            // Throttle: pause fetching when buffer is far ahead of playback.
+            // Resumes when buffer drops below RESUME_THRESHOLD, preventing
+            // the entire file from being fetched preemptively.
             if (i > startChunk + 2) {
                 try {
+                    const BUFFER_LIMIT = 30;    // pause when 30s ahead
+                    const RESUME_AT = 15;       // resume when buffer drops to 15s
                     while (!aborted && generation === fetchGeneration) {
                         if (!streamingAllowed) {
                             await new Promise(r => setTimeout(r, 500));
@@ -4101,9 +4121,14 @@ async function playVideoMSE(item, fileKey) {
                         }
                         if (sb.buffered.length > 0) {
                             const ahead = sb.buffered.end(sb.buffered.length - 1) - viewerVideo.currentTime;
-                            if (ahead >= 60) {
+                            if (ahead >= BUFFER_LIMIT) {
+                                // Wait until buffer drops below resume threshold
                                 await new Promise(r => setTimeout(r, 2000));
-                                continue;
+                                // Check resume threshold instead of limit to avoid fetch/pause oscillation
+                                const resumeAhead = sb.buffered.length > 0
+                                    ? sb.buffered.end(sb.buffered.length - 1) - viewerVideo.currentTime
+                                    : 0;
+                                if (resumeAhead > RESUME_AT) continue;
                             }
                         }
                         break;

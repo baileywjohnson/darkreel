@@ -67,7 +67,7 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **Size fingerprinting resistance** - Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data, both on disk and over the network. Original file sizes are unrecoverable. Storage quotas are quantized to 256 KB buckets to prevent exact-size fingerprinting in the database.
 - **Secure deletion** - Deleted files are overwritten with random data, fsynced, then unlinked. The data is already AES-256-GCM encrypted and the encryption keys are deleted first, making the ciphertext computationally unrecoverable. The overwrite is defense-in-depth. Best-effort on SSDs due to wear leveling.
 - **Multi-user** - Each user has an isolated, encrypted library with their own master key. Admin panel for user management.
-- **Hash modification** - Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection.
+- **Hash modification** - Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box appended at end, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection.
 - **Chunk integrity verification** - Chunk counts are stored inside the encrypted metadata blob. On download/playback, the client verifies the count matches, detecting truncation attacks where an attacker deletes chunks from the server.
 - **Generic file storage** - Not just media. Upload any file type — PDFs, documents, archives, code. Everything is encrypted with the same zero-knowledge scheme.
 - **Encrypted folders** - Organize your files into folders. The folder structure is encrypted - only you can see it. Drag-and-drop to reorganize (desktop and mobile touch).
@@ -115,7 +115,7 @@ The master key never leaves the browser. During login, the server briefly decryp
 | Metadata encryption | AES-256-GCM | Media ID as AAD (prevents ciphertext substitution) |
 | Session key | PBKDF2-SHA256 | 600,000 iterations |
 | Chunk padding | Random fill | Bucketed to 1/2/4/8/16 MB per chunk (on disk and over the network) |
-| Hash modification | Nonce injection | JPEG COM, PNG tEXt, MP4 free box, WebM Void element |
+| Hash modification | Nonce injection | JPEG COM, PNG tEXt, MP4 free box (appended at end), WebM Void element |
 | Secure deletion | 1-pass shred | Random overwrite, fsync, then unlink. Keys deleted first — ciphertext is unrecoverable regardless. |
 
 ### AAD binding
@@ -486,6 +486,8 @@ The setup script handles all of this. If deploying manually:
 - Graceful shredder shutdown - the background shredder rejects new work after shutdown begins, preventing panics from sends on a closed channel during graceful server shutdown
 - Metadata update size limits - the PATCH metadata endpoint enforces the same blob size limits as upload (64 KB metadata, 64-byte nonces), preventing database bloat via repeated metadata updates
 - Dynamic asset cache-busting - dynamically loaded scripts (mp4box.js) include content-hash query parameters derived from their SRI hash, preventing stale browser cache from breaking integrity checks after upgrades
+- Generic registration errors - public registration endpoint returns a generic error on failure, preventing username enumeration
+- Admin storage coarsening - per-user storage usage shown to admins is coarsened to the nearest GB, reducing per-upload activity monitoring precision while keeping exact values for internal quota enforcement
 
 ### Session persistence
 

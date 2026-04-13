@@ -82,13 +82,17 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := make([]userResponse, len(users))
+	const gb int64 = 1 << 30
 	for i, u := range users {
+		// Coarsen used_bytes to nearest GB to reduce per-user activity
+		// monitoring precision. Exact values remain internal for quota enforcement.
+		coarsened := (u.UsedBytes / gb) * gb
 		resp[i] = userResponse{
 			ID:           u.ID,
 			Username:     u.Username,
 			IsAdmin:      u.IsAdmin,
 			StorageQuota: u.StorageQuota,
-			UsedBytes:    u.UsedBytes,
+			UsedBytes:    coarsened,
 			CreatedAt:    u.CreatedAt,
 		}
 	}

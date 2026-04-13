@@ -6,9 +6,6 @@
 <title>Darkreel</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
 <meta name="description" content="End-to-end encrypted media storage, streaming & file vault. Single Go binary. Zero-knowledge architecture. Your server stores opaque blobs. Your browser holds the keys.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=optional">
 <style>
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -753,7 +750,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">hash modification</div>
-        <div class="feature-desc">Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box, WebM Void) before encryption. Identical files produce different ciphertexts, defeating duplicate detection.</div>
+        <div class="feature-desc">Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box appended at end, WebM Void) before encryption. Identical files produce different ciphertexts, defeating duplicate detection.</div>
       </div>
       <div class="feature">
         <div class="feature-name">chunk integrity verification</div>
@@ -853,7 +850,7 @@ a:hover { text-decoration: underline; }
       <tr><td>metadata encryption</td><td>AES-256-GCM - media ID as AAD (prevents ciphertext substitution)</td></tr>
       <tr><td>session key</td><td>PBKDF2-SHA256 - 600,000 iterations</td></tr>
       <tr><td>chunk padding</td><td>random fill to 1 / 2 / 4 / 8 / 16 MB buckets (on disk and over the network)</td></tr>
-      <tr><td>hash modification</td><td>nonce injection - JPEG COM, PNG tEXt, MP4 free box, WebM Void element</td></tr>
+      <tr><td>hash modification</td><td>nonce injection - JPEG COM, PNG tEXt, MP4 free box (appended at end), WebM Void element</td></tr>
       <tr><td>deletion</td><td>1-pass random overwrite &rarr; fsync &rarr; unlink (keys deleted first)</td></tr>
     </table>
 
@@ -1211,6 +1208,8 @@ a:hover { text-decoration: underline; }
 <span class="output">shredder shutdown</span>   <span class="comment">rejects new work after shutdown begins - prevents panics during graceful shutdown</span>
 <span class="output">metadata update limits</span> <span class="comment">PATCH endpoint enforces same size limits as upload (64 KB metadata, 64B nonces)</span>
 <span class="output">dynamic cache-bust</span>  <span class="comment">dynamically loaded scripts include content-hash params - prevents stale cache after upgrades</span>
+<span class="output">generic reg errors</span>  <span class="comment">public registration returns generic error on failure - prevents username enumeration</span>
+<span class="output">admin storage coarse</span> <span class="comment">per-user used_bytes coarsened to nearest GB - reduces per-upload activity monitoring</span>
       </code>
     </div>
   </section>
