@@ -786,7 +786,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">storage quotas</div>
-        <div class="feature-desc">Mandatory per-user quotas in GB, tracked in bytes for accuracy. Per-user quotas can only be raised. Validated against available disk capacity with a 2 GB reserve.</div>
+        <div class="feature-desc">Per-user quotas in GB (default: 1 GB), tracked in bytes for accuracy. Per-user quotas can only be raised. Validated against available disk capacity with a 2 GB reserve.</div>
       </div>
       <div class="feature">
         <div class="feature-name">self-hosted</div>
@@ -1058,7 +1058,7 @@ a:hover { text-decoration: underline; }
 <span class="flag">PERSIST_SESSION</span>=true                  <span class="comment"># master key in sessionStorage (default: on)</span>
 <span class="flag">ALLOW_REGISTRATION</span>=false              <span class="comment"># initial state; admin panel toggle persists to DB</span>
 <span class="flag">TRUST_PROXY</span>=false                     <span class="comment"># enable behind Caddy/nginx for correct rate limiting</span>
-<span class="flag">MAX_STORAGE_GB</span>=50                     <span class="comment"># default per-user storage quota in GB (setup script prompts for this)</span>
+<span class="flag">MAX_STORAGE_GB</span>=50                     <span class="comment"># per-user storage quota in GB (default: 1 GB if not set)</span>
       </code>
     </div>
   </section>

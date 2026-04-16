@@ -182,7 +182,7 @@ func main() {
 	// Start session cleanup goroutine (removes expired sessions every minute)
 	auth.Sessions.StartCleanup()
 
-	var maxBytes int64 // 0 = unlimited
+	var maxBytes int64 = 1 * 1024 * 1024 * 1024 // default: 1 GB per user
 	if v := os.Getenv("MAX_STORAGE_GB"); v != "" {
 		if gb, err := strconv.ParseFloat(v, 64); err == nil && gb > 0 {
 			maxBytes = int64(gb * 1024 * 1024 * 1024)
