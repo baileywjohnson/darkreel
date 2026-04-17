@@ -810,7 +810,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">rate-limited sensitive endpoints</div>
-        <div class="feature-desc">Password change and account deletion endpoints are rate-limited to prevent abuse.</div>
+        <div class="feature-desc">Password change and account deletion endpoints are rate-limited per-IP (5/min) and per-account (10/15min), preventing brute-force of the old password via stolen sessions.</div>
       </div>
     </div>
   </section>
