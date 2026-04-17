@@ -346,6 +346,17 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-account rate limit: defends against brute-force of the old password
+	// via a stolen JWT. Checked before password verification so the limit
+	// applies to all attempts, not just successful verifications.
+	if h.AccountLimiter != nil && !h.AccountLimiter.Allow(user.Username) {
+		// Dummy work so response timing is indistinguishable from a real check
+		dummySalt, _ := crypto.GenerateSalt()
+		crypto.DeriveKey(req.OldPassword, dummySalt)
+		http.Error(w, "Current password is incorrect.", http.StatusBadRequest)
+		return
+	}
+
 	if !crypto.VerifyPassword(req.OldPassword, user.AuthSalt, user.PasswordHash) {
 		http.Error(w, "Current password is incorrect.", http.StatusBadRequest)
 		return
