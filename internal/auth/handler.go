@@ -55,6 +55,10 @@ type Handler struct {
 	Shredder       MediaShredder     // async secure file deletion (used by HTTP handlers)
 	AccountLimiter *AccountLimiter   // per-username rate limiter for login/recovery
 	DataDir        string            // data directory path (for disk usage stats)
+	// OnUserDeleted is called after a user is atomically deleted so other
+	// subsystems (e.g., media handler's per-user upload semaphore map) can
+	// clean up user-keyed state. May be nil.
+	OnUserDeleted func(userID string)
 }
 
 // BootstrapAdmin creates the initial admin user if no users exist.
@@ -509,6 +513,10 @@ func (h *Handler) DeleteOwnAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	Sessions.DeleteAllForUser(user.ID)
+
+	if h.OnUserDeleted != nil {
+		h.OnUserDeleted(user.ID)
+	}
 
 	// Queue async shred — file keys are already deleted from DB,
 	// making encrypted data unrecoverable. Startup orphan cleanup

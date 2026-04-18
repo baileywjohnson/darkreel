@@ -76,8 +76,8 @@ func (s *Server) routes() chi.Router {
 	// Defends against distributed brute-force even when per-IP limits are bypassed.
 	accountLimiter := auth.NewAccountLimiter(10, 15*time.Minute)
 
-	authHandler := &auth.Handler{DB: s.DB, Storage: s.Storage, Shredder: s.Shredder, AccountLimiter: accountLimiter, DataDir: s.Storage.BaseDir}
 	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage, Shredder: s.Shredder, MaxStorageBytes: s.MaxStorageBytes}
+	authHandler := &auth.Handler{DB: s.DB, Storage: s.Storage, Shredder: s.Shredder, AccountLimiter: accountLimiter, DataDir: s.Storage.BaseDir, OnUserDeleted: mediaHandler.CleanupUser}
 
 	// Auth rate limiter: 5 attempts per minute per IP
 	authLimiter := RateLimit(5, time.Minute)

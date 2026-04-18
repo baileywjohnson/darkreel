@@ -361,6 +361,10 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 	Sessions.DeleteAllForUser(targetID)
 
+	if h.OnUserDeleted != nil {
+		h.OnUserDeleted(targetID)
+	}
+
 	// Queue async shred — file keys already deleted from DB
 	for _, mid := range mediaIDs {
 		h.Shredder.QueueMedia(targetID, mid)

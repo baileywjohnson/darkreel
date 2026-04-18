@@ -1190,7 +1190,7 @@ a:hover { text-decoration: underline; }
 <span class="output">last-admin guard</span>     <span class="comment">atomic transaction prevents TOCTOU race on admin deletion</span>
 <span class="output">storage quotas</span>       <span class="comment">mandatory per-user limits in GB (byte-accurate), raise-only, validated against disk (2 GB reserve)</span>
 <span class="output">secure delete (DB)</span>   <span class="comment">PRAGMA secure_delete zeroes deleted pages - prevents forensic recovery from SQLite/WAL</span>
-<span class="output">hashed identifiers</span>   <span class="comment">IPs and usernames FNV-64a hashed in rate limiters - memory dumps reveal no plaintext</span>
+<span class="output">hashed identifiers</span>   <span class="comment">IPs and usernames keyed-hashed (SipHash, per-process random seed) - no plaintext in dumps, no collision attacks</span>
 <span class="output">privacy-safe logs</span>    <span class="comment">no usernames, user IDs, media IDs, or IP addresses in server logs</span>
 <span class="output">path validation</span>      <span class="comment">UUID validation at storage layer - defense-in-depth against path traversal</span>
 <span class="output">proxy-aware IPs</span>      <span class="comment">X-Forwarded-For trust off by default - opt-in via TRUST_PROXY</span>

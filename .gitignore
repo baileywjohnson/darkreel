@@ -7,3 +7,14 @@ data/
 .env
 .env.*
 !.env.example
+
+# Keys & certs (defensive)
+*.key
+*.pem
+*.p12
+*.pfx
+*.cert
+*.crt
+
+# Logs
+*.log

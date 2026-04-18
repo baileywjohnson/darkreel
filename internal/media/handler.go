@@ -51,6 +51,14 @@ func (h *Handler) releaseUpload(userID string) {
 	<-sem
 }
 
+// CleanupUser removes the per-user upload semaphore entry. Call on user
+// deletion to prevent slow memory growth on servers with high user churn.
+func (h *Handler) CleanupUser(userID string) {
+	h.uploadMu.Lock()
+	delete(h.uploadSems, userID)
+	h.uploadMu.Unlock()
+}
+
 // validID returns the URL param if it is a valid UUID, or writes a 400 and returns "".
 func validID(w http.ResponseWriter, r *http.Request, param string) string {
 	id := chi.URLParam(r, param)

@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"hash/fnv"
+	"hash/maphash"
 	"sync"
 	"time"
 )
@@ -17,6 +17,10 @@ type AccountLimiter struct {
 	visitors map[uint64]*accountVisitor
 	max      int
 	window   time.Duration
+	// hashSeed is a per-process random seed used with hash/maphash (SipHash).
+	// Unlike FNV-1a, this prevents an attacker from crafting username
+	// collisions to consume another user's rate-limit budget.
+	hashSeed maphash.Seed
 }
 
 type accountVisitor struct {
@@ -29,6 +33,7 @@ func NewAccountLimiter(max int, window time.Duration) *AccountLimiter {
 		visitors: make(map[uint64]*accountVisitor),
 		max:      max,
 		window:   window,
+		hashSeed: maphash.MakeSeed(),
 	}
 	go func() {
 		for {
@@ -50,11 +55,14 @@ func (al *AccountLimiter) cleanup() {
 	}
 }
 
-// hashUsername returns a hash of the username. Avoids storing plaintext
-// usernames in memory where they could be recovered from a process memory dump.
-func hashUsername(username string) uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(username))
+// hashUsername returns a keyed hash of the username. The seed is random
+// per-process, so an attacker cannot precompute collisions to consume
+// another user's rate-limit budget. Also avoids storing plaintext usernames
+// in memory where they could be recovered from a process memory dump.
+func (al *AccountLimiter) hashUsername(username string) uint64 {
+	var h maphash.Hash
+	h.SetSeed(al.hashSeed)
+	h.WriteString(username)
 	return h.Sum64()
 }
 
@@ -63,7 +71,7 @@ func (al *AccountLimiter) Allow(username string) bool {
 	al.mu.Lock()
 	defer al.mu.Unlock()
 
-	key := hashUsername(username)
+	key := al.hashUsername(username)
 	now := time.Now()
 	v, ok := al.visitors[key]
 	if !ok || now.After(v.resetAt) {

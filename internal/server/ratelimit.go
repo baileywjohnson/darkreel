@@ -1,7 +1,7 @@
 package server
 
 import (
-	"hash/fnv"
+	"hash/maphash"
 	"net"
 	"net/http"
 	"sync"
@@ -15,6 +15,10 @@ type rateLimiter struct {
 	visitors map[uint64]*visitor
 	max      int
 	window   time.Duration
+	// hashSeed is a per-process random seed used with hash/maphash (SipHash).
+	// Prevents an attacker from crafting IP collisions to consume another
+	// client's rate-limit budget.
+	hashSeed maphash.Seed
 }
 
 type visitor struct {
@@ -27,6 +31,7 @@ func newRateLimiter(max int, window time.Duration) *rateLimiter {
 		visitors: make(map[uint64]*visitor),
 		max:      max,
 		window:   window,
+		hashSeed: maphash.MakeSeed(),
 	}
 	// Cleanup stale entries every minute
 	go func() {
@@ -101,10 +106,13 @@ func RateLimit(max int, window time.Duration) func(http.Handler) http.Handler {
 			if host, _, err := net.SplitHostPort(ip); err == nil {
 				ip = host
 			}
-			// Hash IP to avoid storing plaintext addresses in memory
-			// where they could be recovered from a process memory dump.
-			h := fnv.New64a()
-			h.Write([]byte(ip))
+			// Keyed hash (SipHash via hash/maphash) with a per-process random
+			// seed. Avoids storing plaintext IPs in memory AND prevents an
+			// attacker from crafting IP collisions to consume another
+			// client's budget.
+			var h maphash.Hash
+			h.SetSeed(rl.hashSeed)
+			h.WriteString(ip)
 			key := h.Sum64()
 			if !rl.allow(key) {
 				http.Error(w, "too many requests", http.StatusTooManyRequests)

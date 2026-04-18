@@ -15,7 +15,8 @@ import (
 // (already deleted from the DB), so the async window is safe.
 type Shredder struct {
 	layout *Layout
-	queue  chan string // directory paths to shred
+	queue  chan string   // directory paths to shred
+	done   chan struct{} // closed to signal shutdown to pending senders
 	wg     sync.WaitGroup
 	mu     sync.Mutex
 	closed bool
@@ -33,6 +34,7 @@ func NewShredder(layout *Layout, workers int) *Shredder {
 	s := &Shredder{
 		layout: layout,
 		queue:  make(chan string, 4096),
+		done:   make(chan struct{}),
 	}
 	for i := 0; i < workers; i++ {
 		go s.worker()
@@ -59,18 +61,35 @@ func (s *Shredder) QueueMedia(userID, mediaID string) bool {
 	}
 	s.wg.Add(1)
 	s.mu.Unlock()
-	s.queue <- dir
-	return true
+	// Use select with done channel so Shutdown can wake us up if the queue
+	// is full, avoiding a deadlock where Shutdown waits for mu held by a
+	// blocked sender. Also prevents the panic from sending to a closed queue.
+	select {
+	case s.queue <- dir:
+		return true
+	case <-s.done:
+		s.wg.Done()
+		return false
+	}
 }
 
-// Shutdown closes the queue and blocks until all in-flight shred
-// operations complete. Call this during graceful server shutdown.
+// Shutdown blocks until all in-flight shred operations complete, then
+// closes the worker queue. Call during graceful server shutdown.
 func (s *Shredder) Shutdown() {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
 	s.closed = true
-	close(s.queue)
 	s.mu.Unlock()
+	// Signal blocked senders to bail. Queued work (already past the send)
+	// still drains normally — we wait for it below.
+	close(s.done)
 	s.wg.Wait()
+	// All senders have either sent or bailed and called wg.Done.
+	// Now safe to close the queue so worker range loops exit.
+	close(s.queue)
 }
 
 func shredDirectory(dir string) {

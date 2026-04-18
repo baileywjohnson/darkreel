@@ -4714,7 +4714,9 @@ async function downloadItem(item) {
         a.href = url;
         a.download = filename;
         a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        // Revoke after 10s — long enough for slow Save-As dialogs on mobile,
+        // short enough that an XSS can't exfiltrate the decrypted blob indefinitely.
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch (e) {
         alert('Download failed: ' + e.message);
     } finally {
