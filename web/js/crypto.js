@@ -79,15 +79,35 @@ export function clearMasterKey() {
 // imported as a non-extractable CryptoKey. pubKeyBytes stays around because
 // uploads (including the user's own browser uploads) seal keys to the user's
 // public key, so we need it in raw form for every upload.
+//
+// The Web Crypto X25519 spec accepts 'raw' ONLY for public keys; private keys
+// must come in as JWK or PKCS#8. JWK is the least ceremony: two base64url
+// fields with the raw scalar and matching public point.
 export async function setKeypair(privKeyBytes, pubKeyBytes) {
     if (privKeyBytes.length !== 32) throw new Error('private key must be 32 bytes');
     if (pubKeyBytes.length !== 32) throw new Error('public key must be 32 bytes');
     _publicKeyRaw = new Uint8Array(pubKeyBytes);
+    const jwk = {
+        kty: 'OKP',
+        crv: 'X25519',
+        d: bytesToBase64Url(privKeyBytes),
+        x: bytesToBase64Url(pubKeyBytes),
+        ext: false,
+        key_ops: ['deriveBits'],
+    };
     _privateKey = await crypto.subtle.importKey(
-        'raw', privKeyBytes, { name: 'X25519' }, false, ['deriveBits']
+        'jwk', jwk, { name: 'X25519' }, false, ['deriveBits']
     );
-    // Privkey is now inside a non-extractable CryptoKey. Wipe the input buffer.
+    // Zero the raw scalar buffer. The JWK object's `d` field is a JS string
+    // and cannot be wiped — GC will eventually reclaim it. This is a minor
+    // residue window vs. the raw buffer, inherent to the JWK import API.
     new Uint8Array(privKeyBytes.buffer, privKeyBytes.byteOffset, privKeyBytes.byteLength).fill(0);
+}
+
+function bytesToBase64Url(u8) {
+    let binary = '';
+    for (let i = 0; i < u8.length; i++) binary += String.fromCharCode(u8[i]);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 export function hasKeypair() {
