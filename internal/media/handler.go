@@ -233,8 +233,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Each sealed blob is libsodium crypto_box_seal output wrapping a 32-byte
-	// symmetric key: ephemeral_pubkey(32) || ciphertext(32) || MAC(16) = 80 bytes.
+	// Each sealed blob is a SealBox wrapping a 32-byte symmetric key:
+	// ephemeral_pk(32) + AES-GCM nonce(12) + ciphertext(32) + tag(16) = 92 bytes.
 	// Exact-size check prevents both truncation and stuffing with garbage that
 	// would bloat the DB row without aiding the attacker.
 	const expectedSealedLen = crypto.SealBoxOverhead + 32

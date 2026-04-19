@@ -41,7 +41,8 @@ func TestSealBox_RoundTrip(t *testing.T) {
 		t.Fatalf("SealBox: %v", err)
 	}
 
-	// Expected size: ephemeral pubkey (32) + Poly1305 MAC (16) + payload (32) = 80 bytes.
+	// Expected size: ephemeral pubkey (32) + AES-GCM nonce (12) + payload (32)
+	// + AES-GCM tag (16) = 92 bytes.
 	if got, want := len(sealed), SealBoxOverhead+len(msg); got != want {
 		t.Errorf("sealed length = %d, want %d", got, want)
 	}
@@ -71,15 +72,47 @@ func TestSealBox_WrongRecipientFails(t *testing.T) {
 
 func TestSealBox_TamperingFails(t *testing.T) {
 	pub, priv, _ := GenerateKeypair()
-	msg := []byte("tamper-me")
-	sealed, err := SealBox(msg, pub)
+	msg := bytes.Repeat([]byte{0x42}, 32) // 32-byte payload, realistic file-key size
+
+	// Table: one case per distinct byte region so any future regression that
+	// stops authenticating a region surfaces here. Every region is covered by
+	// AES-GCM except the ephemeral pubkey, which is covered indirectly: a
+	// flipped eph_pk produces a different ECDH shared secret and the AES-GCM
+	// tag check fails.
+	cases := []struct {
+		name    string
+		flipIdx func(n int) int
+	}{
+		{"ephemeral pubkey", func(n int) int { return 0 }},
+		{"nonce", func(n int) int { return sealEphPubKeySize }},
+		{"ciphertext body", func(n int) int { return sealEphPubKeySize + sealNonceSize }},
+		{"auth tag", func(n int) int { return n - 1 }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sealed, err := SealBox(msg, pub)
+			if err != nil {
+				t.Fatalf("SealBox: %v", err)
+			}
+			sealed[c.flipIdx(len(sealed))] ^= 0x01
+			if _, err := OpenSealedBox(sealed, pub, priv); err == nil {
+				t.Fatalf("opened tampered sealed box (flipped %s), expected auth failure", c.name)
+			}
+		})
+	}
+}
+
+func TestSealBox_TruncationFails(t *testing.T) {
+	pub, priv, _ := GenerateKeypair()
+	sealed, err := SealBox([]byte("msg"), pub)
 	if err != nil {
 		t.Fatalf("SealBox: %v", err)
 	}
-	// Flip one bit in the ciphertext portion
-	sealed[SealBoxOverhead-1] ^= 0x01
-	if _, err := OpenSealedBox(sealed, pub, priv); err == nil {
-		t.Fatal("opened tampered sealed box, expected auth failure")
+	// Truncating anywhere must fail — the AES-GCM tag covers the whole ct.
+	for trunc := len(sealed) - 1; trunc >= SealBoxOverhead; trunc-- {
+		if _, err := OpenSealedBox(sealed[:trunc], pub, priv); err == nil {
+			t.Fatalf("opened truncated sealed box (len=%d), expected auth failure", trunc)
+		}
 	}
 }
 
