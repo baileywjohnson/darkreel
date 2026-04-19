@@ -132,9 +132,19 @@ func (s *Server) routes() chi.Router {
 	r.With(authLimiter).Post("/api/auth/login", authHandler.Login)
 	r.With(authLimiter).Post("/api/auth/recover", authHandler.Recover)
 
-	// Authenticated routes
+	// Unauthenticated delegation endpoints — the presented code / refresh
+	// token IS the authentication. Rate-limited to deter brute-forcing the
+	// 32-char code space.
+	r.With(authLimiter).Post("/api/delegation/exchange", authHandler.ExchangeDelegationCode)
+	r.With(authLimiter).Post("/api/delegation/refresh", authHandler.RefreshDelegationToken)
+
+	// Authenticated routes that accept ONLY full-scope session tokens.
+	// A delegation token would be refused by RequireFullScope so stolen
+	// refresh tokens (and the access tokens they mint) cannot read, delete,
+	// or modify media beyond their upload grant.
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware)
+		r.Use(auth.RequireFullScope)
 
 		r.Post("/api/auth/logout", authHandler.Logout)
 		r.With(authLimiter).Post("/api/auth/change-password", authHandler.ChangePassword)
@@ -143,7 +153,6 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/media", mediaHandler.List)
 		r.Get("/api/media/quota", mediaHandler.QuotaCheck)
 		r.Get("/api/media/{id}", mediaHandler.Get)
-		r.Post("/api/media/upload", mediaHandler.Upload)
 		r.Delete("/api/media/{id}", mediaHandler.Delete)
 		r.Get("/api/media/{id}/chunk/{index}", mediaHandler.GetChunk)
 		r.Get("/api/media/{id}/thumbnail", mediaHandler.GetThumbnail)
@@ -151,11 +160,26 @@ func (s *Server) routes() chi.Router {
 
 		r.Get("/api/folders", mediaHandler.GetFolders)
 		r.Put("/api/folders", mediaHandler.SaveFolders)
+
+		// Delegation management: issue codes, list active delegations, revoke.
+		r.Post("/api/delegation/authorize", authHandler.AuthorizeDelegation)
+		r.Get("/api/account/delegations", authHandler.ListDelegations)
+		r.Delete("/api/account/delegations/{id}", authHandler.RevokeDelegation)
 	})
 
-	// Admin routes (authenticated + admin only)
+	// Upload endpoint accepts both full session tokens (browser uploads) and
+	// "upload"-scoped delegation tokens (PPVDA).
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware)
+		r.Use(auth.RequireUploadScope)
+
+		r.Post("/api/media/upload", mediaHandler.Upload)
+	})
+
+	// Admin routes (authenticated + admin only + full-scope session)
+	r.Group(func(r chi.Router) {
+		r.Use(auth.Middleware)
+		r.Use(auth.RequireFullScope)
 		r.Use(auth.AdminMiddleware(s.DB))
 
 		r.Get("/api/admin/users", authHandler.ListUsers)

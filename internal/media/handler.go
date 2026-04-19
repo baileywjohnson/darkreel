@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/baileywjohnson/darkreel/internal/auth"
+	"github.com/baileywjohnson/darkreel/internal/crypto"
 	"github.com/baileywjohnson/darkreel/internal/db"
 	"github.com/baileywjohnson/darkreel/internal/storage"
 	"github.com/go-chi/chi/v5"
@@ -201,14 +202,19 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	mediaID := meta.MediaID
 
 	// Decode all metadata fields before any I/O to fail fast on bad input
-	fileKeyBytes, err := FromB64(meta.FileKeyEnc)
+	fileKeySealed, err := FromB64(meta.FileKeySealed)
 	if err != nil {
-		http.Error(w, "invalid file_key_enc", http.StatusBadRequest)
+		http.Error(w, "invalid file_key_sealed", http.StatusBadRequest)
 		return
 	}
-	thumbKeyBytes, err := FromB64(meta.ThumbKeyEnc)
+	thumbKeySealed, err := FromB64(meta.ThumbKeySealed)
 	if err != nil {
-		http.Error(w, "invalid thumb_key_enc", http.StatusBadRequest)
+		http.Error(w, "invalid thumb_key_sealed", http.StatusBadRequest)
+		return
+	}
+	metadataKeySealed, err := FromB64(meta.MetadataKeySealed)
+	if err != nil {
+		http.Error(w, "invalid metadata_key_sealed", http.StatusBadRequest)
 		return
 	}
 	hashNonceBytes, err := FromB64(meta.HashNonce)
@@ -227,12 +233,13 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate decoded blob sizes to prevent DB bloat via oversized metadata.
-	// file_key_enc / thumb_key_enc: AES-256-GCM(32-byte key) = 12 nonce + 32 ct + 16 tag = 60 bytes
-	// hash_nonce: 32 bytes, metadata_nonce: 12 bytes (GCM nonce)
-	// metadata_enc: encrypted JSON (filename, type, dims, etc.) — cap at 64 KB
-	if len(fileKeyBytes) > maxKeyEncLen || len(thumbKeyBytes) > maxKeyEncLen {
-		http.Error(w, "encrypted key too large", http.StatusBadRequest)
+	// Each sealed blob is libsodium crypto_box_seal output wrapping a 32-byte
+	// symmetric key: ephemeral_pubkey(32) || ciphertext(32) || MAC(16) = 80 bytes.
+	// Exact-size check prevents both truncation and stuffing with garbage that
+	// would bloat the DB row without aiding the attacker.
+	const expectedSealedLen = crypto.SealBoxOverhead + 32
+	if len(fileKeySealed) != expectedSealedLen || len(thumbKeySealed) != expectedSealedLen || len(metadataKeySealed) != expectedSealedLen {
+		http.Error(w, "sealed key has wrong length", http.StatusBadRequest)
 		return
 	}
 	if len(hashNonceBytes) > maxNonceLen || len(metadataNonceBytes) > maxNonceLen {
@@ -274,14 +281,15 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	// ID both write to disk and one cleanup deletes the other's files.
 	// SizeBytes is set to 0 initially and updated after all chunks are read.
 	mediaItem := &db.MediaItem{
-		ID:            mediaID,
-		UserID:        userID,
-		ChunkCount:    meta.ChunkCount,
-		FileKeyEnc:    fileKeyBytes,
-		ThumbKeyEnc:   thumbKeyBytes,
-		HashNonce:     hashNonceBytes,
-		MetadataEnc:   metadataEncBytes,
-		MetadataNonce: metadataNonceBytes,
+		ID:                mediaID,
+		UserID:            userID,
+		ChunkCount:        meta.ChunkCount,
+		FileKeySealed:     fileKeySealed,
+		ThumbKeySealed:    thumbKeySealed,
+		MetadataKeySealed: metadataKeySealed,
+		HashNonce:         hashNonceBytes,
+		MetadataEnc:       metadataEncBytes,
+		MetadataNonce:     metadataNonceBytes,
 	}
 	if err := db.InsertMedia(h.DB, mediaItem); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -648,12 +656,13 @@ func unpadFolderTree(padded []byte) []byte {
 
 func toAPIItem(m *db.MediaItem) APIMediaItem {
 	return APIMediaItem{
-		ID:            m.ID,
-		FileKeyEnc:    B64(m.FileKeyEnc),
-		ThumbKeyEnc:   B64(m.ThumbKeyEnc),
-		HashNonce:     B64(m.HashNonce),
-		MetadataEnc:   B64(m.MetadataEnc),
-		MetadataNonce: B64(m.MetadataNonce),
-		CreatedAt:     m.CreatedAt,
+		ID:                m.ID,
+		FileKeySealed:     B64(m.FileKeySealed),
+		ThumbKeySealed:    B64(m.ThumbKeySealed),
+		MetadataKeySealed: B64(m.MetadataKeySealed),
+		HashNonce:         B64(m.HashNonce),
+		MetadataEnc:       B64(m.MetadataEnc),
+		MetadataNonce:     B64(m.MetadataNonce),
+		CreatedAt:         m.CreatedAt,
 	}
 }

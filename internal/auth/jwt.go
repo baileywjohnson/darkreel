@@ -21,6 +21,10 @@ type Claims struct {
 	UserID    string `json:"uid"`
 	SessionID string `json:"sid"`
 	IsAdmin   bool   `json:"adm,omitempty"`
+	// Scope is empty for full browser-session tokens and "upload" for tokens
+	// minted from a delegation. Handlers use scope to gate which actions a
+	// token is allowed to perform — see RequireFullScope.
+	Scope string `json:"scp,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -50,14 +54,27 @@ func getSecret() []byte {
 }
 
 func GenerateToken(userID, sessionID string, isAdmin bool) (string, error) {
+	return generateToken(userID, sessionID, isAdmin, "", tokenExpiry)
+}
+
+// GenerateDelegationToken returns a short-lived JWT scoped for delegated uploads.
+// The JWT is not tied to a SessionStore entry — delegated clients do not hold
+// a server-side session; authorization is derived from the refresh-token
+// presentation each time a new access token is minted.
+func GenerateDelegationToken(userID string, ttl time.Duration) (string, error) {
+	return generateToken(userID, "", false, "upload", ttl)
+}
+
+func generateToken(userID, sessionID string, isAdmin bool, scope string, ttl time.Duration) (string, error) {
 	initSecret()
 	now := time.Now()
 	claims := Claims{
 		UserID:    userID,
 		SessionID: sessionID,
 		IsAdmin:   isAdmin,
+		Scope:     scope,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(now.Add(tokenExpiry)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(now),
 		},
 	}

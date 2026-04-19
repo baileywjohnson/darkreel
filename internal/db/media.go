@@ -6,29 +6,35 @@ import (
 )
 
 type MediaItem struct {
-	ID            string
-	UserID        string
-	ChunkCount    int
-	SizeBytes     int64  // total raw upload size in bytes (for quota tracking)
-	FileKeyEnc    []byte // file key encrypted with master key
-	ThumbKeyEnc   []byte // thumbnail key encrypted with master key
-	HashNonce     []byte
-	MetadataEnc   []byte // encrypted metadata blob (name, type, mime, size, dimensions, duration)
-	MetadataNonce []byte
-	CreatedAt     string // coarse timestamp (year-only) to limit metadata leakage
+	ID                string
+	UserID            string
+	ChunkCount        int
+	SizeBytes         int64  // total raw upload size in bytes (for quota tracking)
+	FileKeySealed     []byte // file key sealed with user's public key (80-byte sealed box)
+	ThumbKeySealed    []byte // thumbnail key sealed with user's public key (80-byte sealed box)
+	MetadataKeySealed []byte // metadata key sealed with user's public key (80-byte sealed box)
+	HashNonce         []byte
+	MetadataEnc       []byte // metadata (name, type, mime, dims, duration) encrypted with metadata key
+	MetadataNonce     []byte
+	CreatedAt         string // coarse timestamp (year-only) to limit metadata leakage
 }
 
 func InsertMedia(db *sql.DB, m *MediaItem) error {
 	_, err := db.Exec(
-		`INSERT INTO media (id, user_id, chunk_count, size_bytes, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y', 'now'))`,
-		m.ID, m.UserID, m.ChunkCount, m.SizeBytes, m.FileKeyEnc, m.ThumbKeyEnc, m.HashNonce, m.MetadataEnc, m.MetadataNonce,
+		`INSERT INTO media (id, user_id, chunk_count, size_bytes,
+		                    file_key_sealed, thumb_key_sealed, metadata_key_sealed,
+		                    hash_nonce, metadata_enc, metadata_nonce, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y', 'now'))`,
+		m.ID, m.UserID, m.ChunkCount, m.SizeBytes,
+		m.FileKeySealed, m.ThumbKeySealed, m.MetadataKeySealed,
+		m.HashNonce, m.MetadataEnc, m.MetadataNonce,
 	)
 	return err
 }
 
 func ListMedia(db *sql.DB, userID string, limit, offset int) ([]*MediaItem, int, error) {
-	query := `SELECT id, user_id, chunk_count, size_bytes, file_key_enc, thumb_key_enc,
+	query := `SELECT id, user_id, chunk_count, size_bytes,
+	                 file_key_sealed, thumb_key_sealed, metadata_key_sealed,
 	                 hash_nonce, metadata_enc, metadata_nonce, created_at,
 	                 COUNT(*) OVER() AS total
 	          FROM media WHERE user_id = ?
@@ -44,7 +50,8 @@ func ListMedia(db *sql.DB, userID string, limit, offset int) ([]*MediaItem, int,
 	var total int
 	for rows.Next() {
 		m := &MediaItem{}
-		if err := rows.Scan(&m.ID, &m.UserID, &m.ChunkCount, &m.SizeBytes, &m.FileKeyEnc, &m.ThumbKeyEnc,
+		if err := rows.Scan(&m.ID, &m.UserID, &m.ChunkCount, &m.SizeBytes,
+			&m.FileKeySealed, &m.ThumbKeySealed, &m.MetadataKeySealed,
 			&m.HashNonce, &m.MetadataEnc, &m.MetadataNonce, &m.CreatedAt, &total); err != nil {
 			return nil, 0, err
 		}
@@ -56,9 +63,12 @@ func ListMedia(db *sql.DB, userID string, limit, offset int) ([]*MediaItem, int,
 func GetMedia(db *sql.DB, id, userID string) (*MediaItem, error) {
 	m := &MediaItem{}
 	err := db.QueryRow(
-		`SELECT id, user_id, chunk_count, size_bytes, file_key_enc, thumb_key_enc, hash_nonce, metadata_enc, metadata_nonce, created_at
+		`SELECT id, user_id, chunk_count, size_bytes,
+		        file_key_sealed, thumb_key_sealed, metadata_key_sealed,
+		        hash_nonce, metadata_enc, metadata_nonce, created_at
 		 FROM media WHERE id = ? AND user_id = ?`, id, userID,
-	).Scan(&m.ID, &m.UserID, &m.ChunkCount, &m.SizeBytes, &m.FileKeyEnc, &m.ThumbKeyEnc,
+	).Scan(&m.ID, &m.UserID, &m.ChunkCount, &m.SizeBytes,
+		&m.FileKeySealed, &m.ThumbKeySealed, &m.MetadataKeySealed,
 		&m.HashNonce, &m.MetadataEnc, &m.MetadataNonce, &m.CreatedAt)
 	if err != nil {
 		return nil, err

@@ -185,6 +185,9 @@ func main() {
 
 	// Start session cleanup goroutine (removes expired sessions every minute)
 	auth.Sessions.StartCleanup()
+	// Delegation authorization codes are short-lived (2 min); prune expired
+	// entries periodically so the codes table stays small under consent churn.
+	auth.StartDelegationCodeCleanup(database)
 
 	var maxBytes int64 = 1 * 1024 * 1024 * 1024 // default: 1 GB per user
 	if v := os.Getenv("MAX_STORAGE_GB"); v != "" {

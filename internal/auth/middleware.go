@@ -31,13 +31,50 @@ func Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if !Sessions.Has(claims.SessionID) {
+		// Full browser-session tokens (scope="") must correspond to a live
+		// SessionStore entry — that's how logout/password-change/session
+		// cleanup revokes them. Delegation tokens (scope != "") are
+		// stateless within their short TTL; revocation of the backing
+		// refresh token takes effect on the next refresh attempt.
+		if claims.Scope == "" && !Sessions.Has(claims.SessionID) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// RequireFullScope rejects tokens minted from a delegation. Apply it on every
+// route that is NOT the upload endpoint, so a stolen delegation token cannot
+// list, read, delete, or otherwise exercise account authority beyond its
+// intended upload-only grant.
+func RequireFullScope(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c := GetClaims(r); c != nil && c.Scope != "" {
+			http.Error(w, "delegation tokens are scope-limited and cannot access this endpoint", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireUploadScope passes both full tokens and explicit "upload"-scoped
+// tokens, and rejects any other scope. Browser uploads therefore keep
+// working with the normal session JWT.
+func RequireUploadScope(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c := GetClaims(r)
+		if c == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if c.Scope != "" && c.Scope != "upload" {
+			http.Error(w, "scope not permitted for this endpoint", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

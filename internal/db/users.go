@@ -6,16 +6,19 @@ import (
 )
 
 type User struct {
-	ID           string
-	Username     string
-	PasswordHash string
-	AuthSalt     []byte
-	KDFSalt      []byte
-	EncryptedMK  []byte // master key encrypted with KDF-derived key
-	RecoveryMK   []byte // master key encrypted with recovery code
-	IsAdmin      bool
-	StorageQuota int64 // per-user storage quota in bytes (0 = use server default)
-	CreatedAt    string
+	ID               string
+	Username         string
+	PasswordHash     string
+	AuthSalt         []byte
+	KDFSalt          []byte
+	EncryptedMK      []byte // master key encrypted with KDF-derived key (AAD=userID)
+	RecoveryMK       []byte // master key encrypted with recovery code (AAD=userID)
+	PublicKey        []byte // X25519 public key, 32 bytes, stored plaintext
+	EncryptedPrivKey []byte // X25519 private key wrapped with master key (AAD=userID)
+	RecoveryPrivKey  []byte // X25519 private key wrapped with recovery code (AAD=userID)
+	IsAdmin          bool
+	StorageQuota     int64 // per-user storage quota in bytes (0 = use server default)
+	CreatedAt        string
 }
 
 func CreateUser(db *sql.DB, u *User) error {
@@ -24,8 +27,16 @@ func CreateUser(db *sql.DB, u *User) error {
 		isAdmin = 1
 	}
 	_, err := db.Exec(
-		`INSERT INTO users (id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, is_admin, storage_quota, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y', 'now'))`,
-		u.ID, u.Username, u.PasswordHash, u.AuthSalt, u.KDFSalt, u.EncryptedMK, u.RecoveryMK, isAdmin, u.StorageQuota,
+		`INSERT INTO users (
+			id, username, password_hash, auth_salt, kdf_salt,
+			encrypted_mk, recovery_mk,
+			public_key, encrypted_priv_key, recovery_priv_key,
+			is_admin, storage_quota, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y', 'now'))`,
+		u.ID, u.Username, u.PasswordHash, u.AuthSalt, u.KDFSalt,
+		u.EncryptedMK, u.RecoveryMK,
+		u.PublicKey, u.EncryptedPrivKey, u.RecoveryPrivKey,
+		isAdmin, u.StorageQuota,
 	)
 	return err
 }
@@ -123,16 +134,11 @@ func DeleteUserAtomic(database *sql.DB, userID string) error {
 	return tx.Commit()
 }
 
-func UpdateUserRecoveryMK(db *sql.DB, userID string, recoveryMK []byte) error {
-	_, err := db.Exec(`UPDATE users SET recovery_mk = ? WHERE id = ?`, recoveryMK, userID)
-	return err
-}
 
-func UpdateUserRecoveryMKTx(tx *sql.Tx, userID string, recoveryMK []byte) error {
-	_, err := tx.Exec(`UPDATE users SET recovery_mk = ? WHERE id = ?`, recoveryMK, userID)
-	return err
-}
-
+// UpdateUserAuth rewrites password-derived material. The encrypted private
+// key is NOT touched here because the private key is wrapped with the master
+// key (not with the KDF-derived key), and the master key is unchanged by a
+// password rotation — we simply re-wrap it with a new KDF key.
 func UpdateUserAuth(db *sql.DB, userID, passwordHash string, authSalt, kdfSalt, encryptedMK []byte) error {
 	_, err := db.Exec(
 		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ?, encrypted_mk = ? WHERE id = ?`,
@@ -145,6 +151,25 @@ func UpdateUserAuthTx(tx *sql.Tx, userID, passwordHash string, authSalt, kdfSalt
 	_, err := tx.Exec(
 		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ?, encrypted_mk = ? WHERE id = ?`,
 		passwordHash, authSalt, kdfSalt, encryptedMK, userID,
+	)
+	return err
+}
+
+// UpdateUserRecoveryKeys rewrites both recovery-code-wrapped blobs together.
+// Called on password recovery when a fresh recovery code is issued, so the new
+// code wraps the current master key and the current private key consistently.
+func UpdateUserRecoveryKeys(db *sql.DB, userID string, recoveryMK, recoveryPrivKey []byte) error {
+	_, err := db.Exec(
+		`UPDATE users SET recovery_mk = ?, recovery_priv_key = ? WHERE id = ?`,
+		recoveryMK, recoveryPrivKey, userID,
+	)
+	return err
+}
+
+func UpdateUserRecoveryKeysTx(tx *sql.Tx, userID string, recoveryMK, recoveryPrivKey []byte) error {
+	_, err := tx.Exec(
+		`UPDATE users SET recovery_mk = ?, recovery_priv_key = ? WHERE id = ?`,
+		recoveryMK, recoveryPrivKey, userID,
 	)
 	return err
 }
@@ -182,9 +207,14 @@ func GetUserByUsername(db *sql.DB, username string) (*User, error) {
 	u := &User{}
 	var isAdmin int
 	err := db.QueryRow(
-		`SELECT id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, is_admin, storage_quota, created_at FROM users WHERE username = ?`,
+		`SELECT id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk,
+		        public_key, encrypted_priv_key, recovery_priv_key,
+		        is_admin, storage_quota, created_at
+		 FROM users WHERE username = ?`,
 		username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.EncryptedMK, &u.RecoveryMK, &isAdmin, &u.StorageQuota, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.EncryptedMK, &u.RecoveryMK,
+		&u.PublicKey, &u.EncryptedPrivKey, &u.RecoveryPrivKey,
+		&isAdmin, &u.StorageQuota, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -196,9 +226,14 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 	u := &User{}
 	var isAdmin int
 	err := db.QueryRow(
-		`SELECT id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk, is_admin, storage_quota, created_at FROM users WHERE id = ?`,
+		`SELECT id, username, password_hash, auth_salt, kdf_salt, encrypted_mk, recovery_mk,
+		        public_key, encrypted_priv_key, recovery_priv_key,
+		        is_admin, storage_quota, created_at
+		 FROM users WHERE id = ?`,
 		id,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.EncryptedMK, &u.RecoveryMK, &isAdmin, &u.StorageQuota, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.AuthSalt, &u.KDFSalt, &u.EncryptedMK, &u.RecoveryMK,
+		&u.PublicKey, &u.EncryptedPrivKey, &u.RecoveryPrivKey,
+		&isAdmin, &u.StorageQuota, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

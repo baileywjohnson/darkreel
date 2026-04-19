@@ -110,15 +110,35 @@ func BootstrapAdmin(database *sql.DB, username, password string) (string, error)
 		return "", err
 	}
 
+	// Generate the user's X25519 keypair for delegated uploads. Private key is
+	// wrapped twice: once under the master key (normal unlock), and once under
+	// the recovery code (forgot-password unlock). Public key is stored plaintext.
+	pubKey, privKey, err := crypto.GenerateKeypair()
+	if err != nil {
+		return "", err
+	}
+	defer clear(privKey)
+	encryptedPrivKey, err := crypto.EncryptBlock(privKey, masterKey, userIDBytes)
+	if err != nil {
+		return "", err
+	}
+	recoveryPrivKey, err := crypto.EncryptBlock(privKey, recoveryCode, userIDBytes)
+	if err != nil {
+		return "", err
+	}
+
 	user := &db.User{
-		ID:           userID,
-		Username:     username,
-		PasswordHash: crypto.HashPassword(password, authSalt),
-		AuthSalt:     authSalt,
-		KDFSalt:      kdfSalt,
-		EncryptedMK:  encryptedMK,
-		RecoveryMK:   recoveryMK,
-		IsAdmin:      true,
+		ID:               userID,
+		Username:         username,
+		PasswordHash:     crypto.HashPassword(password, authSalt),
+		AuthSalt:         authSalt,
+		KDFSalt:          kdfSalt,
+		EncryptedMK:      encryptedMK,
+		RecoveryMK:       recoveryMK,
+		PublicKey:        pubKey,
+		EncryptedPrivKey: encryptedPrivKey,
+		RecoveryPrivKey:  recoveryPrivKey,
+		IsAdmin:          true,
 	}
 
 	if err := db.CreateUser(database, user); err != nil {
@@ -142,7 +162,12 @@ type loginResponse struct {
 	KDFSalt            string `json:"kdf_salt"`
 	UserID             string `json:"user_id"`
 	EncryptedMasterKey string `json:"encrypted_master_key"`
-	IsAdmin            bool   `json:"is_admin"`
+	// Shape 2 additions: the browser needs both to unwrap its private key
+	// after deriving the master key on login. PublicKey is redundant here
+	// (it's public) but bundling it saves a round-trip.
+	PublicKey        string `json:"public_key"`
+	EncryptedPrivKey string `json:"encrypted_priv_key"`
+	IsAdmin          bool   `json:"is_admin"`
 }
 
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
@@ -208,14 +233,35 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// X25519 keypair + dual-wrap (master key + recovery code).
+	pubKey, privKey, err := crypto.GenerateKeypair()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer clear(privKey)
+	encryptedPrivKey, err := crypto.EncryptBlock(privKey, masterKey, userIDBytes)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	recoveryPrivKey, err := crypto.EncryptBlock(privKey, recoveryCode, userIDBytes)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	user := &db.User{
-		ID:           userID,
-		Username:     req.Username,
-		PasswordHash: passwordHash,
-		AuthSalt:     authSalt,
-		KDFSalt:      kdfSalt,
-		EncryptedMK:  encryptedMK,
-		RecoveryMK:   recoveryMK,
+		ID:               userID,
+		Username:         req.Username,
+		PasswordHash:     passwordHash,
+		AuthSalt:         authSalt,
+		KDFSalt:          kdfSalt,
+		EncryptedMK:      encryptedMK,
+		RecoveryMK:       recoveryMK,
+		PublicKey:        pubKey,
+		EncryptedPrivKey: encryptedPrivKey,
+		RecoveryPrivKey:  recoveryPrivKey,
 	}
 
 	if err := db.CreateUser(h.DB, user); err != nil {
@@ -308,6 +354,8 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		KDFSalt:            base64.StdEncoding.EncodeToString(user.KDFSalt),
 		UserID:             user.ID,
 		EncryptedMasterKey: base64.StdEncoding.EncodeToString(encMasterKey),
+		PublicKey:          base64.StdEncoding.EncodeToString(user.PublicKey),
+		EncryptedPrivKey:   base64.StdEncoding.EncodeToString(user.EncryptedPrivKey),
 		IsAdmin:            user.IsAdmin,
 	})
 }
@@ -412,6 +460,22 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The X25519 private key is wrapped with the master key (unchanged by a
+	// password rotation), so encrypted_priv_key does not need updating. But the
+	// recovery-code-wrapped copy does — unwrap with master key, re-wrap with
+	// the new recovery code.
+	privKey, err := crypto.DecryptBlock(user.EncryptedPrivKey, masterKey, userIDBytes)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer clear(privKey)
+	newRecoveryPrivKey, err := crypto.EncryptBlock(privKey, newRecoveryCode, userIDBytes)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	tx, err := h.DB.Begin()
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -423,7 +487,14 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if err := db.UpdateUserRecoveryMKTx(tx, user.ID, newRecoveryMK); err != nil {
+	if err := db.UpdateUserRecoveryKeysTx(tx, user.ID, newRecoveryMK, newRecoveryPrivKey); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// Password change implies "assume compromise, reset everything": revoke
+	// all outstanding delegations so stolen refresh tokens cannot outlive the
+	// old credentials. User re-authorizes each client on demand.
+	if err := db.DeleteAllDelegationsForUserTx(tx, user.ID); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -623,6 +694,21 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-wrap the X25519 private key under the new recovery code. The master-
+	// key-wrapped copy stays valid because the master key itself is preserved
+	// across recovery (only the outer KDF key changes).
+	privKey, err := crypto.DecryptBlock(user.EncryptedPrivKey, masterKey, userIDBytes)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer clear(privKey)
+	newRecoveryPrivKey, err := crypto.EncryptBlock(privKey, newRecoveryCode, userIDBytes)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	// Update auth and recovery MK atomically
 	tx, err := h.DB.Begin()
 	if err != nil {
@@ -635,7 +721,12 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if err := db.UpdateUserRecoveryMKTx(tx, user.ID, newRecoveryMK); err != nil {
+	if err := db.UpdateUserRecoveryKeysTx(tx, user.ID, newRecoveryMK, newRecoveryPrivKey); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// A recovery is always an assume-compromise flow: kill all delegations.
+	if err := db.DeleteAllDelegationsForUserTx(tx, user.ID); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
