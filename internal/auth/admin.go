@@ -305,15 +305,38 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// X25519 keypair + dual-wrap (master key + recovery code). Matches the
+	// Register / BootstrapAdmin flow; admin-provisioned accounts get the same
+	// delegation capability as self-registered accounts.
+	pubKey, privKey, err := crypto.GenerateKeypair()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer clear(privKey)
+	encryptedPrivKey, err := crypto.EncryptBlock(privKey, masterKey, userIDBytes)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	recoveryPrivKey, err := crypto.EncryptBlock(privKey, recoveryCode, userIDBytes)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	user := &db.User{
-		ID:           userID,
-		Username:     req.Username,
-		PasswordHash: crypto.HashPassword(req.Password, authSalt),
-		AuthSalt:     authSalt,
-		KDFSalt:      kdfSalt,
-		EncryptedMK:  encryptedMK,
-		RecoveryMK:   recoveryMK,
-		IsAdmin:      req.IsAdmin,
+		ID:               userID,
+		Username:         req.Username,
+		PasswordHash:     crypto.HashPassword(req.Password, authSalt),
+		AuthSalt:         authSalt,
+		KDFSalt:          kdfSalt,
+		EncryptedMK:      encryptedMK,
+		RecoveryMK:       recoveryMK,
+		PublicKey:        pubKey,
+		EncryptedPrivKey: encryptedPrivKey,
+		RecoveryPrivKey:  recoveryPrivKey,
+		IsAdmin:          req.IsAdmin,
 	}
 
 	if err := db.CreateUser(h.DB, user); err != nil {

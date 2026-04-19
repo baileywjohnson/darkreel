@@ -139,39 +139,71 @@ func DeleteUserAtomic(database *sql.DB, userID string) error {
 // key is NOT touched here because the private key is wrapped with the master
 // key (not with the KDF-derived key), and the master key is unchanged by a
 // password rotation — we simply re-wrap it with a new KDF key.
+//
+// Returns sql.ErrNoRows if the target user does not exist, so the handler
+// can return 404 instead of committing an apparent success for a ghost
+// account and then resurrecting a session for a deleted user.
 func UpdateUserAuth(db *sql.DB, userID, passwordHash string, authSalt, kdfSalt, encryptedMK []byte) error {
-	_, err := db.Exec(
+	res, err := db.Exec(
 		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ?, encrypted_mk = ? WHERE id = ?`,
 		passwordHash, authSalt, kdfSalt, encryptedMK, userID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return requireOneRow(res)
 }
 
 func UpdateUserAuthTx(tx *sql.Tx, userID, passwordHash string, authSalt, kdfSalt, encryptedMK []byte) error {
-	_, err := tx.Exec(
+	res, err := tx.Exec(
 		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ?, encrypted_mk = ? WHERE id = ?`,
 		passwordHash, authSalt, kdfSalt, encryptedMK, userID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return requireOneRow(res)
 }
 
 // UpdateUserRecoveryKeys rewrites both recovery-code-wrapped blobs together.
 // Called on password recovery when a fresh recovery code is issued, so the new
 // code wraps the current master key and the current private key consistently.
+//
+// Returns sql.ErrNoRows if the user no longer exists (concurrent deletion).
 func UpdateUserRecoveryKeys(db *sql.DB, userID string, recoveryMK, recoveryPrivKey []byte) error {
-	_, err := db.Exec(
+	res, err := db.Exec(
 		`UPDATE users SET recovery_mk = ?, recovery_priv_key = ? WHERE id = ?`,
 		recoveryMK, recoveryPrivKey, userID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return requireOneRow(res)
 }
 
 func UpdateUserRecoveryKeysTx(tx *sql.Tx, userID string, recoveryMK, recoveryPrivKey []byte) error {
-	_, err := tx.Exec(
+	res, err := tx.Exec(
 		`UPDATE users SET recovery_mk = ?, recovery_priv_key = ? WHERE id = ?`,
 		recoveryMK, recoveryPrivKey, userID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return requireOneRow(res)
+}
+
+// requireOneRow converts an UPDATE that touched zero rows into sql.ErrNoRows
+// so handlers inside a tx can abort on "user was deleted underneath us"
+// rather than committing a no-op.
+func requireOneRow(res sql.Result) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func GetUserCount(db *sql.DB) (int, error) {

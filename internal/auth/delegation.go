@@ -130,37 +130,32 @@ func (h *Handler) ExchangeDelegationCode(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	entry, err := db.ConsumeDelegationCode(h.DB, req.AuthorizationCode, time.Now())
+	// Generate the refresh token up front so we can pre-compute its hash and
+	// include it in the single atomic exchange transaction.
+	refreshToken, err := randURLToken(32)
 	if err != nil {
-		// Both "row not found" and "expired" surface here — reply identically
-		// so an attacker probing for a valid code can't distinguish the two.
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	delegationID := uuid.New().String()
+	d := &db.Delegation{
+		ID:        delegationID,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		// UserID / ClientName / ClientURL / Scope are filled in by
+		// ExchangeAuthorizationCode from the code row.
+	}
+
+	entry, err := db.ExchangeAuthorizationCode(h.DB, req.AuthorizationCode, time.Now(), d, db.HashRefreshToken(refreshToken))
+	if err != nil {
+		// "row not found" (sql.ErrNoRows), "expired" (ErrCodeExpired), and
+		// any other consume-path error reply identically so an attacker
+		// probing for a valid code cannot distinguish states.
 		http.Error(w, "invalid or expired authorization code", http.StatusBadRequest)
 		return
 	}
 
 	user, err := db.GetUserByID(h.DB, entry.UserID)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// 32 bytes of randomness, URL-safe. Returned once; never retrievable.
-	refreshToken, err := randURLToken(32)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	delegationID := uuid.New().String()
-	d := &db.Delegation{
-		ID:         delegationID,
-		UserID:     entry.UserID,
-		ClientName: entry.ClientName,
-		ClientURL:  entry.ClientURL,
-		Scope:      entry.Scope,
-		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
-	}
-	if err := db.InsertDelegation(h.DB, d, db.HashRefreshToken(refreshToken)); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

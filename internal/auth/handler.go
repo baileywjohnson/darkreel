@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -476,6 +477,27 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Compute the new session key, client-wrapped master key, and new JWT
+	// BEFORE opening the DB transaction. These are in-memory crypto ops that
+	// can in principle fail (rand.Read, JWT signing) — if any of them fails
+	// AFTER commit, the password change would be durable on disk but the
+	// client sees HTTP 500, retries with the old password, and gets locked
+	// out by the account rate limiter. Computing up front means any failure
+	// aborts the request cleanly with no DB mutation.
+	newSessionID := GenerateSessionID()
+	newSessionKey := crypto.DeriveSessionKey(req.NewPassword, newKdfSalt)
+	defer clear(newSessionKey)
+	newEncMKForClient, err := crypto.EncryptBlock(masterKey, newSessionKey, userIDBytes)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	newToken, err := GenerateToken(user.ID, newSessionID, user.IsAdmin)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	tx, err := h.DB.Begin()
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -484,10 +506,18 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	if err := db.UpdateUserAuthTx(tx, user.ID, newPasswordHash, newAuthSalt, newKdfSalt, newEncryptedMK); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "user no longer exists", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if err := db.UpdateUserRecoveryKeysTx(tx, user.ID, newRecoveryMK, newRecoveryPrivKey); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "user no longer exists", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -506,29 +536,9 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	recoveryCodeB64 := base64.URLEncoding.EncodeToString(newRecoveryCode)
 
-	// Invalidate all existing sessions (including attacker sessions)
+	// Post-commit: only in-memory SessionStore ops. These cannot fail.
 	Sessions.DeleteAllForUser(user.ID)
-
-	// Create a fresh session for the current user
-	newSessionID := GenerateSessionID()
 	Sessions.Set(newSessionID, user.ID, masterKey)
-
-	// Re-encrypt master key with new session key for the client
-	newSessionKey := crypto.DeriveSessionKey(req.NewPassword, newKdfSalt)
-	defer clear(newSessionKey)
-	newEncMKForClient, err := crypto.EncryptBlock(masterKey, newSessionKey, userIDBytes)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// Generate new token with fresh session ID (use DB admin status, not stale JWT claim)
-	newToken, err := GenerateToken(user.ID, newSessionID, user.IsAdmin)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
 	// Master key re-encrypted for client — clear from session immediately
 	Sessions.ClearKey(newSessionID)
 
@@ -718,10 +728,18 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	if err := db.UpdateUserAuthTx(tx, user.ID, newPasswordHash, newAuthSalt, newKdfSalt, newEncryptedMK); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "user no longer exists", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if err := db.UpdateUserRecoveryKeysTx(tx, user.ID, newRecoveryMK, newRecoveryPrivKey); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "user no longer exists", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

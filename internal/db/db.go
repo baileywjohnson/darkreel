@@ -55,8 +55,14 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("probe schema: %w", err)
 	}
 	if usersExists {
+		// Propagate unexpected Scan errors so a corrupted or manipulated DB
+		// fails boot rather than silently treating a read failure as a
+		// version mismatch that might get "fixed" by a later ALTER path.
 		var ver string
-		_ = db.QueryRow(`SELECT value FROM settings WHERE key = 'schema_version'`).Scan(&ver)
+		err := db.QueryRow(`SELECT value FROM settings WHERE key = 'schema_version'`).Scan(&ver)
+		if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("read schema version: %w", err)
+		}
 		if ver != schemaVersion {
 			return fmt.Errorf(
 				"refusing to start: on-disk schema version is %q, expected %q. "+
@@ -65,6 +71,24 @@ func migrate(db *sql.DB) error {
 					"A fresh admin will be re-bootstrapped from DARKREEL_ADMIN_PASSWORD on next boot",
 				ver, schemaVersion,
 			)
+		}
+		// Belt-and-braces: even if schema_version is stamped correctly, refuse
+		// to boot unless the users table actually has the v2 keypair columns.
+		// Prevents a server from serving empty public_keys (which, if sealed
+		// to, effectively leaks everything) under adverse migration paths or
+		// manual DB tampering.
+		for _, col := range []string{"public_key", "encrypted_priv_key", "recovery_priv_key"} {
+			exists, err := columnExists(db, "users", col)
+			if err != nil {
+				return fmt.Errorf("probe users.%s: %w", col, err)
+			}
+			if !exists {
+				return fmt.Errorf(
+					"refusing to start: schema_version is %q but users.%s column is missing. "+
+						"This indicates a manual or incomplete migration. Back up and wipe data/darkreel.db",
+					ver, col,
+				)
+			}
 		}
 	}
 
@@ -175,4 +199,30 @@ func tableExists(db *sql.DB, name string) (bool, error) {
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// columnExists returns true iff the named table has a column of the given name.
+// Used to verify the v2 keypair columns are actually present before trusting
+// the schema_version setting on boot.
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	// PRAGMA doesn't accept parameterized table names, but table is a
+	// hard-coded literal at every call site (never user-controlled).
+	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%q)`, table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, rows.Err()
+		}
+	}
+	return false, rows.Err()
 }

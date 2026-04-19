@@ -33,12 +33,27 @@ type DelegationCode struct {
 	ExpiresAt  int64
 }
 
+// hashRefreshTokenDomain prefixes the refresh-token hash with a fixed
+// domain separator so the hash is not cross-protocol reusable. A DB leak
+// cannot be fed into a future feature's "sha256(x)" primitive to produce a
+// refresh_token_hash that matches — the attacker would also need to know
+// this exact byte sequence and recreate the domain-separated construction.
+// Versioned so we can rotate the construction without re-hashing existing
+// tokens (just bump the version and force re-authorization).
+const hashRefreshTokenDomain = "darkreel:delegation-refresh-v1|"
+
 // HashRefreshToken is the canonical server-side hash used for storage and
-// constant-time lookup. Callers are responsible for feeding it the raw,
-// user-supplied token (not any prefix, not trimmed).
+// exact-match lookup. Callers feed it the raw user-supplied token.
+// We intentionally use SHA-256 with a fixed domain separator (not HMAC with
+// the JWT secret): jwtSecret is ephemeral per process by design, and HMACing
+// with it would invalidate every stored refresh token on restart, breaking
+// the "click and forget" delegation UX. 32-byte random tokens have enough
+// entropy that pre-image resistance doesn't need an additional secret.
 func HashRefreshToken(raw string) []byte {
-	h := sha256.Sum256([]byte(raw))
-	return h[:]
+	h := sha256.New()
+	h.Write([]byte(hashRefreshTokenDomain))
+	h.Write([]byte(raw))
+	return h.Sum(nil)
 }
 
 // InsertDelegationCode stores a one-use authorization code with a TTL.
@@ -51,52 +66,83 @@ func InsertDelegationCode(db *sql.DB, c *DelegationCode) error {
 	return err
 }
 
-// ConsumeDelegationCode atomically reads and deletes a code, returning the row
-// if it existed and hadn't yet expired. A transaction + DELETE ensures a code
-// can be exchanged at most once, even under concurrent requests.
-func ConsumeDelegationCode(database *sql.DB, code string, now time.Time) (*DelegationCode, error) {
+// ExchangeAuthorizationCode atomically consumes an authorization code and
+// creates the backing delegation row in a single transaction.
+//
+// Atomicity closes two race windows the earlier two-step version had:
+//
+//   1. Concurrent exchanges on the same code. DELETE ... RETURNING commits
+//      a single row-visibility decision under SQLite's locking — the second
+//      caller sees zero affected rows and fails out. Without RETURNING, two
+//      concurrent SELECTs could both see the row, both delete (one no-op),
+//      and both mint a fresh refresh token.
+//   2. Code burned on failed insert. With the earlier flow, a failure between
+//      the DELETE commit and the InsertDelegation call left the user with a
+//      consumed code and no delegation — they had to re-authorize. Now the
+//      INSERT runs inside the same tx; any failure rolls the code back.
+//
+// `now` is passed in so the expiry check uses the same wall clock the caller
+// sees elsewhere in the request. `now > expires_at` → ErrCodeExpired.
+func ExchangeAuthorizationCode(database *sql.DB, code string, now time.Time, d *Delegation, tokenHash []byte) (*DelegationCode, error) {
 	tx, err := database.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
+	// DELETE ... RETURNING: single statement, atomically removes the row and
+	// returns its contents. If the code never existed (or a concurrent exchange
+	// already consumed it), RETURNING yields no rows — Scan returns ErrNoRows.
 	c := &DelegationCode{}
 	err = tx.QueryRow(
-		`SELECT code, user_id, client_name, client_url, scope, expires_at
-		 FROM delegation_codes WHERE code = ?`, code,
+		`DELETE FROM delegation_codes WHERE code = ?
+		 RETURNING code, user_id, client_name, client_url, scope, expires_at`,
+		code,
 	).Scan(&c.Code, &c.UserID, &c.ClientName, &c.ClientURL, &c.Scope, &c.ExpiresAt)
 	if err != nil {
 		return nil, err
 	}
-	// DELETE regardless of expiry so an expired code cannot be retried later.
-	if _, err := tx.Exec(`DELETE FROM delegation_codes WHERE code = ?`, code); err != nil {
+	if now.Unix() > c.ExpiresAt {
+		return nil, ErrCodeExpired
+	}
+
+	// Carry the code's metadata into the delegation row so the caller can
+	// display a consistent "Connected Apps" entry.
+	if d.ClientName == "" {
+		d.ClientName = c.ClientName
+	}
+	if d.ClientURL == "" {
+		d.ClientURL = c.ClientURL
+	}
+	if d.Scope == "" {
+		d.Scope = c.Scope
+	}
+	if d.UserID == "" {
+		d.UserID = c.UserID
+	}
+
+	if _, err := tx.Exec(
+		`INSERT INTO delegations (id, user_id, client_name, client_url, scope, refresh_token_hash, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		d.ID, d.UserID, d.ClientName, d.ClientURL, d.Scope, tokenHash, d.CreatedAt,
+	); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	if now.Unix() > c.ExpiresAt {
-		return nil, fmt.Errorf("authorization code expired")
-	}
 	return c, nil
 }
+
+// ErrCodeExpired is returned by ExchangeAuthorizationCode when the code was
+// present but past its expiry. Callers surface the same "invalid or expired
+// code" error to the client either way to avoid state distinguishers.
+var ErrCodeExpired = fmt.Errorf("authorization code expired")
 
 // PruneExpiredDelegationCodes deletes expired authorization codes. Called
 // periodically from a background goroutine (similar to session cleanup).
 func PruneExpiredDelegationCodes(db *sql.DB, now time.Time) error {
 	_, err := db.Exec(`DELETE FROM delegation_codes WHERE expires_at < ?`, now.Unix())
-	return err
-}
-
-// InsertDelegation records a new active delegation. tokenHash must be
-// sha256(raw_refresh_token).
-func InsertDelegation(db *sql.DB, d *Delegation, tokenHash []byte) error {
-	_, err := db.Exec(
-		`INSERT INTO delegations (id, user_id, client_name, client_url, scope, refresh_token_hash, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		d.ID, d.UserID, d.ClientName, d.ClientURL, d.Scope, tokenHash, d.CreatedAt,
-	)
 	return err
 }
 
