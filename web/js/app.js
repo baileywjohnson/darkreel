@@ -1475,6 +1475,7 @@ document.getElementById('admin-save-quota').addEventListener('click', async () =
 adminBtn.addEventListener('click', showAdminPanel);
 
 document.getElementById('admin-back-btn').addEventListener('click', () => {
+    if (!token) return;
     adminView.classList.add('hidden');
     galleryView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'gallery');
@@ -1924,6 +1925,7 @@ function showSettingsPanel() {
 settingsBtn.addEventListener('click', showSettingsPanel);
 
 document.getElementById('settings-back-btn').addEventListener('click', () => {
+    if (!token) return;
     settingsView.classList.add('hidden');
     galleryView.classList.remove('hidden');
     sessionStorage.setItem('activeView', 'gallery');
@@ -2197,6 +2199,8 @@ function showAuth() {
     settingsView.classList.add('hidden');
     header.classList.add('hidden');
     authError.classList.add('hidden');
+    hideStickyBacks();
+    galleryGrid.innerHTML = '';
     // Reset to login form (not recovery/register)
     authFormEl.classList.remove('hidden');
     recoveryForm.classList.add('hidden');
