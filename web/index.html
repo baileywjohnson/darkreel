@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css?v=0573d87e289cffba" integrity="sha384-Tl0xKOlcRmRY3cQkBveeLjS4x8pYIKDBhQGEZPn/2PoIypQagcqvZIMmBTh7n1zk" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css?v=02d3529a073820a0" integrity="sha384-f60jYIiu1TI68RKHCpnKAfDoU2VlBy/75o4t9MGA2AxRMi0qwaYTA3tUIhNapEvH" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -249,6 +249,31 @@
                             </div>
                         </div>
                         <div class="admin-create">
+                            <h3>Connected Apps</h3>
+                            <p class="delete-warning">Apps authorized to upload to your account. Revoking an app immediately prevents new uploads; any upload already in flight completes within 1 hour or fails, whichever comes first.</p>
+                            <div id="delegations-list" class="delegations-list"></div>
+                            <p id="delegations-empty" class="hint hidden">No apps authorized yet.</p>
+                            <p id="delegations-error" class="error hidden"></p>
+                        </div>
+                        <div class="admin-create">
+                            <h3>Authorize an App</h3>
+                            <p class="delete-warning">Generate a one-time code to connect another application (e.g., PPVDA) to your Darkreel account. The code expires in 2 minutes and can only be used once. The app you authorize can upload to your library but cannot read, list, or delete existing files.</p>
+                            <form id="authorize-app-form">
+                                <input type="text" id="authorize-client-name" placeholder="App name (e.g., PPVDA)" required maxlength="128">
+                                <input type="url" id="authorize-client-url" placeholder="App URL (https://…)" required maxlength="512">
+                                <button type="submit" class="btn btn-primary">Generate Code</button>
+                            </form>
+                            <p id="authorize-error" class="error hidden"></p>
+                            <div id="authorize-result" class="hidden">
+                                <p class="delete-warning" style="margin-top:12px;"><strong>Paste this into the requesting app now — it will not be shown again:</strong></p>
+                                <div class="recovery-code-box">
+                                    <code id="authorize-code"></code>
+                                    <button type="button" id="authorize-copy" class="btn btn-ghost">Copy</button>
+                                </div>
+                                <p id="authorize-expiry" class="hint"></p>
+                            </div>
+                        </div>
+                        <div class="admin-create">
                             <h3>Delete Account</h3>
                             <p class="delete-warning">This will permanently delete your account and all your encrypted media. This cannot be undone.</p>
                             <form id="settings-delete-form">
@@ -415,7 +440,7 @@
 
     </div>
 
-    <script src="/js/crypto.js?v=109af2fb49f2fcd2" type="module" integrity="sha384-0+K1Y44NP+rCfPbf+6aCcory0TMlCcMs6i9obWfKPcouZ31lN0mHA7EVul8HG5yz" crossorigin="anonymous"></script>
-    <script src="/js/app.js?v=46285757e72a16ea" type="module" integrity="sha384-/T0K8RPTVNtDSQo5KfMD9I6GHp/d2bbLQViBPZg/KKD91ofOo1CUTX0rMe/iJ7EJ" crossorigin="anonymous"></script>
+    <script src="/js/crypto.js?v=ba9a61da2c24d03d" type="module" integrity="sha384-SpnhFaUd7nk4lnhXDYh4vjI2Zs0rlbHQ5J884cdlrBD6zbW5Q0qKCDbsJYIk+go5" crossorigin="anonymous"></script>
+    <script src="/js/app.js?v=3fa2600cc7204f2e" type="module" integrity="sha384-JbGncD5fClHtHw3GK5hdGWuyz3aawlptcze6nA7TmlS1nQDhoRoMkWlH2jsDVQlA" crossorigin="anonymous"></script>
 </body>
 </html>

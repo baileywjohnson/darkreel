@@ -7,6 +7,18 @@ const ARGON2_PARAMS = { time: 3, mem: 65536, threads: 4, keyLen: 32 };
 let _masterKey = null;
 let _masterKeyRaw = null;
 
+// Shape 2: X25519 keypair. Public key is used to seal per-file AES keys
+// (browser uploads now use the same sealing path delegated clients use).
+// Private key lives only as a non-extractable CryptoKey — even a successful
+// XSS cannot exfiltrate the raw bytes, it can only use it for deriveBits.
+let _privateKey = null;    // CryptoKey (non-extractable), X25519 deriveBits
+let _publicKeyRaw = null;  // Uint8Array, 32 bytes, used to seal to self
+const SEAL_INFO = new TextEncoder().encode('darkreel-seal-v1');
+const SEAL_EPHPK_LEN = 32;
+const SEAL_NONCE_LEN = 12;
+const SEAL_TAG_LEN = 16;
+const SEAL_OVERHEAD = SEAL_EPHPK_LEN + SEAL_NONCE_LEN + SEAL_TAG_LEN; // 60
+
 // We use a pure JS Argon2id implementation for key derivation in the browser.
 // This is loaded dynamically to keep initial page load fast.
 
@@ -61,6 +73,94 @@ export function clearMasterKey() {
     if (_masterKeyRaw) _masterKeyRaw.fill(0);
     _masterKey = null;
     _masterKeyRaw = null;
+}
+
+// Install the user's X25519 keypair. privKeyBytes is zeroed as soon as it is
+// imported as a non-extractable CryptoKey. pubKeyBytes stays around because
+// uploads (including the user's own browser uploads) seal keys to the user's
+// public key, so we need it in raw form for every upload.
+export async function setKeypair(privKeyBytes, pubKeyBytes) {
+    if (privKeyBytes.length !== 32) throw new Error('private key must be 32 bytes');
+    if (pubKeyBytes.length !== 32) throw new Error('public key must be 32 bytes');
+    _publicKeyRaw = new Uint8Array(pubKeyBytes);
+    _privateKey = await crypto.subtle.importKey(
+        'raw', privKeyBytes, { name: 'X25519' }, false, ['deriveBits']
+    );
+    // Privkey is now inside a non-extractable CryptoKey. Wipe the input buffer.
+    new Uint8Array(privKeyBytes.buffer, privKeyBytes.byteOffset, privKeyBytes.byteLength).fill(0);
+}
+
+export function hasKeypair() {
+    return _privateKey !== null;
+}
+
+export function getPublicKey() {
+    return _publicKeyRaw;
+}
+
+export function clearKeypair() {
+    _privateKey = null;
+    if (_publicKeyRaw) _publicKeyRaw.fill(0);
+    _publicKeyRaw = null;
+}
+
+// Derive a single-use AES-256-GCM key from an X25519 ECDH. Both seal and
+// open call through here; X25519 is symmetric so whether "priv" is the
+// ephemeral or the recipient private half, the shared secret is the same.
+async function deriveSealCipherKey(privKey, peerPubBytes) {
+    const peerPub = await crypto.subtle.importKey(
+        'raw', peerPubBytes, { name: 'X25519' }, false, []
+    );
+    const sharedBits = await crypto.subtle.deriveBits(
+        { name: 'X25519', public: peerPub }, privKey, 256
+    );
+    const hkdfKey = await crypto.subtle.importKey(
+        'raw', sharedBits, 'HKDF', false, ['deriveKey']
+    );
+    return crypto.subtle.deriveKey(
+        { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: SEAL_INFO },
+        hkdfKey,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+    );
+}
+
+// Seal msg to recipientPubBytes. Output matches the server's SealBox format:
+// ephemeral_pk(32) || nonce(12) || AES-256-GCM(derived_key, nonce, msg).
+// Called per upload to wrap per-file/thumb/metadata AES keys; the recipient
+// is the uploading user's own public key.
+export async function sealTo(msg, recipientPubBytes) {
+    if (recipientPubBytes.length !== 32) throw new Error('recipient pubkey must be 32 bytes');
+    // Web Crypto generates extractable X25519 keypairs so we can export the
+    // public half; the private half is used once for deriveBits and then
+    // dropped along with the keypair when this function returns.
+    const ephKp = await crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits']);
+    const ephPubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', ephKp.publicKey));
+    const aesKey = await deriveSealCipherKey(ephKp.privateKey, recipientPubBytes);
+    const nonce = crypto.getRandomValues(new Uint8Array(SEAL_NONCE_LEN));
+    const ct = new Uint8Array(await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: nonce }, aesKey, msg
+    ));
+    const out = new Uint8Array(SEAL_EPHPK_LEN + SEAL_NONCE_LEN + ct.length);
+    out.set(ephPubRaw, 0);
+    out.set(nonce, SEAL_EPHPK_LEN);
+    out.set(ct, SEAL_EPHPK_LEN + SEAL_NONCE_LEN);
+    return out;
+}
+
+// Open a sealed box using the user's cached private key. Used on every view
+// to recover per-file AES keys from the sealed blobs stored on the server.
+export async function openSealed(sealed) {
+    if (!_privateKey) throw new Error('keypair not loaded');
+    if (sealed.length < SEAL_OVERHEAD) throw new Error('sealed blob too short');
+    const ephPubBytes = sealed.subarray(0, SEAL_EPHPK_LEN);
+    const nonce = sealed.subarray(SEAL_EPHPK_LEN, SEAL_EPHPK_LEN + SEAL_NONCE_LEN);
+    const ct = sealed.subarray(SEAL_EPHPK_LEN + SEAL_NONCE_LEN);
+    const aesKey = await deriveSealCipherKey(_privateKey, ephPubBytes);
+    return new Uint8Array(await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: nonce }, aesKey, ct
+    ));
 }
 
 // Generate a random 256-bit key

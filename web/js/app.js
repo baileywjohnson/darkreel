@@ -1,10 +1,37 @@
 import {
     setMasterKeyDirect, clearMasterKey, hasMasterKey, getMasterKeyRaw,
-    generateFileKey, generateHashNonce, encryptFileKey, decryptFileKey,
+    setKeypair, hasKeypair, getPublicKey, clearKeypair, sealTo, openSealed,
+    generateFileKey, generateHashNonce,
     encryptChunk, decryptChunk, encryptBlock, decryptBlock,
     encryptName, decryptName, generateThumbnail, modifyHash,
     bufferToBase64, base64ToBuffer, formatSize
 } from './crypto.js';
+
+// Shape 2: after a master key lands, unwrap the user's X25519 private key
+// (the server returns encrypted_priv_key wrapped with AES-GCM under the master
+// key, AAD = userID) and install it as a non-extractable CryptoKey for seal/
+// open operations. Optionally stashes the public key + wrapped private key in
+// sessionStorage so the keypair survives a page refresh when PERSIST_SESSION.
+async function loadKeypairFromBase64(publicKeyB64, encryptedPrivKeyB64, masterKeyBytes, uidStr, persist) {
+    if (!publicKeyB64 || !encryptedPrivKeyB64) {
+        throw new Error('login response missing public_key / encrypted_priv_key');
+    }
+    const pubKey = base64ToBuffer(publicKeyB64);
+    const encPriv = base64ToBuffer(encryptedPrivKeyB64);
+    const uidAad = new TextEncoder().encode(uidStr);
+    const privKey = await decryptBlock(encPriv, masterKeyBytes, uidAad);
+    try {
+        await setKeypair(privKey, pubKey);
+    } finally {
+        // setKeypair wipes privKey bytes, but if import threw we still want
+        // to clobber whatever is in the buffer.
+        privKey.fill(0);
+    }
+    if (persist) {
+        sessionStorage.setItem('publicKey', publicKeyB64);
+        sessionStorage.setItem('encryptedPrivKey', encryptedPrivKeyB64);
+    }
+}
 
 const MAX_NAME_LENGTH = 255;
 
@@ -944,6 +971,10 @@ async function handleLogin(overrideUsername, overridePassword) {
             const ct = encMK.slice(12);
             const mk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: userIdAad }, sessionKey, ct));
             await setMasterKeyDirect(mk);
+            // Unwrap the X25519 private key using the freshly-minted master key.
+            // Every media operation after this point (upload seal, view open)
+            // needs the keypair, so any failure here must abort the login.
+            await loadKeypairFromBase64(res.public_key, res.encrypted_priv_key, mk, res.user_id, serverConfig.persistSession);
         }
 
         // Store session
@@ -1919,6 +1950,138 @@ function showSettingsPanel() {
     requestAnimationFrame(() => {
         settingsLoading.classList.add('hidden');
         settingsContent.classList.remove('hidden');
+        // Refresh the "Connected Apps" list each time settings opens so a
+        // recently-authorized or -revoked delegation is visible without a
+        // page reload.
+        loadDelegations();
+    });
+}
+
+// --- Delegation management (Shape 2) ---
+
+const delegationsList = document.getElementById('delegations-list');
+const delegationsEmpty = document.getElementById('delegations-empty');
+const delegationsError = document.getElementById('delegations-error');
+const authorizeForm = document.getElementById('authorize-app-form');
+const authorizeError = document.getElementById('authorize-error');
+const authorizeResult = document.getElementById('authorize-result');
+const authorizeCodeEl = document.getElementById('authorize-code');
+const authorizeExpiryEl = document.getElementById('authorize-expiry');
+const authorizeCopyBtn = document.getElementById('authorize-copy');
+
+async function loadDelegations() {
+    if (!delegationsList) return;
+    delegationsList.innerHTML = '';
+    delegationsEmpty.classList.add('hidden');
+    delegationsError.classList.add('hidden');
+    try {
+        const rows = await api('/api/account/delegations');
+        if (!Array.isArray(rows) || rows.length === 0) {
+            delegationsEmpty.classList.remove('hidden');
+            return;
+        }
+        for (const d of rows) {
+            const row = document.createElement('div');
+            row.className = 'delegation-row';
+
+            // client_name / client_url arrived from the server as
+            // user-supplied strings. Use textContent / .href via URL parsing
+            // so a crafted value (quotes, <script>) can't inject into the DOM.
+            const meta = document.createElement('div');
+            meta.className = 'delegation-meta';
+            const nameEl = document.createElement('strong');
+            nameEl.textContent = d.client_name;
+            const urlEl = document.createElement('a');
+            urlEl.textContent = d.client_url;
+            try {
+                const u = new URL(d.client_url);
+                if (u.protocol === 'http:' || u.protocol === 'https:') urlEl.href = u.toString();
+            } catch {}
+            urlEl.rel = 'noopener noreferrer';
+            urlEl.target = '_blank';
+            const created = document.createElement('span');
+            created.className = 'hint';
+            created.textContent = 'Authorized ' + (d.created_at || '') + (d.last_used_at ? ` · last used ${d.last_used_at}` : '');
+            meta.appendChild(nameEl);
+            meta.appendChild(document.createElement('br'));
+            meta.appendChild(urlEl);
+            meta.appendChild(document.createElement('br'));
+            meta.appendChild(created);
+
+            const revoke = document.createElement('button');
+            revoke.className = 'btn btn-danger';
+            revoke.textContent = 'Revoke';
+            revoke.addEventListener('click', async () => {
+                revoke.disabled = true;
+                try {
+                    await api(`/api/account/delegations/${encodeURIComponent(d.id)}`, { method: 'DELETE' });
+                    await loadDelegations();
+                } catch (e) {
+                    revoke.disabled = false;
+                    delegationsError.textContent = 'Revoke failed: ' + (e?.message || 'unknown');
+                    delegationsError.classList.remove('hidden');
+                }
+            });
+
+            row.appendChild(meta);
+            row.appendChild(revoke);
+            delegationsList.appendChild(row);
+        }
+    } catch (e) {
+        delegationsError.textContent = 'Failed to load connected apps: ' + (e?.message || 'unknown');
+        delegationsError.classList.remove('hidden');
+    }
+}
+
+if (authorizeForm) {
+    authorizeForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        authorizeError.classList.add('hidden');
+        authorizeResult.classList.add('hidden');
+        const nameInput = document.getElementById('authorize-client-name');
+        const urlInput = document.getElementById('authorize-client-url');
+        const name = nameInput.value.trim();
+        const url = urlInput.value.trim();
+        if (!name || !url) return;
+        // Pre-validate the URL so a user typo surfaces here, not as a server 400.
+        try {
+            const u = new URL(url);
+            if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+                throw new Error('URL must start with http:// or https://');
+            }
+        } catch (err) {
+            authorizeError.textContent = 'Invalid app URL: ' + (err?.message || 'unknown');
+            authorizeError.classList.remove('hidden');
+            return;
+        }
+        try {
+            const res = await api('/api/delegation/authorize', {
+                json: { client_name: name, client_url: url, scope: 'upload' },
+            });
+            authorizeCodeEl.textContent = res.authorization_code;
+            const minutes = Math.max(1, Math.round((res.expires_in || 120) / 60));
+            authorizeExpiryEl.textContent = `Expires in ${minutes} minute${minutes === 1 ? '' : 's'}. One-use only.`;
+            authorizeResult.classList.remove('hidden');
+            // Clear the form so an accidental second submit doesn't silently
+            // mint another code — user must re-enter.
+            authorizeForm.reset();
+        } catch (err) {
+            authorizeError.textContent = err?.message || 'Failed to generate authorization code';
+            authorizeError.classList.remove('hidden');
+        }
+    });
+}
+
+if (authorizeCopyBtn) {
+    authorizeCopyBtn.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(authorizeCodeEl.textContent || '');
+            const original = authorizeCopyBtn.textContent;
+            authorizeCopyBtn.textContent = 'Copied!';
+            setTimeout(() => { authorizeCopyBtn.textContent = original; }, 1500);
+        } catch {
+            // Clipboard permission denied or unsupported; user can select manually.
+        }
     });
 }
 
@@ -2159,6 +2322,10 @@ function closeHeaderMenu() {
 async function doLogout() {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
     clearMasterKey();
+    // Drop the X25519 private key from its non-extractable CryptoKey slot.
+    // The key itself cannot be exfiltrated, but dropping the reference means
+    // it can't be used by any lingering code paths either.
+    clearKeypair();
     // Terminate decryption workers to release any retained key material
     for (const w of workers) w.terminate();
     workers.length = 0;
@@ -2888,14 +3055,15 @@ async function loadMedia() {
         mediaItems = [];
         for (const item of rawItems) {
             try {
-                if (item.metadata_enc && item.metadata_nonce && hasMasterKey()) {
+                if (item.metadata_enc && item.metadata_nonce && item.metadata_key_sealed && hasKeypair()) {
+                    const metadataKey = await openSealed(base64ToBuffer(item.metadata_key_sealed));
                     const encData = base64ToBuffer(item.metadata_enc);
                     const nonce = base64ToBuffer(item.metadata_nonce);
                     const combined = new Uint8Array(nonce.length + encData.length);
                     combined.set(nonce, 0);
                     combined.set(encData, nonce.length);
                     const mediaIdAad = new TextEncoder().encode(item.id);
-                    const decrypted = await decryptBlock(combined, getMasterKeyRaw(), mediaIdAad);
+                    const decrypted = await decryptBlock(combined, metadataKey, mediaIdAad);
                     const meta = JSON.parse(new TextDecoder().decode(decrypted));
                     Object.assign(item, meta);
                 }
@@ -2948,14 +3116,15 @@ async function pollMedia() {
         for (const item of rawItems) {
             if (existingIds.has(item.id)) continue;
             try {
-                if (item.metadata_enc && item.metadata_nonce && hasMasterKey()) {
+                if (item.metadata_enc && item.metadata_nonce && item.metadata_key_sealed && hasKeypair()) {
+                    const metadataKey = await openSealed(base64ToBuffer(item.metadata_key_sealed));
                     const encData = base64ToBuffer(item.metadata_enc);
                     const nonce = base64ToBuffer(item.metadata_nonce);
                     const combined = new Uint8Array(nonce.length + encData.length);
                     combined.set(nonce, 0);
                     combined.set(encData, nonce.length);
                     const mediaIdAad = new TextEncoder().encode(item.id);
-                    const decrypted = await decryptBlock(combined, getMasterKeyRaw(), mediaIdAad);
+                    const decrypted = await decryptBlock(combined, metadataKey, mediaIdAad);
                     const meta = JSON.parse(new TextDecoder().decode(decrypted));
                     Object.assign(item, meta);
                 }
@@ -3110,8 +3279,7 @@ async function loadThumbnail(item, img) {
         const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
 
         // Decrypt thumbnail key
-        const thumbKeyEnc = base64ToBuffer(item.thumb_key_enc);
-        const thumbKey = await decryptFileKey(thumbKeyEnc, item.id);
+        const thumbKey = await openSealed(base64ToBuffer(item.thumb_key_sealed));
 
         // Decrypt thumbnail (it's encrypted as chunk index 0)
         const decrypted = await workerDecrypt('decryptChunk', encData, thumbKey, 0, item.id);
@@ -3264,7 +3432,13 @@ async function moveItemToFolder(item, newFolderId, skipDupeCheck) {
 
     const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
     const mediaIdAad = new TextEncoder().encode(item.id);
-    const enc = await encryptBlock(metaBytes, getMasterKeyRaw(), mediaIdAad);
+    // Reuse the item's existing metadata key — the server's PATCH endpoint
+    // only rewrites metadata_enc/metadata_nonce and is unaware of the sealed
+    // key, so we keep the key stable across metadata updates. Safe: every
+    // AES-GCM encrypt uses a fresh random nonce, so key reuse across updates
+    // is not a cryptographic concern.
+    const metadataKey = await openSealed(base64ToBuffer(item.metadata_key_sealed));
+    const enc = await encryptBlock(metaBytes, metadataKey, mediaIdAad);
     const nonce = enc.slice(0, 12);
     const ciphertext = enc.slice(12);
 
@@ -3769,8 +3943,7 @@ async function openViewer(item) {
     }
 
     // Decrypt file key
-    const fileKeyEnc = base64ToBuffer(item.file_key_enc);
-    const fileKey = await decryptFileKey(fileKeyEnc, item.id);
+    const fileKey = await openSealed(base64ToBuffer(item.file_key_sealed));
 
     if (item.media_type === 'video') {
         await playVideo(item, fileKey);
@@ -4450,9 +4623,8 @@ async function rotateCurrentItem() {
     spinner.className = 'viewer-rotate-spinner';
     viewerImage.parentElement.appendChild(spinner);
     try {
-        // Decrypt file
-        const fileKeyEnc = base64ToBuffer(item.file_key_enc);
-        const fileKey = await decryptFileKey(fileKeyEnc, item.id);
+        // Decrypt file — open the sealed file key to recover the AES key.
+        const fileKey = await openSealed(base64ToBuffer(item.file_key_sealed));
         const chunks = [];
         for (let i = 0; i < item.chunk_count; i++) {
             const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
@@ -4480,15 +4652,19 @@ async function rotateCurrentItem() {
             thumbData = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46]);
         }
 
-        // New keys
+        // New keys: one each for file, thumbnail, and metadata; each will be
+        // sealed to the user's own public key. A fresh rotate upload is a
+        // brand-new media row, so nothing carries over from the pre-rotation
+        // sealed keys.
         const newFileKey = generateFileKey();
         const newThumbKey = generateFileKey();
+        const newMetadataKey = generateFileKey();
         const newHashNonce = generateHashNonce();
 
         // Hash modification on rotated data
         const modifiedData = modifyHash(rotatedData, item.mime_type || 'image/jpeg', newHashNonce);
 
-        // Generate media ID first — needed as AAD for chunk and key encryption
+        // Generate media ID first — needed as AAD for chunk and metadata encryption
         const newMediaId = crypto.randomUUID();
 
         // Encrypt
@@ -4500,8 +4676,6 @@ async function rotateCurrentItem() {
             const end = Math.min(start + CHUNK_SIZE, modifiedData.length);
             encChunks.push(await encryptChunk(modifiedData.slice(start, end), newFileKey, i, newMediaId));
         }
-        const encFileKey = await encryptFileKey(newFileKey, newMediaId);
-        const encThumbKey = await encryptFileKey(newThumbKey, newMediaId);
 
         // Get rotated dimensions
         const rotImg = new Image();
@@ -4526,15 +4700,22 @@ async function rotateCurrentItem() {
 
         const metaBytes = new TextEncoder().encode(JSON.stringify(metaPlain));
         const newMediaIdAad = new TextEncoder().encode(newMediaId);
-        const encMetadata = await encryptBlock(metaBytes, getMasterKeyRaw(), newMediaIdAad);
+        const encMetadata = await encryptBlock(metaBytes, newMetadataKey, newMediaIdAad);
         const metadataNonce = encMetadata.slice(0, 12);
         const metadataCiphertext = encMetadata.slice(12);
+
+        // Seal all three keys to the user's own public key.
+        const ownPub = getPublicKey();
+        const newFileKeySealed = await sealTo(newFileKey, ownPub);
+        const newThumbKeySealed = await sealTo(newThumbKey, ownPub);
+        const newMetadataKeySealed = await sealTo(newMetadataKey, ownPub);
 
         const metadata = {
             media_id: newMediaId,
             chunk_count: chunkCount,
-            file_key_enc: bufferToBase64(encFileKey),
-            thumb_key_enc: bufferToBase64(encThumbKey),
+            file_key_sealed: bufferToBase64(newFileKeySealed),
+            thumb_key_sealed: bufferToBase64(newThumbKeySealed),
+            metadata_key_sealed: bufferToBase64(newMetadataKeySealed),
             hash_nonce: bufferToBase64(newHashNonce),
             metadata_enc: bufferToBase64(metadataCiphertext),
             metadata_nonce: bufferToBase64(metadataNonce),
@@ -4683,8 +4864,7 @@ async function downloadItem(item) {
     document.body.appendChild(toast);
 
     try {
-        const fileKeyEnc = base64ToBuffer(item.file_key_enc);
-        const fileKey = await decryptFileKey(fileKeyEnc, item.id);
+        const fileKey = await openSealed(base64ToBuffer(item.file_key_sealed));
         const progressEl = toast.querySelector('.download-toast-progress');
 
         // Collect all chunks
@@ -4763,8 +4943,7 @@ async function downloadFolder(folder) {
             const prefix = folderPaths.get(item.folderId) || '';
             const filename = prefix + (item.name || `file-${idx}`);
 
-            const fileKeyEnc = base64ToBuffer(item.file_key_enc);
-            const fileKey = await decryptFileKey(fileKeyEnc, item.id);
+            const fileKey = await openSealed(base64ToBuffer(item.file_key_sealed));
 
             const chunks = [];
             for (let i = 0; i < item.chunk_count; i++) {
@@ -5026,7 +5205,9 @@ async function updateItemMetadata(item) {
 
     const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
     const mediaIdAad = new TextEncoder().encode(item.id);
-    const enc = await encryptBlock(metaBytes, getMasterKeyRaw(), mediaIdAad);
+    // Same reuse-existing-key pattern as moveToFolder above.
+    const metadataKey = await openSealed(base64ToBuffer(item.metadata_key_sealed));
+    const enc = await encryptBlock(metaBytes, metadataKey, mediaIdAad);
     const nonce = enc.slice(0, 12);
     const ciphertext = enc.slice(12);
 
@@ -5234,12 +5415,13 @@ async function uploadFile(file, itemEl, targetFolderId) {
     setUploadStatus(itemEl, 'Encrypting...');
     const fileKey = generateFileKey();
     const thumbKey = generateFileKey();
+    const metadataKey = generateFileKey();
     const hashNonce = generateHashNonce();
 
     // Hash modification (skip for videos and non-media files)
     const modifiedData = (mediaType === 'image') ? modifyHash(fileData, file.type, hashNonce) : fileData;
 
-    // Generate media ID first — needed as AAD for chunk and key encryption
+    // Generate media ID first — needed as AAD for chunk and metadata encryption
     const mediaId = crypto.randomUUID();
 
     // Encrypt thumbnail
@@ -5264,11 +5446,7 @@ async function uploadFile(file, itemEl, targetFolderId) {
         setUploadProgress(itemEl, Math.round(((i + 1) / chunkCount) * 50));
     }
 
-    // Encrypt keys with master key, bound to this media item via AAD
-    const encFileKey = await encryptFileKey(fileKey, mediaId);
-    const encThumbKey = await encryptFileKey(thumbKey, mediaId);
-
-    // Build and encrypt metadata blob
+    // Build and encrypt metadata blob using its own per-file key (not master)
     const metaPlain = {
         name: uploadName,
         media_type: mediaType,
@@ -5298,10 +5476,20 @@ async function uploadFile(file, itemEl, targetFolderId) {
 
     const metaBytes = new TextEncoder().encode(JSON.stringify(metaPlain));
     const mediaIdAad = new TextEncoder().encode(mediaId);
-    const encMetadata = await encryptBlock(metaBytes, getMasterKeyRaw(), mediaIdAad);
+    const encMetadata = await encryptBlock(metaBytes, metadataKey, mediaIdAad);
     // encryptBlock returns nonce (12 bytes) || ciphertext
     const metadataNonce = encMetadata.slice(0, 12);
     const metadataCiphertext = encMetadata.slice(12);
+
+    // Shape 2: seal the three per-file symmetric keys to the uploading user's
+    // own X25519 public key. The browser can only decrypt them later using the
+    // private key it unwrapped at login (and holds as a non-extractable
+    // CryptoKey). Wire format is identical to what PPVDA would produce, so
+    // the same server code accepts both browser and delegated uploads.
+    const ownPub = getPublicKey();
+    const fileKeySealed = await sealTo(fileKey, ownPub);
+    const thumbKeySealed = await sealTo(thumbKey, ownPub);
+    const metadataKeySealed = await sealTo(metadataKey, ownPub);
 
     // Build multipart upload
     setUploadStatus(itemEl, 'Uploading...');
@@ -5309,8 +5497,9 @@ async function uploadFile(file, itemEl, targetFolderId) {
     const metadata = {
         media_id: mediaId,
         chunk_count: chunkCount,
-        file_key_enc: bufferToBase64(encFileKey),
-        thumb_key_enc: bufferToBase64(encThumbKey),
+        file_key_sealed: bufferToBase64(fileKeySealed),
+        thumb_key_sealed: bufferToBase64(thumbKeySealed),
+        metadata_key_sealed: bufferToBase64(metadataKeySealed),
         hash_nonce: bufferToBase64(hashNonce),
         metadata_enc: bufferToBase64(metadataCiphertext),
         metadata_nonce: bufferToBase64(metadataNonce),
@@ -5422,15 +5611,22 @@ initWorkers();
         // Restore admin flag
         serverConfig.isAdmin = sessionStorage.getItem('isAdmin') === '1';
 
-        // Try to restore master key if persist-session is enabled
+        // Try to restore master key + keypair if persist-session is enabled
         const savedMK = sessionStorage.getItem('masterKey');
-        if (savedMK && serverConfig.persistSession) {
+        const savedPub = sessionStorage.getItem('publicKey');
+        const savedEncPriv = sessionStorage.getItem('encryptedPrivKey');
+        if (savedMK && savedPub && savedEncPriv && serverConfig.persistSession) {
             try {
-                await setMasterKeyDirect(base64ToBuffer(savedMK));
+                const mkBytes = base64ToBuffer(savedMK);
+                await setMasterKeyDirect(mkBytes);
+                await loadKeypairFromBase64(savedPub, savedEncPriv, mkBytes, userId, true);
                 showGallery();
                 return;
             } catch {
                 sessionStorage.removeItem('masterKey');
+                sessionStorage.removeItem('publicKey');
+                sessionStorage.removeItem('encryptedPrivKey');
+                clearKeypair();
             }
         }
 

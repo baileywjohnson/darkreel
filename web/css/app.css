@@ -891,3 +891,27 @@ main { padding-top: 0; position: relative; z-index: 1; }
     .auth-title { font-size: 24px; }
     input, select, textarea { font-size: 16px !important; }
 }
+
+/* --- Delegation / Connected Apps UI (Shape 2) --- */
+.delegations-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.delegation-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 12px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.delegation-meta { font-size: 13px; line-height: 1.5; word-break: break-all; }
+.delegation-meta a { color: var(--accent); text-decoration: none; }
+.delegation-meta a:hover { text-decoration: underline; }
+.delegation-meta .hint { color: var(--text-muted, #888); font-size: 12px; }
+
+.recovery-code-box {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px; margin-top: 8px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.recovery-code-box code {
+    flex: 1; overflow-x: auto; white-space: nowrap;
+    font-size: 13px; user-select: all;
+}
+.hint { color: var(--text-muted, #888); font-size: 12px; margin-top: 4px; }
