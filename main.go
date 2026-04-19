@@ -26,7 +26,11 @@ import (
 var webFS embed.FS
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	// Default to loopback only — Darkreel does not terminate TLS and must run
+	// behind a reverse proxy (see README). A fresh install that skips the proxy
+	// step should fail closed instead of exposing JWT bearer tokens in cleartext.
+	// Override with `-addr 0.0.0.0:8080` if you genuinely need a public bind.
+	addr := flag.String("addr", "127.0.0.1:8080", "listen address")
 	dataDir := flag.String("data", "./data", "data directory for encrypted files and database")
 	flag.Parse()
 

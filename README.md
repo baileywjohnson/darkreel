@@ -244,7 +244,8 @@ The recovery code is written to a temporary file in the data directory (`{data}/
 git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel
 bash build.sh
 DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
-# listening on :8080 - put Caddy or nginx in front for TLS
+# listening on 127.0.0.1:8080 - put Caddy or nginx in front for TLS
+# (pass `-addr 0.0.0.0:8080` only if you genuinely need a public bind)
 ```
 
 ~14 MB RAM. One binary. Zero dependencies. No Docker, no PostgreSQL, no Redis, no S3.
@@ -254,7 +255,7 @@ DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 ```
 ./darkreel [flags]
 
-  -addr string   Listen address (default ":8080")
+  -addr string   Listen address (default "127.0.0.1:8080" — loopback only)
   -data string   Data directory for database and encrypted files (default "./data")
 ```
 
