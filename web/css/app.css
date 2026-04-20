@@ -250,13 +250,13 @@ main { padding-top: 0; position: relative; z-index: 1; }
 .breadcrumb-sep { color: var(--text-dim); font-size: 12px; }
 .folder-filters { position: absolute; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; }
 .folder-actions { display: flex; gap: 8px; align-items: center; }
-.new-folder-group { position: relative; display: inline-flex; align-items: stretch; gap: 2px; }
+.new-folder-group { position: relative; display: inline-flex; align-items: stretch; gap: 4px; }
 .new-folder-caret {
     padding-left: 8px; padding-right: 8px;
     display: inline-flex; align-items: center; justify-content: center;
 }
 .new-folder-menu {
-    position: absolute; top: calc(100% + 4px); right: 0;
+    position: absolute; top: calc(100% + 14px); right: 0;
     background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--radius); padding: 4px 0;
     min-width: 140px; z-index: 50;
@@ -265,10 +265,11 @@ main { padding-top: 0; position: relative; z-index: 1; }
 .new-folder-menu.hidden { display: none; }
 .new-folder-menu button {
     display: block; width: 100%; text-align: left;
-    padding: 8px 12px; background: none; border: none;
-    color: var(--text); font-size: 13px; cursor: pointer;
+    padding: 8px 12px; background: transparent; border: none;
+    color: var(--text-dim); font-size: 13px; cursor: pointer;
+    transition: all 0.15s ease;
 }
-.new-folder-menu button:hover { background: var(--bg-hover); }
+.new-folder-menu button:hover { color: var(--text); background: var(--bg-hover); }
 .filter-desktop { display: none !important; }
 .filter-mobile { display: inline-flex; }
 .custom-select {
