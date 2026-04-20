@@ -290,9 +290,6 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	// account even when per-IP limits are bypassed. Checked for all usernames
 	// (including non-existent) to avoid leaking account existence via timing.
 	if h.AccountLimiter != nil && !h.AccountLimiter.Allow(req.Username) {
-		// Still perform dummy work so response timing is indistinguishable
-		dummySalt, _ := crypto.GenerateSalt()
-		crypto.DeriveKey(req.Password, dummySalt)
 		http.Error(w, "Username and/or password is incorrect.", http.StatusUnauthorized)
 		return
 	}
@@ -403,9 +400,6 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	// via a stolen JWT. Checked before password verification so the limit
 	// applies to all attempts, not just successful verifications.
 	if h.AccountLimiter != nil && !h.AccountLimiter.Allow(user.Username) {
-		// Dummy work so response timing is indistinguishable from a real check
-		dummySalt, _ := crypto.GenerateSalt()
-		crypto.DeriveKey(req.OldPassword, dummySalt)
 		http.Error(w, "Current password is incorrect.", http.StatusBadRequest)
 		return
 	}
@@ -631,10 +625,6 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 
 	// Per-username rate limit (same rationale as Login)
 	if h.AccountLimiter != nil && !h.AccountLimiter.Allow(req.Username) {
-		dummySalt, _ := crypto.GenerateSalt()
-		crypto.DeriveKey(req.NewPassword, dummySalt)
-		dummyCiphertext := make([]byte, 60)
-		crypto.DecryptMasterKeyWithRecovery(dummyCiphertext, make([]byte, 32), []byte("dummy"))
 		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
 		return
 	}
