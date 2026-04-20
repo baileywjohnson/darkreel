@@ -781,6 +781,10 @@ a:hover { text-decoration: underline; }
         <div class="feature-desc">256-bit code generated at account creation and rotated on every password change. If you lose your password, this is the only way back in. Lose both and your data is gone.</div>
       </div>
       <div class="feature">
+        <div class="feature-name">delegated uploads</div>
+        <div class="feature-desc">Grant other apps (e.g., PPVDA) upload-only access via a copy-paste consent flow. They hold your X25519 public key and a refresh token &mdash; they can seal uploads to you but can't read, list, or delete anything. Revoke anytime from Settings &rarr; Connected Apps.</div>
+      </div>
+      <div class="feature">
         <div class="feature-name">single binary</div>
         <div class="feature-desc">Go + embedded SQLite + embedded web UI. No runtime dependencies. No containers. No external services.</div>
       </div>
@@ -825,16 +829,29 @@ a:hover { text-decoration: underline; }
 <span class="branch"> ├─ </span><span class="algo">Argon2id</span><span class="arrow">(password, authSalt)</span>  <span class="branch">→</span>  <span class="result">password hash</span>  <span class="leaf">login verification</span>
 <span class="branch"> └─ </span><span class="algo">Argon2id</span><span class="arrow">(password, kdfSalt)</span>   <span class="branch">→</span>  <span class="result">KDF key</span>
 <span class="branch">     └─ </span><span class="algo">AES-256-GCM</span> <span class="arrow">decrypt</span> <span class="leaf">(AAD: userID)</span>  <span class="branch">→</span>  <span class="result">master key</span>  <span class="leaf">browser memory only</span>
-<span class="branch">         ├─ </span><span class="leaf">wraps per-file encryption keys</span>    <span class="leaf">(AAD: mediaID)</span>
-<span class="branch">         ├─ </span><span class="leaf">wraps per-file thumbnail keys</span>     <span class="leaf">(AAD: mediaID)</span>
-<span class="branch">         ├─ </span><span class="leaf">encrypts metadata blobs</span>           <span class="leaf">(AAD: mediaID)</span>
+<span class="branch">         ├─ </span><span class="algo">AES-256-GCM</span> <span class="arrow">unwrap</span> <span class="leaf">(AAD: userID)</span>  <span class="branch">→</span>  <span class="result">X25519 private key</span>  <span class="leaf">browser memory only</span>
 <span class="branch">         └─ </span><span class="leaf">encrypts folder structure</span>         <span class="leaf">(AAD: userID)</span>
+
+<span class="node">X25519 keypair</span>    <span class="leaf">per user, generated at registration</span>
+<span class="branch"> ├─ </span><span class="result">public key</span>    <span class="leaf">stored plaintext, served to browsers and delegated clients</span>
+<span class="branch"> └─ </span><span class="result">private key</span>   <span class="leaf">dual-wrapped (master key + recovery code)</span>
+
+<span class="node">Per-file keys</span>    <span class="leaf">one trio generated per upload</span>
+<span class="branch"> ├─ </span><span class="result">file key</span>   <span class="branch">→</span> <span class="algo">AES-256-GCM</span> <span class="leaf">encrypts chunks     (AAD: mediaID || chunkIndex)</span>
+<span class="branch"> ├─ </span><span class="result">thumb key</span>  <span class="branch">→</span> <span class="algo">AES-256-GCM</span> <span class="leaf">encrypts thumbnail  (AAD: mediaID || 0)</span>
+<span class="branch"> └─ </span><span class="result">metadata key</span> <span class="branch">→</span> <span class="algo">AES-256-GCM</span> <span class="leaf">encrypts metadata  (AAD: mediaID)</span>
+    <span class="branch">all three sealed to the user's public key via</span>
+    <span class="algo">X25519 + HKDF-SHA256 + AES-256-GCM</span> <span class="leaf">(info: "darkreel-seal-v1")</span>
     </div>
 
-    <p>The master key never leaves the browser. During login, the server briefly decrypts it to
-    re-encrypt with a session key for the client, then immediately clears it from memory. The master
-    key is also encrypted with a 256-bit recovery code (AAD: userID) generated at account creation
-    and rotated on every password change - shown once, never stored in plaintext.</p>
+    <p>The master key and private key never leave the browser after login. The browser imports the
+    private key as a non-extractable <code>CryptoKey</code> &mdash; even XSS cannot exfiltrate its
+    bytes, only use it to derive shared secrets. Both master key and private key are also wrapped
+    by a 256-bit recovery code generated at account creation and rotated on every password change.</p>
+
+    <p>Uploads (browser, CLI, or delegated third-party) share one wire format. Delegated clients
+    hold only the public key &mdash; they can seal uploads to the user but cannot open anything.
+    This lets other apps upload to your account without ever seeing a password or an AES key.</p>
 
     <p>All block-level encryption uses Additional Authenticated Data (AAD) to bind ciphertext
     to its context. An attacker with database access cannot swap encrypted keys or metadata between
@@ -845,11 +862,14 @@ a:hover { text-decoration: underline; }
     <table class="algo-table">
       <tr><td>password hashing</td><td>Argon2id - 3 iterations, 64 MB, 4 threads</td></tr>
       <tr><td>master key derivation</td><td>Argon2id - separate salt from auth hash</td></tr>
-      <tr><td>file encryption</td><td>AES-256-GCM - media ID + chunk index as AAD (prevents reordering and cross-file substitution)</td></tr>
-      <tr><td>key wrapping</td><td>AES-256-GCM - random nonce, context-bound AAD (user ID or media ID)</td></tr>
-      <tr><td>metadata encryption</td><td>AES-256-GCM - media ID as AAD (prevents ciphertext substitution)</td></tr>
+      <tr><td>file / thumb / metadata encryption</td><td>AES-256-GCM - media ID + chunk index as AAD (prevents reordering and cross-file substitution)</td></tr>
+      <tr><td>per-file key wrapping</td><td>X25519 + HKDF-SHA256 + AES-256-GCM - sealed-box to user's public key, 92-byte output per 32-byte key</td></tr>
+      <tr><td>user keypair</td><td>X25519 - private key dual-wrapped (master key + recovery code)</td></tr>
       <tr><td>session key</td><td>PBKDF2-SHA256 - 600,000 iterations</td></tr>
       <tr><td>chunk padding</td><td>random fill to 1 / 2 / 4 / 8 / 16 MB buckets (on disk and over the network)</td></tr>
+      <tr><td>metadata padding</td><td>ASCII-space fill to power-of-2 from 512 B (JSON-parseable without an unpad step)</td></tr>
+      <tr><td>delegation tokens</td><td>HS256 JWT, <code>scope=upload</code>, 1 h TTL &mdash; rejected on every non-upload endpoint</td></tr>
+      <tr><td>refresh tokens</td><td>32-byte URL-safe random, stored as sha256("darkreel:delegation-refresh-v1"&#8214;token)</td></tr>
       <tr><td>hash modification</td><td>nonce injection - JPEG COM, PNG tEXt, MP4 free box (appended at end), WebM Void element</td></tr>
       <tr><td>deletion</td><td>1-pass random overwrite &rarr; fsync &rarr; unlink (keys deleted first)</td></tr>
     </table>

@@ -76,6 +76,7 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **Image rotation** - Rotate images at the pixel level. The original is securely deleted and replaced with a freshly encrypted copy using new keys.
 - **6 color themes** - Classic, cool, forest, neon, ocean, and warm. Stored in localStorage.
 - **Recovery codes** - 256-bit recovery code generated at account creation and rotated on every password change. If you lose your password, this is the only way back in. Lose both and your data is gone.
+- **Delegated uploads** - Other apps (e.g., [PPVDA](https://github.com/baileywjohnson/ppvda)) can upload to your account without holding your password. Authorize once via a copy-paste consent flow; connected apps get a refresh token that mints short-lived upload-only JWTs. Apps hold your X25519 public key only — they can seal uploads to you but cannot read, list, or delete any existing media. Revoke anytime from Settings → Connected Apps.
 - **Single binary** - One Go binary with an embedded web UI and SQLite. No external dependencies, no containers, no runtime requirements.
 - **Self-hosted** - Runs on your hardware. A $6/month VPS is enough. Your data never touches a third-party service.
 
@@ -85,7 +86,7 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **Image:** JPG, PNG, GIF, WEBP — with thumbnail generation and in-browser preview
 - **Any file:** PDFs, documents, archives, and any other file type can be uploaded and stored with full encryption. Non-media files are displayed with a file icon in the gallery and a download button in the viewer (no preview).
 
-> **Note:** Only MP4 and MOV videos support streaming playback when uploaded in the browser. CLI uploads via ffmpeg support all video formats with full streaming.
+> **Note:** Only MP4 and MOV videos support streaming playback when uploaded in the browser.
 
 ## Cryptography
 
@@ -96,13 +97,24 @@ Password
  ├─ Argon2id(password, authSalt)  →  password hash  (login verification)
  └─ Argon2id(password, kdfSalt)   →  KDF key
      └─ AES-256-GCM decrypt (AAD: userID)  →  master key  (browser memory only)
-         ├─ wraps per-file encryption keys    (AAD: mediaID)
-         ├─ wraps per-file thumbnail keys     (AAD: mediaID)
-         ├─ encrypts metadata blobs           (AAD: mediaID)
-         └─ encrypts folder structure         (AAD: userID)
+         ├─ AES-256-GCM unwrap (AAD: userID) → X25519 private key (browser memory only)
+         └─ AES-256-GCM encrypts folder structure (AAD: userID)
+
+X25519 keypair (per user, generated at registration)
+ ├─ public key       (stored plaintext, handed to browsers and delegated clients)
+ └─ private key      (wrapped twice: once by master key, once by recovery code)
+
+Per-file symmetric keys (one trio generated per upload)
+ ├─ file key         → AES-256-GCM encrypts chunks     (AAD: mediaID || chunkIndex)
+ ├─ thumb key        → AES-256-GCM encrypts thumbnail  (AAD: mediaID || 0)
+ └─ metadata key     → AES-256-GCM encrypts metadata   (AAD: mediaID)
+    All three keys are sealed to the user's public key → server stores
+    the 92-byte sealed blobs alongside the encrypted content.
 ```
 
-The master key never leaves the browser. During login, the server briefly decrypts it to re-encrypt with a session key for the client, then immediately clears it from memory. The master key is also encrypted with a 256-bit recovery code (AAD: userID) generated at account creation and rotated on every password change - shown once, never stored in plaintext.
+The master key and private key never leave the browser after login. The browser unwraps the private key once per session and imports it as a non-extractable `CryptoKey` — even an XSS cannot exfiltrate its raw bytes, only use it to derive shared secrets.
+
+All uploads (browser, CLI, or delegated third-party) produce the same sealed-box wire format. Delegated clients receive only the public key and never hold the master key or private key, so they can seal uploads to the user but cannot open anything.
 
 ### Algorithms
 
@@ -110,11 +122,14 @@ The master key never leaves the browser. During login, the server briefly decryp
 |-----------|-----------|---------|
 | Password hashing | Argon2id | 3 iterations, 64 MB memory, 4 threads |
 | Master key derivation | Argon2id | Separate salt from auth hash |
-| File encryption | AES-256-GCM | Media ID + chunk index as AAD (prevents reordering and cross-file substitution) |
-| Key wrapping | AES-256-GCM | Random nonce, context-bound AAD (user ID or media ID) |
-| Metadata encryption | AES-256-GCM | Media ID as AAD (prevents ciphertext substitution) |
+| File / thumb / metadata encryption | AES-256-GCM | Media ID + chunk index as AAD (prevents reordering and cross-file substitution) |
+| Per-file key wrapping | X25519 + HKDF-SHA256 + AES-256-GCM | Sealed-box format: ephemeral X25519 ECDH, HKDF with `info="darkreel-seal-v1"`, AES-256-GCM over the derived key. 92-byte output per 32-byte key. Produces the same wire format whether sealed by browser (Web Crypto), CLI (golang.org/x/crypto), or a delegated client. |
+| User keypair | X25519 | Generated at registration, private key dual-wrapped (master key + recovery code), both with user ID as AAD |
 | Session key | PBKDF2-SHA256 | 600,000 iterations |
 | Chunk padding | Random fill | Bucketed to 1/2/4/8/16 MB per chunk (on disk and over the network) |
+| Metadata padding | Space fill | Bucketed to power-of-2 from 512 B before encryption so blob size doesn't leak filename length |
+| Delegation tokens | HS256 JWT (scoped) | 1-hour TTL, `scope=upload`, rejected on all non-upload endpoints |
+| Refresh tokens | 32-byte URL-safe random | Stored server-side as `sha256("darkreel:delegation-refresh-v1"‖token)` — DB leak cannot be replayed |
 | Hash modification | Nonce injection | JPEG COM, PNG tEXt, MP4 free box (appended at end), WebM Void element |
 | Secure deletion | 1-pass shred | Random overwrite, fsync, then unlink. Keys deleted first — ciphertext is unrecoverable regardless. |
 
@@ -123,7 +138,10 @@ The master key never leaves the browser. During login, the server briefly decryp
 All block-level encryption uses Additional Authenticated Data (AAD) to cryptographically bind ciphertext to its context:
 
 - **Master key wrapping** (KDF key, session key, recovery code) uses the **user ID** as AAD
-- **File key and thumbnail key wrapping** uses the **media ID** as AAD
+- **Private key wrapping** (under master key and under recovery code) uses the **user ID** as AAD
+- **File / thumb / metadata key sealing** uses X25519-ECDH + HKDF; the derived AES-GCM key is per-upload by construction (fresh ephemeral keypair per seal), so there is no separate AAD on the sealed blob — substitution attacks are prevented by the ephemeral key being bound into the ciphertext itself
+- **File chunk encryption** uses `UTF-8(mediaID) || BigEndian(uint64(chunkIndex))` as AAD
+- **Thumbnail encryption** uses `UTF-8(mediaID) || BigEndian(uint64(0))` as AAD
 - **Metadata encryption** uses the **media ID** as AAD
 - **Folder tree encryption** uses the **user ID** as AAD
 
@@ -324,17 +342,17 @@ Caddy handles TLS automatically via Let's Encrypt. The setup script offers to di
 
 ## API
 
-All endpoints except `/health` and `/api/config` require a JWT. JWTs contain user ID, session ID, and admin flag - nothing else.
+All endpoints except `/health`, `/api/config`, and `/api/delegation/{exchange,refresh}` require a JWT. JWTs contain user ID, session ID, admin flag, and optional scope. Delegation-minted JWTs carry `scope: "upload"` and are rejected by every endpoint except the upload endpoint itself.
 
 ### Auth
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/auth/register` | Register (returns recovery code) |
-| POST | `/api/auth/login` | Login (returns JWT + encrypted master key) |
+| POST | `/api/auth/register` | Register (returns recovery code; also generates the user's X25519 keypair) |
+| POST | `/api/auth/login` | Login (returns JWT + encrypted master key + public key + encrypted private key) |
 | POST | `/api/auth/logout` | Logout (immediate session invalidation) |
-| POST | `/api/auth/recover` | Reset password with recovery code |
-| POST | `/api/auth/change-password` | Change password (re-encrypts master key, rotates recovery code, invalidates all other sessions) |
+| POST | `/api/auth/recover` | Reset password with recovery code (re-wraps master key and private key; revokes all delegations) |
+| POST | `/api/auth/change-password` | Change password (re-wraps master key and private key, rotates recovery code, invalidates all other sessions, revokes all delegations) |
 | DELETE | `/api/auth/account` | Delete account and all media |
 | GET | `/api/config` | Server config (registration, session persistence) |
 
@@ -342,14 +360,24 @@ All endpoints except `/health` and `/api/config` require a JWT. JWTs contain use
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/media` | List media (paginated) |
-| GET | `/api/media/quota` | Check quota (returns effective quota and current usage) |
-| GET | `/api/media/:id` | Get media metadata |
-| POST | `/api/media/upload` | Upload (multipart: metadata + thumbnail + chunks). Media ID is client-generated (UUID) for AAD binding. |
-| PATCH | `/api/media/:id` | Update metadata (e.g., folder assignment) |
-| DELETE | `/api/media/:id` | Secure delete (1-pass shred) |
-| GET | `/api/media/:id/chunk/:index` | Download encrypted chunk |
-| GET | `/api/media/:id/thumbnail` | Download encrypted thumbnail |
+| GET | `/api/media` | List media (paginated). Each item includes `file_key_sealed`, `thumb_key_sealed`, `metadata_key_sealed` (each 92 bytes). Accepts full-scope JWT only. |
+| GET | `/api/media/quota` | Check quota (returns effective quota and current usage). Full scope. |
+| GET | `/api/media/:id` | Get media metadata. Full scope. |
+| POST | `/api/media/upload` | Upload (multipart: metadata JSON + thumbnail + chunks). Metadata JSON carries the three sealed keys, `metadata_enc`/`metadata_nonce`, `hash_nonce`, and `chunk_count`. Media ID is client-generated (UUID) and bound into every AAD. Accepts either full-scope JWT (browser) or `upload`-scoped JWT (delegated client). |
+| PATCH | `/api/media/:id` | Update metadata (e.g., folder assignment, rename). Full scope. |
+| DELETE | `/api/media/:id` | Secure delete (1-pass shred). Full scope. |
+| GET | `/api/media/:id/chunk/:index` | Download encrypted chunk. Full scope. |
+| GET | `/api/media/:id/thumbnail` | Download encrypted thumbnail. Full scope. |
+
+### Delegation (connected apps)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/delegation/authorize` | Mint a one-shot authorization code (120 s TTL) tied to the calling user. Called by the Darkreel SPA when a user approves a client in the "Authorize an App" dialog. Full-scope JWT required. |
+| POST | `/api/delegation/exchange` | Consume an authorization code. Returns `{ user_id, public_key, refresh_token, delegation_id, scope }`. No auth (the code is the auth). Atomic via `DELETE ... RETURNING` — a single code cannot be exchanged twice. |
+| POST | `/api/delegation/refresh` | Trade a refresh token for a 1 h upload-scoped JWT. No auth (the refresh token is the auth). Server lookup is via `sha256("darkreel:delegation-refresh-v1"‖token)` so a DB leak cannot be replayed. |
+| GET | `/api/account/delegations` | List the caller's active delegations (client name, URL, created_at, last_used_at). Full-scope JWT. |
+| DELETE | `/api/account/delegations/:id` | Revoke a delegation. Existing 1 h access tokens remain valid until expiry; the next refresh fails. Full-scope JWT. |
 
 ### Folders
 
@@ -419,6 +447,8 @@ cd /opt/darkreel && git pull && bash build.sh
 sudo cp darkreel /usr/local/bin/darkreel
 sudo systemctl restart darkreel
 ```
+
+> **Schema v2 (delegation + sealed-box uploads) is a clean-break migration.** Upgrading from a pre-delegation v1 database is not supported in-place because the server cannot regenerate per-user keypairs without the master key (which is never at rest on the server). If the server refuses to start with `refusing to start: on-disk schema version is ""`, back up or delete `data/darkreel.db` and let the server re-bootstrap the admin user from `DARKREEL_ADMIN_PASSWORD`. Existing users re-register; the old encrypted blobs are orphan-cleaned on first boot.
 
 Or use the auto-updater - checks GitHub for tagged releases, verifies SHA-256 checksum and Ed25519 signature (required — updates are refused if the signing public key is missing), restarts the service:
 
