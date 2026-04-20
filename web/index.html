@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css?v=02d3529a073820a0" integrity="sha384-f60jYIiu1TI68RKHCpnKAfDoU2VlBy/75o4t9MGA2AxRMi0qwaYTA3tUIhNapEvH" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css?v=c06a24eee042fb1e" integrity="sha384-84V468GzmCMwJE2/x9i3in1KkoYUcpfy/RUhbkfAEvOpeujILUgjWQ7CZI02Enmu" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -342,6 +342,15 @@
                         <span id="viewer-file-name"></span>
                         <button id="viewer-file-download" class="btn btn-primary">Download File</button>
                     </div>
+                    <div id="viewer-text" class="viewer-text hidden">
+                        <textarea id="viewer-text-area" spellcheck="false" readonly></textarea>
+                        <div class="viewer-text-toolbar">
+                            <span id="viewer-text-status" class="viewer-text-status"></span>
+                            <button id="viewer-text-edit" class="btn btn-primary">Edit</button>
+                            <button id="viewer-text-save" class="btn btn-primary hidden">Save</button>
+                            <button id="viewer-text-cancel" class="btn btn-ghost hidden">Cancel</button>
+                        </div>
+                    </div>
                     <button id="viewer-next" class="viewer-nav viewer-nav-next" aria-label="Next"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
                 </div>
             </div>
@@ -433,7 +442,21 @@
                     <div id="upload-list"></div>
                 </div>
                 <div class="modal-actions">
+                    <button id="new-text-btn" class="btn btn-secondary">New Text Document</button>
                     <button id="upload-cancel" class="btn btn-ghost">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="new-text-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <h3>New Text Document</h3>
+                <input type="text" id="new-text-name" placeholder="Filename" autocomplete="off" maxlength="255" value="Untitled.txt">
+                <textarea id="new-text-body" spellcheck="false" placeholder="Start typing..."></textarea>
+                <p id="new-text-error" class="error hidden"></p>
+                <div class="modal-card-actions">
+                    <button id="new-text-cancel" class="btn btn-ghost">Cancel</button>
+                    <button id="new-text-create" class="btn btn-primary">Create</button>
                 </div>
             </div>
         </div>
@@ -441,6 +464,6 @@
     </div>
 
     <script src="/js/crypto.js?v=8819f71b70c04244" type="module" integrity="sha384-VaCE/DDMAfR646O2OHgb6i9UXUfXigqDsoA6/3scZq4v29WNVEdaKJm0Y7D+haGh" crossorigin="anonymous"></script>
-    <script src="/js/app.js?v=3fa2600cc7204f2e" type="module" integrity="sha384-JbGncD5fClHtHw3GK5hdGWuyz3aawlptcze6nA7TmlS1nQDhoRoMkWlH2jsDVQlA" crossorigin="anonymous"></script>
+    <script src="/js/app.js?v=aa4166dc78545350" type="module" integrity="sha384-gjHS2vr3uzK8H4JPKo1My2eD72bGMUqSPadmTzbGuA/0Vzy+7n/tEAeKzc3YZ8AD" crossorigin="anonymous"></script>
 </body>
 </html>

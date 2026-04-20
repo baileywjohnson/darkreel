@@ -3153,11 +3153,14 @@ async function createGalleryItem(item) {
     div.className = 'gallery-item';
     div.dataset.id = item.id;
 
-    if (item.media_type === 'file') {
-        // Non-media file: show file icon instead of thumbnail
+    if (item.media_type === 'file' || item.media_type === 'text') {
+        // Non-thumbnailable item: show an icon. Text files get a "document with
+        // lines" glyph so they're visually distinct from opaque binary files.
         const fallback = document.createElement('div');
         fallback.className = 'thumb-fallback';
-        fallback.innerHTML = '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+        fallback.innerHTML = item.media_type === 'text'
+            ? '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>'
+            : '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
         div.appendChild(fallback);
     } else {
         // Decrypt thumbnail for images/videos
@@ -3179,6 +3182,8 @@ async function createGalleryItem(item) {
         badge.textContent = h > 0
             ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
             : `${m}:${String(sec).padStart(2, '0')}`;
+    } else if (item.media_type === 'text') {
+        badge.textContent = 'TXT';
     } else if (item.media_type === 'file') {
         badge.textContent = 'FILE';
     } else {
@@ -3313,12 +3318,24 @@ const viewerImage = document.getElementById('viewer-image');
 const viewerFile = document.getElementById('viewer-file');
 const viewerFileName = document.getElementById('viewer-file-name');
 const viewerFileDownload = document.getElementById('viewer-file-download');
+const viewerText = document.getElementById('viewer-text');
+const viewerTextArea = document.getElementById('viewer-text-area');
+const viewerTextEdit = document.getElementById('viewer-text-edit');
+const viewerTextSave = document.getElementById('viewer-text-save');
+const viewerTextCancel = document.getElementById('viewer-text-cancel');
+const viewerTextStatus = document.getElementById('viewer-text-status');
 const viewerTitle = document.getElementById('viewer-title');
 const viewerPrev = document.getElementById('viewer-prev');
 const viewerNext = document.getElementById('viewer-next');
 let currentViewerItem = null;
 let viewerList = [];
 let viewerIndex = -1;
+// Non-null while a text item is loaded in the viewer; holds the original
+// decoded text so "Cancel" can restore without re-downloading.
+let _currentTextOriginal = null;
+// Max decoded size we'll load into the editor. Larger files get a "too big"
+// message plus a download button instead of being loaded into the textarea.
+const TEXT_EDITOR_MAX_BYTES = 5 * 1024 * 1024;
 
 document.getElementById('viewer-close').addEventListener('click', closeViewer);
 document.getElementById('viewer-delete').addEventListener('click', deleteCurrentItem);
@@ -3326,6 +3343,9 @@ document.getElementById('viewer-download').addEventListener('click', downloadCur
 document.getElementById('viewer-move').addEventListener('click', moveCurrentItem);
 document.getElementById('viewer-rotate').addEventListener('click', rotateCurrentItem);
 viewerFileDownload.addEventListener('click', downloadCurrentItem);
+viewerTextEdit.addEventListener('click', enterTextEditMode);
+viewerTextSave.addEventListener('click', saveTextEdit);
+viewerTextCancel.addEventListener('click', cancelTextEdit);
 document.getElementById('viewer-rename').addEventListener('click', () => {
     if (!currentViewerItem) return;
     renameItem(currentViewerItem);
@@ -3917,6 +3937,8 @@ async function openViewer(item) {
     viewerVideo.classList.add('hidden');
     viewerImage.classList.add('hidden');
     viewerFile.classList.add('hidden');
+    viewerText.classList.add('hidden');
+    exitTextEditMode();
 
     // Build navigation list from current folder's media (only on first open, not during navigation)
     if (viewerList.length === 0 || !viewerList.includes(item)) {
@@ -3931,12 +3953,12 @@ async function openViewer(item) {
     viewerVideo.style.transform = (item.media_type === 'video' && item.rotation) ? `rotate(${item.rotation}deg)` : '';
 
     // Hide rotate button for non-image/video files
-    const isFile = item.media_type === 'file';
-    document.getElementById('viewer-rotate').style.display = isFile ? 'none' : '';
+    const nonRotatable = item.media_type === 'file' || item.media_type === 'text';
+    document.getElementById('viewer-rotate').style.display = nonRotatable ? 'none' : '';
     const moreRotate = document.querySelector('#viewer-more-menu [data-action="rotate"]');
-    if (moreRotate) moreRotate.style.display = isFile ? 'none' : '';
+    if (moreRotate) moreRotate.style.display = nonRotatable ? 'none' : '';
 
-    if (isFile) {
+    if (item.media_type === 'file') {
         viewerFile.classList.remove('hidden');
         viewerFileName.textContent = item.name || 'Encrypted file';
         return;
@@ -3947,6 +3969,8 @@ async function openViewer(item) {
 
     if (item.media_type === 'video') {
         await playVideo(item, fileKey);
+    } else if (item.media_type === 'text') {
+        await showText(item, fileKey);
     } else {
         await showImage(item, fileKey);
     }
@@ -3962,6 +3986,10 @@ function closeViewer() {
     viewerVideo.load();
     viewerVideo.classList.add('hidden');
     viewerImage.classList.add('hidden');
+    viewerText.classList.add('hidden');
+    exitTextEditMode();
+    viewerTextArea.value = '';
+    _currentTextOriginal = null;
     viewerFile.classList.add('hidden');
     viewerImage.src = '';
     applyRotation(0);
@@ -4013,6 +4041,124 @@ async function showImage(item, fileKey) {
     if (_viewerBlobUrl) URL.revokeObjectURL(_viewerBlobUrl);
     _viewerBlobUrl = URL.createObjectURL(blob);
     viewerImage.src = _viewerBlobUrl;
+}
+
+// ─── Text viewer / editor ───
+async function showText(item, fileKey) {
+    viewerText.classList.remove('hidden');
+    viewerTextArea.value = 'Loading…';
+    viewerTextArea.setAttribute('readonly', '');
+    viewerTextEdit.classList.add('hidden');
+    viewerTextSave.classList.add('hidden');
+    viewerTextCancel.classList.add('hidden');
+    viewerTextStatus.textContent = '';
+    _currentTextOriginal = null;
+
+    try {
+        const chunks = [];
+        let total = 0;
+        for (let i = 0; i < item.chunk_count; i++) {
+            const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
+            const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
+            chunks.push(dec);
+            total += dec.length;
+            if (total > TEXT_EDITOR_MAX_BYTES) {
+                viewerTextArea.value = `File is larger than ${Math.round(TEXT_EDITOR_MAX_BYTES / 1024 / 1024)} MB — too big to edit in the browser. Use the Download button to save it locally.`;
+                viewerTextStatus.textContent = 'Too large to edit';
+                return;
+            }
+        }
+        verifyChunkCount(item, chunks.length);
+        const merged = new Uint8Array(total);
+        let off = 0;
+        for (const c of chunks) { merged.set(c, off); off += c.length; }
+
+        // Invalid UTF-8 becomes U+FFFD rather than throwing — a misnamed binary
+        // will render as garbled glyphs, which is a visible and diagnosable
+        // outcome rather than a cryptic decode error.
+        const text = new TextDecoder('utf-8', { fatal: false }).decode(merged);
+        _currentTextOriginal = text;
+        viewerTextArea.value = text;
+        viewerTextEdit.classList.remove('hidden');
+    } catch (e) {
+        console.error('Failed to load text file:', e);
+        viewerTextArea.value = 'Failed to load text file.';
+        viewerTextStatus.textContent = 'Error';
+    }
+}
+
+function enterTextEditMode() {
+    if (!currentViewerItem || currentViewerItem.media_type !== 'text') return;
+    viewerTextArea.removeAttribute('readonly');
+    viewerTextEdit.classList.add('hidden');
+    viewerTextSave.classList.remove('hidden');
+    viewerTextCancel.classList.remove('hidden');
+    viewerTextArea.focus();
+}
+
+function exitTextEditMode() {
+    // Idempotent — safe to call when the viewer isn't open or the item isn't
+    // a text file. Used by openViewer/closeViewer to reset state.
+    viewerTextArea.setAttribute('readonly', '');
+    viewerTextSave.classList.add('hidden');
+    viewerTextCancel.classList.add('hidden');
+    // Edit button visibility is governed by showText — don't toggle it here.
+}
+
+function cancelTextEdit() {
+    if (_currentTextOriginal !== null) viewerTextArea.value = _currentTextOriginal;
+    exitTextEditMode();
+    viewerTextEdit.classList.remove('hidden');
+    viewerTextStatus.textContent = '';
+}
+
+async function saveTextEdit() {
+    if (!currentViewerItem) return;
+    const oldItem = currentViewerItem;
+    const content = viewerTextArea.value;
+    const folderId = oldItem.folderId || null;
+    const newName = oldItem.name || 'document.txt';
+
+    viewerTextSave.disabled = true;
+    viewerTextCancel.disabled = true;
+    viewerTextStatus.textContent = 'Saving…';
+    try {
+        await uploadTextContent({ name: newName, content, folderId });
+        // Delete the old entry. If delete fails, the new file is already
+        // uploaded — surface the warning but don't treat it as a save failure.
+        try {
+            await api(`/api/media/${oldItem.id}`, { method: 'DELETE' });
+        } catch (e) {
+            console.warn('Failed to delete old text entry:', e);
+        }
+        viewerTextStatus.textContent = 'Saved';
+        closeViewer();
+        await loadMedia();
+    } catch (e) {
+        console.error('Save failed:', e);
+        viewerTextStatus.textContent = 'Save failed';
+        showConfirmModal('Save failed', e.message || 'Unknown error', () => {}, { buttonLabel: 'OK', buttonClass: 'btn-primary' });
+    } finally {
+        viewerTextSave.disabled = false;
+        viewerTextCancel.disabled = false;
+    }
+}
+
+// Reuses the full uploadFile pipeline (chunk encryption, key sealing, multipart
+// POST) by wrapping the text in a synthetic File and a detached progress tile.
+async function uploadTextContent({ name, content, folderId }) {
+    const file = new File([content], name, { type: 'text/plain' });
+    const dummyEl = createUploadItem(name);
+    dummyEl.style.display = 'none';
+    document.body.appendChild(dummyEl);
+    try {
+        await uploadFile(file, dummyEl, folderId);
+    } finally {
+        dummyEl.remove();
+    }
 }
 
 
@@ -4852,7 +4998,8 @@ async function downloadItem(item) {
         } else if (item.mime_type) {
             const extMap = { 'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm',
                 'video/x-matroska': '.mkv', 'video/x-msvideo': '.avi', 'video/x-flv': '.flv',
-                'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp' };
+                'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp',
+                'text/plain': '.txt' };
             filename += extMap[item.mime_type] || '.' + (item.mime_type.split('/')[1] || 'bin');
         }
     }
@@ -5236,6 +5383,58 @@ document.getElementById('upload-cancel').addEventListener('click', () => {
     uploadModal.classList.add('hidden');
 });
 
+// ─── New Text Document modal ───
+const newTextModal = document.getElementById('new-text-modal');
+const newTextNameInput = document.getElementById('new-text-name');
+const newTextBody = document.getElementById('new-text-body');
+const newTextError = document.getElementById('new-text-error');
+const newTextCreate = document.getElementById('new-text-create');
+const newTextCancelBtn = document.getElementById('new-text-cancel');
+
+document.getElementById('new-text-btn').addEventListener('click', () => {
+    uploadModal.classList.add('hidden');
+    newTextNameInput.value = 'Untitled.txt';
+    newTextBody.value = '';
+    newTextError.classList.add('hidden');
+    newTextModal.classList.remove('hidden');
+    setTimeout(() => newTextNameInput.focus(), 0);
+});
+
+function closeNewTextModal() { newTextModal.classList.add('hidden'); }
+newTextCancelBtn.addEventListener('click', closeNewTextModal);
+newTextModal.addEventListener('click', (e) => {
+    if (e.target === newTextModal) closeNewTextModal();
+});
+
+newTextCreate.addEventListener('click', async () => {
+    let name = newTextNameInput.value.trim();
+    if (!name) {
+        newTextError.textContent = 'Filename required';
+        newTextError.classList.remove('hidden');
+        return;
+    }
+    if (!/\.\w+$/.test(name)) name += '.txt';
+    // Force a text extension so the new item lands as media_type: 'text'
+    // (and thus opens in the editor). Anything else would upload as 'file'.
+    if (!TEXT_EXT_RE.test(name)) name = name.replace(/\.[^.]+$/, '.txt');
+    const content = newTextBody.value;
+    newTextCreate.disabled = true;
+    newTextCancelBtn.disabled = true;
+    newTextError.classList.add('hidden');
+    try {
+        await uploadTextContent({ name, content, folderId: currentFolderId });
+        closeNewTextModal();
+        await loadMedia();
+    } catch (e) {
+        console.error('Create failed:', e);
+        newTextError.textContent = e.message || 'Create failed';
+        newTextError.classList.remove('hidden');
+    } finally {
+        newTextCreate.disabled = false;
+        newTextCancelBtn.disabled = false;
+    }
+});
+
 uploadDropzone.addEventListener('dragover', (e) => {
     e.preventDefault();
     uploadDropzone.classList.add('dragover');
@@ -5250,13 +5449,17 @@ uploadDropzone.addEventListener('drop', (e) => {
 });
 uploadInput.addEventListener('change', (e) => handleFiles(e.target.files));
 
+const TEXT_EXT_RE = /\.(txt|md|markdown|log|csv|tsv|json|yaml|yml|xml|ini|conf|cfg)$/i;
+
 function isMediaFile(file) {
     const imageExts = /\.(jpe?g|png|gif|webp)$/i;
     const videoExts = /\.(mp4|mov|m4v|webm|mkv)$/i;
     const imageMimes = /^image\/(jpeg|png|gif|webp)$/i;
     const videoMimes = /^video\//i;
+    const textMimes = /^text\//i;
     if (imageExts.test(file.name) || imageMimes.test(file.type)) return 'image';
     if (videoExts.test(file.name) || videoMimes.test(file.type)) return 'video';
+    if (TEXT_EXT_RE.test(file.name) || textMimes.test(file.type)) return 'text';
     return 'file';
 }
 

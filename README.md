@@ -74,6 +74,7 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **Folder download** - Download an entire folder (including subfolders) as a ZIP file, decrypted client-side.
 - **Upload progress tracking** - Real-time progress bar on gallery tiles during upload. Encryption progress (0-50%) and network transfer progress (50-100%) via XHR upload events.
 - **Image rotation** - Rotate images at the pixel level. The original is securely deleted and replaced with a freshly encrypted copy using new keys.
+- **Text editor** - Plain-text files (`.txt`, `.md`, `.log`, `.csv`/`.tsv`, `.json`, `.yaml`/`.yml`, `.xml`, `.ini`/`.conf`/`.cfg`) open directly in the viewer. Click Edit to modify; Save writes a freshly-encrypted copy and deletes the old one in a single action. A "New Text Document" button inside the Upload modal creates blank documents from scratch. 5 MB editor cap; larger text files fall back to Download.
 - **6 color themes** - Classic, cool, forest, neon, ocean, and warm. Stored in localStorage.
 - **Recovery codes** - 256-bit recovery code generated at account creation and rotated on every password change. If you lose your password, this is the only way back in. Lose both and your data is gone.
 - **Delegated uploads** - Other apps (e.g., [PPVDA](https://github.com/baileywjohnson/ppvda)) can upload to your account without holding your password. Authorize once via a copy-paste consent flow; connected apps get a refresh token that mints short-lived upload-only JWTs. Apps hold your X25519 public key only — they can seal uploads to you but cannot read, list, or delete any existing media. Revoke anytime from Settings → Connected Apps.
@@ -84,6 +85,7 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 
 - **Video:** MP4, MOV, WEBM, MKV, M4V — with thumbnail generation, streaming playback (MP4/MOV), and in-browser preview
 - **Image:** JPG, PNG, GIF, WEBP — with thumbnail generation and in-browser preview
+- **Text:** TXT, MD, LOG, CSV/TSV, JSON, YAML/YML, XML, INI/CONF/CFG — opens in an in-browser editor with view, edit, and save. Also supports creating new text documents from within the UI.
 - **Any file:** PDFs, documents, archives, and any other file type can be uploaded and stored with full encryption. Non-media files are displayed with a file icon in the gallery and a download button in the viewer (no preview).
 
 > **Note:** Only MP4 and MOV videos support streaming playback when uploaded in the browser.
