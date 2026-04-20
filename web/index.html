@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css?v=c06a24eee042fb1e" integrity="sha384-84V468GzmCMwJE2/x9i3in1KkoYUcpfy/RUhbkfAEvOpeujILUgjWQ7CZI02Enmu" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css?v=cb97c1181012c00d" integrity="sha384-KXL0ECpV2AA6htj+Kp/d7mr/JS6uXBEgaIVRpyAGgqe5LYR55o0lJXyleAqLbVdZ" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -130,7 +130,16 @@
                         </div>
                     </div>
                     <div class="folder-actions">
-                        <button id="new-folder-btn" class="btn btn-secondary btn-sm">New Folder</button>
+                        <button id="add-note-btn" class="btn btn-secondary btn-sm header-desktop">Add Note</button>
+                        <div class="new-folder-group">
+                            <button id="new-folder-btn" class="btn btn-secondary btn-sm">New Folder</button>
+                            <button id="new-folder-more-btn" class="btn btn-secondary btn-sm new-folder-caret header-mobile-only" aria-label="More actions">
+                                <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            </button>
+                            <div id="new-folder-menu" class="new-folder-menu hidden">
+                                <button data-action="add-note">Add Note</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div id="gallery-grid" class="gallery-grid"></div>
@@ -464,6 +473,6 @@
     </div>
 
     <script src="/js/crypto.js?v=8819f71b70c04244" type="module" integrity="sha384-VaCE/DDMAfR646O2OHgb6i9UXUfXigqDsoA6/3scZq4v29WNVEdaKJm0Y7D+haGh" crossorigin="anonymous"></script>
-    <script src="/js/app.js?v=aa4166dc78545350" type="module" integrity="sha384-gjHS2vr3uzK8H4JPKo1My2eD72bGMUqSPadmTzbGuA/0Vzy+7n/tEAeKzc3YZ8AD" crossorigin="anonymous"></script>
+    <script src="/js/app.js?v=a8405099cfb865af" type="module" integrity="sha384-jP2pKNUCzm7aOL3qZKCh1/febHx4FqpEJSBYzrDvGO26EXQOIWUOcgJWCftisFTi" crossorigin="anonymous"></script>
 </body>
 </html>

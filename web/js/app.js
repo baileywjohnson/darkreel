@@ -5391,14 +5391,33 @@ const newTextError = document.getElementById('new-text-error');
 const newTextCreate = document.getElementById('new-text-create');
 const newTextCancelBtn = document.getElementById('new-text-cancel');
 
-document.getElementById('new-text-btn').addEventListener('click', () => {
+function openNewTextModal() {
     uploadModal.classList.add('hidden');
     newTextNameInput.value = 'Untitled.txt';
     newTextBody.value = '';
     newTextError.classList.add('hidden');
     newTextModal.classList.remove('hidden');
     setTimeout(() => newTextNameInput.focus(), 0);
+}
+
+document.getElementById('new-text-btn').addEventListener('click', openNewTextModal);
+document.getElementById('add-note-btn').addEventListener('click', openNewTextModal);
+
+// Folder-actions caret dropdown (mobile only — Add Note lives here at small
+// widths where the inline button is hidden via .header-desktop).
+const newFolderMoreBtn = document.getElementById('new-folder-more-btn');
+const newFolderMenu = document.getElementById('new-folder-menu');
+newFolderMoreBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    newFolderMenu.classList.toggle('hidden');
 });
+newFolderMenu.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    newFolderMenu.classList.add('hidden');
+    if (btn.dataset.action === 'add-note') openNewTextModal();
+});
+document.addEventListener('click', () => newFolderMenu.classList.add('hidden'));
 
 function closeNewTextModal() { newTextModal.classList.add('hidden'); }
 newTextCancelBtn.addEventListener('click', closeNewTextModal);
