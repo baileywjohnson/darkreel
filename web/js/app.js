@@ -658,20 +658,32 @@ async function unfragmentMP4(fmp4) {
             const movieDur = Math.round(totalDur * MOVIE_TIMESCALE / t.timescale);
             if (movieDur > maxMovieDur) maxMovieDur = movieDur;
 
-            // tkhd
+            // tkhd v0 content layout (after the FullBox version+flags):
+            //   [0..3]   creation_time
+            //   [4..7]   modification_time
+            //   [8..11]  track_ID
+            //   [12..15] reserved
+            //   [16..19] duration
+            //   [20..27] reserved[2]
+            //   [28..31] layer + alternate_group
+            //   [32..35] volume (2) + reserved (2)   <-- the step that got missed
+            //   [36..71] matrix[9]
+            //   [72..75] width (16.16 fixed)
+            //   [76..79] height (16.16 fixed)
             const tkhdC = new Uint8Array(80);
             w4(tkhdC, 8, ot.trackId);
             w4(tkhdC, 16, movieDur);
-            w4(tkhdC, 32, 0x00010000); // matrix[0]
-            w4(tkhdC, 48, 0x00010000); // matrix[4]
-            w4(tkhdC, 64, 0x40000000); // matrix[8]
+            w4(tkhdC, 36, 0x00010000); // matrix[0] = 1.0
+            w4(tkhdC, 52, 0x00010000); // matrix[4] = 1.0
+            w4(tkhdC, 68, 0x40000000); // matrix[8] = 1.0 (2.30 fixed)
             if (isVideo) {
                 const w = t.video?.width || t.track_width || 0;
                 const h = t.video?.height || t.track_height || 0;
-                w4(tkhdC, 68, w << 16);
-                w4(tkhdC, 72, h << 16);
+                w4(tkhdC, 72, w << 16);
+                w4(tkhdC, 76, h << 16);
+            } else {
+                tkhdC[32] = 0x01; tkhdC[33] = 0x00; // volume = 1.0 (8.8 fixed) for audio
             }
-            if (!isVideo) { tkhdC[36] = 0x01; tkhdC[37] = 0x00; } // volume = 1.0 for audio
             const tkhd = mkFullBox('tkhd', 0, 3, tkhdC);
 
             // mdhd
