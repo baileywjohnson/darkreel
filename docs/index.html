@@ -261,10 +261,18 @@ p.note {
   font-size: 13px;
   line-height: 1.8;
   color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-all;
+  /* Preserve the ASCII tree structure and comment column alignment — the
+     previous pre-wrap + break-all setting broke words mid-letter and shifted
+     trailing comments to column 0, which looked worse than a horizontal
+     scroll. Scroll is local to the code block, so the page doesn't overflow. */
+  white-space: pre;
   display: block;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 600px) {
+  .terminal code { font-size: 12px; line-height: 1.6; }
 }
 
 .terminal .prompt { color: var(--green); user-select: none; }
@@ -343,8 +351,15 @@ p.note {
   border: 1px solid var(--border);
   border-radius: 6px;
   margin: 20px 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  /* Same rationale as .terminal code — ASCII tree + column-aligned leaves
+     look worse wrapped mid-word than with a local horizontal scroll. */
+  white-space: pre;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 600px) {
+  .key-tree { font-size: 12px; line-height: 1.7; padding: 0 16px; }
 }
 
 .key-tree .node { color: var(--text-bright); font-weight: 500; }
