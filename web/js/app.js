@@ -4137,10 +4137,17 @@ async function saveTextEdit() {
     viewerTextSave.disabled = true;
     viewerTextCancel.disabled = true;
     viewerTextStatus.textContent = 'Saving…';
+    // Optimistically remove the old item from the local list so the upload's
+    // uniqueFileName() check doesn't see it as a collision and append "(1)".
+    // Restored on upload failure so the gallery still shows the original
+    // entry if the save didn't land.
+    const oldIdx = mediaItems.indexOf(oldItem);
+    if (oldIdx !== -1) mediaItems.splice(oldIdx, 1);
     try {
         await uploadTextContent({ name: newName, content, folderId });
-        // Delete the old entry. If delete fails, the new file is already
-        // uploaded — surface the warning but don't treat it as a save failure.
+        // Delete the old entry on the server. If delete fails, the new file
+        // is already uploaded — surface the warning but don't treat it as a
+        // save failure.
         try {
             await api(`/api/media/${oldItem.id}`, { method: 'DELETE' });
         } catch (e) {
@@ -4150,6 +4157,7 @@ async function saveTextEdit() {
         closeViewer();
         await loadMedia();
     } catch (e) {
+        if (oldIdx !== -1) mediaItems.splice(oldIdx, 0, oldItem);
         console.error('Save failed:', e);
         viewerTextStatus.textContent = 'Save failed';
         showConfirmModal('Save failed', e.message || 'Unknown error', () => {}, { buttonLabel: 'OK', buttonClass: 'btn-primary' });
