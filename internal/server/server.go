@@ -236,6 +236,11 @@ func (s *Server) routes() chi.Router {
 			switch {
 			case path == "/index.html":
 				w.Header().Set("Cache-Control", "no-cache")
+			case path == "/sw-download.js":
+				// Service worker script: force revalidation so an updated SW
+				// reaches users quickly. Browsers cap SW script max-age at 24h
+				// anyway, but no-cache ensures updates deploy immediately.
+				w.Header().Set("Cache-Control", "no-cache")
 			case strings.HasSuffix(path, ".woff2"):
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			case strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css"):

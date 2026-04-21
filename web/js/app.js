@@ -2333,6 +2333,10 @@ function closeHeaderMenu() {
 
 async function doLogout() {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
+    // Remove the streaming-download service worker so it doesn't persist
+    // across sessions. Best-effort — if this fails the SW stays, but it
+    // only intercepts /_dl/* and holds no keys/tokens.
+    unregisterSWDownload().catch(() => {});
     clearMasterKey();
     // Drop the X25519 private key from its non-extractable CryptoKey slot.
     // The key itself cannot be exfiltrated, but dropping the reference means
@@ -2418,6 +2422,9 @@ let pollTimer = null;
 async function showGallery() {
     authView.classList.add('hidden');
     header.classList.remove('hidden');
+    // Warm up the streaming-download service worker in the background so the
+    // first download doesn't pay registration latency.
+    getSWDownloadRegistration().catch(() => {});
     // Show admin button if user is admin
     adminBtn.classList.toggle('hidden', !serverConfig.isAdmin);
     adminBtnMobile.classList.toggle('hidden', !serverConfig.isAdmin);
@@ -5016,6 +5023,119 @@ async function downloadCurrentItem() {
     await downloadItem(currentViewerItem);
 }
 
+// ─── Streaming downloads via Service Worker ───
+//
+// Registers a same-origin service worker scoped to /_dl/ that intercepts
+// requests of the form /_dl/<id> and answers them with a streaming Response.
+// Each download is a handshake: the SPA posts a MessagePort to the SW, clicks
+// a link to /_dl/<id>, and feeds decrypted chunks through the port. The
+// browser shows native download progress and writes to disk incrementally.
+//
+// Security scope: the SW only intercepts /_dl/* — it never sees login, API,
+// or static-asset traffic. Unregistered on logout to bound persistence.
+// Falls back to a Blob-URL download if SW registration fails or isn't
+// supported (e.g., file:// origins).
+let _swDownloadPromise = null;
+function getSWDownloadRegistration() {
+    if (_swDownloadPromise) return _swDownloadPromise;
+    _swDownloadPromise = (async () => {
+        if (!('serviceWorker' in navigator)) return null;
+        try {
+            const reg = await navigator.serviceWorker.register('/sw-download.js', { scope: '/_dl/' });
+            if (reg.active) return reg;
+            const sw = reg.installing || reg.waiting;
+            if (!sw) return null;
+            return await new Promise((resolve) => {
+                const timer = setTimeout(() => resolve(null), 5000);
+                sw.addEventListener('statechange', () => {
+                    if (sw.state === 'activated') { clearTimeout(timer); resolve(reg); }
+                    else if (sw.state === 'redundant') { clearTimeout(timer); resolve(null); }
+                });
+            });
+        } catch (e) {
+            console.warn('Streaming-download service worker failed to register:', e);
+            return null;
+        }
+    })();
+    return _swDownloadPromise;
+}
+
+async function unregisterSWDownload() {
+    _swDownloadPromise = null;
+    if (!('serviceWorker' in navigator)) return;
+    try {
+        const reg = await navigator.serviceWorker.getRegistration('/_dl/');
+        if (reg) await reg.unregister();
+    } catch {}
+}
+
+// Send an async iterable of Uint8Array chunks to a real browser download with
+// a native progress bar. Falls back to an in-memory Blob+URL trigger when the
+// SW isn't active.
+async function streamingDownload({ filename, contentType, contentLength, chunks }) {
+    contentType = contentType || 'application/octet-stream';
+    const reg = await getSWDownloadRegistration();
+    if (reg && reg.active) {
+        try {
+            await _streamViaSW(reg, { filename, contentType, contentLength, chunks });
+            return;
+        } catch (e) {
+            console.warn('SW streaming download failed, falling back to blob:', e);
+        }
+    }
+    const parts = [];
+    for await (const chunk of chunks) parts.push(chunk);
+    const blob = new Blob(parts, { type: contentType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+async function _streamViaSW(reg, { filename, contentType, contentLength, chunks }) {
+    const id = crypto.randomUUID();
+    const { port1, port2 } = new MessageChannel();
+
+    let canceled = false;
+    let resolveRegistered;
+    const registered = new Promise((resolve) => { resolveRegistered = resolve; });
+    port1.onmessage = (evt) => {
+        const msg = evt.data;
+        if (msg?.type === 'registered') resolveRegistered();
+        else if (msg?.type === 'cancel') canceled = true;
+    };
+
+    reg.active.postMessage(
+        { type: 'register-stream', id, filename, contentType, contentLength },
+        [port2],
+    );
+
+    const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('SW register timeout')), 5000));
+    await Promise.race([registered, timeout]);
+
+    const a = document.createElement('a');
+    a.href = `/_dl/${id}`;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 1000);
+
+    try {
+        for await (const chunk of chunks) {
+            if (canceled) return;
+            port1.postMessage({ type: 'chunk', data: chunk });
+        }
+        if (!canceled) port1.postMessage({ type: 'end' });
+    } catch (e) {
+        try { port1.postMessage({ type: 'abort' }); } catch {}
+        throw e;
+    } finally {
+        port1.close();
+    }
+}
+
 async function downloadItem(item) {
     let filename = item.name || 'download';
     // Add appropriate extension if missing
@@ -5041,40 +5161,57 @@ async function downloadItem(item) {
         const fileKey = await openSealed(base64ToBuffer(item.file_key_sealed));
         const progressEl = toast.querySelector('.download-toast-progress');
 
-        // Collect all chunks
-        const chunks = [];
-        for (let i = 0; i < item.chunk_count; i++) {
-            progressEl.textContent = `${i + 1}/${item.chunk_count}`;
-            const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
-            const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
-            chunks.push(dec);
+        // For fragmented items we still need all chunks in memory before the
+        // unfragment step, so we buffer first and yield a single blob. For
+        // non-fragmented items we yield each decrypted chunk as soon as it's
+        // ready, so the SW streams bytes to disk with a real progress bar.
+        async function* chunkStream() {
+            if (item.fragmented) {
+                const buf = [];
+                for (let i = 0; i < item.chunk_count; i++) {
+                    progressEl.textContent = `${i + 1}/${item.chunk_count}`;
+                    const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
+                    const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
+                    buf.push(dec);
+                }
+                const totalLen = buf.reduce((s, c) => s + c.length, 0);
+                let merged = new Uint8Array(totalLen);
+                let off = 0;
+                for (const c of buf) { merged.set(c, off); off += c.length; }
+                const converted = await unfragmentMP4(merged);
+                yield converted || merged;
+                return;
+            }
+            for (let i = 0; i < item.chunk_count; i++) {
+                progressEl.textContent = `${i + 1}/${item.chunk_count}`;
+                const res = await fetchRetry(`/api/media/${item.id}/chunk/${i}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
+                const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
+                yield dec;
+            }
         }
 
-        const totalLen = chunks.reduce((s, c) => s + c.length, 0);
-        let merged = new Uint8Array(totalLen);
-        let off = 0;
-        for (const c of chunks) { merged.set(c, off); off += c.length; }
+        // Non-fragmented items know their final size from metadata (the
+        // recorded upload size), which gives the browser an accurate progress
+        // bar. For fragmented items the unfragment step alters length, so we
+        // omit Content-Length.
+        const contentLength = !item.fragmented && typeof item.size === 'number'
+            ? item.size
+            : undefined;
 
-        // Convert fMP4 to regular MP4 for QuickTime/VLC compatibility
-        if (item.fragmented) {
-            const converted = await unfragmentMP4(merged);
-            if (converted) merged = converted;
-        }
-
-        // Use octet-stream so the browser respects the download filename exactly
-        // (video/quicktime causes some browsers to override .mov → .qt)
-        const blob = new Blob([merged], { type: 'application/octet-stream' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-        // Revoke after 10s — long enough for slow Save-As dialogs on mobile,
-        // short enough that an XSS can't exfiltrate the decrypted blob indefinitely.
-        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        await streamingDownload({
+            filename,
+            // octet-stream so the browser honors the filename exactly
+            // (video/quicktime sometimes gets rewritten to .qt otherwise).
+            contentType: 'application/octet-stream',
+            contentLength,
+            chunks: chunkStream(),
+        });
     } catch (e) {
         alert('Download failed: ' + e.message);
     } finally {
@@ -5138,12 +5275,17 @@ async function downloadFolder(folder) {
         }
 
         const zipBlob = buildZip(zipFiles);
-        const url = URL.createObjectURL(zipBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = folder.name + '.zip';
-        a.click();
-        URL.revokeObjectURL(url);
+        const zipBytes = new Uint8Array(await zipBlob.arrayBuffer());
+        // Stream the pre-built ZIP through the SW so the browser shows a
+        // native download entry with progress. (Folder ZIPs are still built
+        // in memory — a per-file streaming ZIP would need a library like
+        // fflate and is left as a follow-up.)
+        await streamingDownload({
+            filename: folder.name + '.zip',
+            contentType: 'application/zip',
+            contentLength: zipBytes.byteLength,
+            chunks: (async function* () { yield zipBytes; })(),
+        });
     } catch (e) {
         alert('Folder download failed: ' + e.message);
     }
