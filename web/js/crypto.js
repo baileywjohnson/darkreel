@@ -314,8 +314,16 @@ export async function encryptFile(fileData, fileKey, mediaId) {
 
 // Generate thumbnail from image/video
 export async function generateThumbnail(file) {
+    // Dispatch on MIME type first, but fall back to file extension. Drag-drop
+    // of a file that was downloaded with type: 'application/octet-stream'
+    // (Darkreel's download path does this) may arrive with an empty or
+    // octet-stream type on some OS/browser combos — we still need to route
+    // video bytes to the video thumbnailer or we'd render them as a broken
+    // <img> placeholder.
+    const isVideo = file.type.startsWith('video/')
+        || (!file.type.startsWith('image/') && /\.(mp4|mov|m4v|webm|mkv)$/i.test(file.name));
     return new Promise((resolve, reject) => {
-        if (file.type.startsWith('video/')) {
+        if (isVideo) {
             generateVideoThumbnail(file).then(resolve).catch(reject);
         } else {
             generateImageThumbnail(file).then(resolve).catch(reject);

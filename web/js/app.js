@@ -5635,11 +5635,25 @@ async function uploadFile(file, itemEl, targetFolderId) {
         thumbData = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46]);
     } else {
         setUploadStatus(itemEl, 'Generating thumbnail...');
+        // Prefer the fragmented-MP4 bytes that remuxToFMP4 just produced when
+        // available. The input file can be a quirky MP4 (notably the output
+        // of unfragmentMP4 during a download+re-upload roundtrip) that
+        // mp4box.js parses fine but Firefox's native demuxer rejects with
+        // "Parse MP4 metadata failed". Feeding the clean fMP4 to the <video>
+        // element sidesteps that mismatch.
+        let thumbSource = file;
+        if (fragmented && fmp4Segments) {
+            const totalSize = fmp4Segments.reduce((s, seg) => s + seg.length, 0);
+            const combined = new Uint8Array(totalSize);
+            let off = 0;
+            for (const seg of fmp4Segments) { combined.set(seg, off); off += seg.length; }
+            thumbSource = new File([combined], file.name, { type: 'video/mp4' });
+        }
         try {
             const thumbTimeout = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('Thumbnail timeout')), 15000)
             );
-            thumbData = await Promise.race([generateThumbnail(file), thumbTimeout]);
+            thumbData = await Promise.race([generateThumbnail(thumbSource), thumbTimeout]);
         } catch {
             // Fallback: 1px placeholder
             thumbData = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46]);
