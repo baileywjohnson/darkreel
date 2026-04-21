@@ -360,8 +360,10 @@ main { padding-top: 0; position: relative; z-index: 1; }
 }
 .folder-item .folder-menu-btn {
     position: absolute; top: 6px; right: 6px;
+    width: 28px; height: 28px; padding: 0;
     background: rgba(0,0,0,0.5); border: none; color: #fff; cursor: pointer;
-    font-size: 22px; padding: 1px 8px 7px; border-radius: 6px; line-height: 1;
+    border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
 }
 .folder-item .folder-menu-btn:hover { background: rgba(0,0,0,0.8); }
 .folder-context-menu {
@@ -591,14 +593,17 @@ main { padding-top: 0; position: relative; z-index: 1; }
     position: absolute;
     top: 6px;
     right: 6px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
     background: rgba(0,0,0,0.5);
     border: none;
     color: #fff;
     cursor: pointer;
-    font-size: 22px;
-    padding: 1px 8px 7px;
     border-radius: 6px;
-    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     opacity: 0;
     transition: opacity 0.15s;
 }

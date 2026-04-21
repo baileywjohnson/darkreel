@@ -2626,7 +2626,7 @@ function createFolderElements() {
         el.innerHTML = `
             <svg class="folder-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             <span class="folder-name">${escapeHtml(f.name)}</span>
-            <button class="folder-menu-btn" data-folder-action="${f.id}" title="Folder options">⋮</button>
+            <button class="folder-menu-btn" data-folder-action="${f.id}" title="Folder options" aria-label="Folder options"><svg width="4" height="16" viewBox="0 0 4 16" fill="currentColor" aria-hidden="true"><circle cx="2" cy="3" r="1.5"/><circle cx="2" cy="8" r="1.5"/><circle cx="2" cy="13" r="1.5"/></svg></button>
         `;
 
         el.addEventListener('click', (e) => {
@@ -3204,7 +3204,9 @@ async function createGalleryItem(item) {
 
     const menuBtn = document.createElement('button');
     menuBtn.className = 'item-menu-btn';
-    menuBtn.textContent = '⋮';
+    // SVG keeps the dot glyph centered identically on every device; the old
+    // unicode "⋮" relied on font metrics and looked shifted on iOS Safari.
+    menuBtn.innerHTML = '<svg width="4" height="16" viewBox="0 0 4 16" fill="currentColor" aria-hidden="true"><circle cx="2" cy="3" r="1.5"/><circle cx="2" cy="8" r="1.5"/><circle cx="2" cy="13" r="1.5"/></svg>';
     menuBtn.title = 'Options';
     menuBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -4575,11 +4577,8 @@ async function playVideoMSE(item, fileKey) {
         if (aborted) return;
 
         // Start: fetch init segment, then stream from chunk 1
-        viewerTitle.innerHTML = `${escapeHtml(item.name || 'Video')} <span class="viewer-spinner"></span>`;
         await ensureInit();
         if (aborted) return;
-
-        viewerTitle.textContent = item.name || 'Video';
 
         await streamFrom(1, fetchGeneration);
     } catch (e) {
@@ -4588,8 +4587,6 @@ async function playVideoMSE(item, fileKey) {
 }
 
 async function playVideoBlob(item, fileKey, mime) {
-    viewerTitle.innerHTML = `${escapeHtml(item.name || 'Video')} <span class="viewer-spinner"></span>`;
-
     let aborted = false;
     viewerVideo._abortStreaming = () => { aborted = true; };
 
@@ -4624,8 +4621,6 @@ async function playVideoBlob(item, fileKey, mime) {
         const merged = new Uint8Array(totalLen);
         let offset = 0;
         for (const c of decrypted) { merged.set(c, offset); offset += c.length; }
-
-        viewerTitle.textContent = item.name || 'Video';
 
         const finalData = (mime === 'video/mp4') ? fastStartMP4(merged) : merged;
         const blob = new Blob([finalData], { type: mime });
