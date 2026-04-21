@@ -4302,15 +4302,24 @@ async function playVideoMSE(item, fileKey) {
 
     let aborted = false;
 
-    // Auto-skip gaps: when playback stalls at a gap between buffered ranges,
-    // jump to the start of the next range. This handles timestamp discontinuities
-    // from interleaved multi-track fMP4 segments (common with MOV remux).
+    // Auto-skip timestamp discontinuities: when playback stalls at a tiny
+    // gap between buffered ranges (typical of interleaved multi-track fMP4,
+    // e.g. MOV remux where the last video frame ends slightly before the
+    // matching audio sample), nudge the playhead across.
+    //
+    // Capped at a 1-second gap size so large gaps — left behind by a prior
+    // seek into unloaded territory, or a silently-dropped chunk append —
+    // don't manifest as a 10-second playhead jump mid-playback. Large gaps
+    // are better resolved by the fetch pipeline catching up than by skipping
+    // the user over unwatched content.
+    const MAX_SKIP_GAP_S = 1;
     function onWaiting() {
         if (aborted || sb.buffered.length <= 1) return;
         const ct = viewerVideo.currentTime;
         for (let r = 0; r < sb.buffered.length - 1; r++) {
             const gapStart = sb.buffered.end(r);
             const gapEnd = sb.buffered.start(r + 1);
+            if (gapEnd - gapStart > MAX_SKIP_GAP_S) continue;
             if (ct >= gapStart - 0.5 && ct < gapEnd) {
                 viewerVideo.currentTime = gapEnd + 0.01;
                 return;
