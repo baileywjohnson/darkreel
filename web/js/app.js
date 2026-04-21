@@ -3945,6 +3945,10 @@ function verifyChunkCount(item, actualCount) {
 
 async function openViewer(item) {
     currentViewerItem = item;
+    // Set the title before unhiding the viewer so the first paint shows the
+    // correct name — otherwise the previous item's title briefly flashes in
+    // the top-left before the next line updates it.
+    viewerTitle.textContent = item.name || 'Encrypted file';
     viewer.classList.remove('hidden');
     viewerVideo.classList.add('hidden');
     viewerImage.classList.add('hidden');
@@ -3959,7 +3963,6 @@ async function openViewer(item) {
     viewerIndex = viewerList.indexOf(item);
     updateViewerNav();
 
-    viewerTitle.textContent = item.name || 'Encrypted file';
     // Only apply CSS rotation for videos (images are rotated at the file level)
     viewerImage.style.transform = '';
     viewerVideo.style.transform = (item.media_type === 'video' && item.rotation) ? `rotate(${item.rotation}deg)` : '';
