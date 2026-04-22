@@ -576,6 +576,14 @@ main { padding-top: 0; position: relative; z-index: 1; }
     color: var(--text-dim);
     background: var(--bg-card);
 }
+.gallery-item .thumb-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
 .gallery-item .badge {
     position: absolute;
     top: 8px;

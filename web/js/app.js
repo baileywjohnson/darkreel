@@ -3187,8 +3187,12 @@ async function createGalleryItem(item) {
         img.loading = 'lazy';
         img.draggable = false;
         img.alt = '';
-        loadThumbnail(item, img);
+        const loader = document.createElement('div');
+        loader.className = 'thumb-loading';
+        loader.innerHTML = '<div class="spinner spinner-sm"></div>';
+        div.appendChild(loader);
         div.appendChild(img);
+        loadThumbnail(item, img, loader);
     }
 
     const badge = document.createElement('span');
@@ -3297,7 +3301,8 @@ function openItemContextMenu(item, parentEl, anchorBtn) {
     setTimeout(() => document.addEventListener('click', closeMenu), 0);
 }
 
-async function loadThumbnail(item, img) {
+async function loadThumbnail(item, img, loader) {
+    const removeLoader = () => { if (loader && loader.parentElement) loader.remove(); };
     try {
         const res = await fetch(`/api/media/${item.id}/thumbnail`, {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -3320,15 +3325,18 @@ async function loadThumbnail(item, img) {
                 fallback.textContent = '?';
                 parent.insertBefore(fallback, img);
             }
+            removeLoader();
             return;
         }
 
         const blob = new Blob([decrypted], { type: 'image/jpeg' });
         const url = URL.createObjectURL(blob);
-        img.onload = () => URL.revokeObjectURL(url);
+        img.onload = () => { URL.revokeObjectURL(url); removeLoader(); };
+        img.onerror = () => { URL.revokeObjectURL(url); removeLoader(); };
         img.src = url;
     } catch (e) {
         console.error('Failed to load thumbnail:', e);
+        removeLoader();
     }
 }
 
