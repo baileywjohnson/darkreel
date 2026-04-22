@@ -5161,10 +5161,17 @@ async function downloadItem(item) {
         const fileKey = await openSealed(base64ToBuffer(item.file_key_sealed));
         const progressEl = toast.querySelector('.download-toast-progress');
 
-        // For fragmented items we still need all chunks in memory before the
-        // unfragment step, so we buffer first and yield a single blob. For
-        // non-fragmented items we yield each decrypted chunk as soon as it's
-        // ready, so the SW streams bytes to disk with a real progress bar.
+        // Non-fragmented items stream chunk-by-chunk — the decrypted bytes
+        // are already the final file bytes, so we can hand them to the SW
+        // as soon as each one is ready.
+        //
+        // Fragmented items buffer every chunk and run unfragmentMP4 to
+        // rebuild a regular (non-fragmented) MP4 before streaming. This is
+        // required for broad player compatibility (QuickTime in particular
+        // is finicky about fragmented MP4 and frequently refuses to open
+        // them). The browser still shows the download in its downloads UI,
+        // just with a "finishes instantly" progress since the data is
+        // already resident by the time the stream starts.
         async function* chunkStream() {
             if (item.fragmented) {
                 const buf = [];
@@ -5196,10 +5203,6 @@ async function downloadItem(item) {
             }
         }
 
-        // Non-fragmented items know their final size from metadata (the
-        // recorded upload size), which gives the browser an accurate progress
-        // bar. For fragmented items the unfragment step alters length, so we
-        // omit Content-Length.
         const contentLength = !item.fragmented && typeof item.size === 'number'
             ? item.size
             : undefined;
