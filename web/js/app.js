@@ -4373,6 +4373,17 @@ async function playVideoMSE(item, fileKey) {
     const chunkInflight = new Map();
     let fetchGeneration = 0; // incremented on seek to cancel stale fetches
 
+    // Chunks to prefetch in parallel on startup. Covers init (chunk 0) plus
+    // the first few media segments. Kicked off before ensureInit awaits, so
+    // the network round-trips overlap with MediaSource setup + the serial
+    // init-then-media append sequence. Without this, time-to-first-frame is
+    // gated on (init fetch) + (init append) + (chunk-1 fetch) + (chunk-1
+    // append) running strictly sequentially — the chunk-1 fetch dominates
+    // for high-bitrate / sparse-keyframe content where fragments are MB-
+    // scale. Sized to match streamFrom's PREFETCH so we don't add net
+    // bandwidth contention beyond what streamFrom would already cause.
+    const STARTUP_PREFETCH = 4;
+
     function waitForUpdate() {
         if (!sb.updating) return Promise.resolve();
         return new Promise((resolve, reject) => {
@@ -4385,26 +4396,39 @@ async function playVideoMSE(item, fileKey) {
         if (chunkCache.has(index)) return Promise.resolve(chunkCache.get(index));
         if (chunkInflight.has(index)) return chunkInflight.get(index);
         const promise = (async () => {
-            const res = await fetchRetry(`/api/media/${item.id}/chunk/${index}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
-            const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
-            const dec = await workerDecrypt('decryptChunk', encData, fileKey, index, item.id);
-            chunkCache.set(index, dec);
-            chunkInflight.delete(index);
-            return dec;
+            try {
+                const res = await fetchRetry(`/api/media/${item.id}/chunk/${index}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
+                const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
+                const dec = await workerDecrypt('decryptChunk', encData, fileKey, index, item.id);
+                chunkCache.set(index, dec);
+                return dec;
+            } finally {
+                // Always clear the inflight entry — even on failure. Leaving a
+                // rejected promise in the map would cause every future fetch
+                // of this chunk to immediately fail with the stale error
+                // instead of retrying. Matters especially for the startup
+                // prefetch, which fires before the user can even react to a
+                // transient network blip.
+                chunkInflight.delete(index);
+            }
         })();
         chunkInflight.set(index, promise);
         return promise;
     }
 
-    async function appendData(data, gen) {
+    // `required=true` (used for the init segment) makes append failures throw
+    // so the outer catch can fall back to blob playback. Mid-stream chunk
+    // failures stay silent because the playhead has likely moved past that
+    // range and partial streaming is still usable.
+    async function appendData(data, gen, required) {
         if (ms.readyState === 'closed') return;
         if (ms.readyState === 'ended') {
             try { ms.duration = item.duration; } catch { return; }
         }
-        try { await waitForUpdate(); } catch { return; }
+        try { await waitForUpdate(); } catch (e) { if (required) throw e; return; }
         if (aborted || (gen !== undefined && gen !== fetchGeneration)) return;
         for (let attempt = 0; attempt < 5; attempt++) {
             try {
@@ -4414,6 +4438,7 @@ async function playVideoMSE(item, fileKey) {
             } catch (e) {
                 if (e.name === 'InvalidStateError' || e.message === 'SourceBuffer error') {
                     console.warn('[MSE] append failed:', e.message, 'readyState:', ms.readyState);
+                    if (required) throw e;
                     return;
                 } else if (e.name === 'QuotaExceededError') {
                     try {
@@ -4429,6 +4454,7 @@ async function playVideoMSE(item, fileKey) {
                 }
             }
         }
+        if (required) throw new Error('MSE appendBuffer failed after retries');
     }
 
     // Estimate which media chunk (1-based, since 0 is init) corresponds to a time
@@ -4451,7 +4477,18 @@ async function playVideoMSE(item, fileKey) {
     async function ensureInit() {
         const initData = await fetchChunk(0);
         if (aborted) return;
-        await appendData(initData);
+        await appendData(initData, undefined, true);
+    }
+
+    // Kick off the startup fetches as early as possible — these run in
+    // parallel with the `sourceopen` handshake, so by the time we're ready
+    // to append, the init segment and first few media chunks are likely
+    // already cached. Without this, chunk 0 and chunk 1 are fetched
+    // sequentially (init, then await append, then chunk 1, then await
+    // append) and the chunk-1 network round-trip dominates time-to-
+    // first-frame for high-bitrate content where fragments are several MB.
+    for (let p = 0; p < Math.min(STARTUP_PREFETCH, item.chunk_count); p++) {
+        fetchChunk(p).catch(() => {});
     }
 
     // Fetch and append chunks sequentially from startChunk, respecting generation
@@ -4591,13 +4628,21 @@ async function playVideoMSE(item, fileKey) {
         }
         if (aborted) return;
 
-        // Start: fetch init segment, then stream from chunk 1
+        // Start: fetch init segment, then stream from chunk 1. Init-segment
+        // failures (codec mismatch between item.codecs and the actual stream,
+        // malformed init) bubble up so playVideo can fall back to blob.
         await ensureInit();
         if (aborted) return;
 
         await streamFrom(1, fetchGeneration);
     } catch (e) {
-        if (!aborted) viewerTitle.textContent = 'Playback failed: ' + e.message;
+        if (aborted) return;
+        // Tear down the MediaSource so the blob fallback can take over the
+        // video element cleanly.
+        try { viewerVideo._abortStreaming(); } catch {}
+        viewerVideo._mediaSource = null;
+        try { viewerVideo.removeAttribute('src'); viewerVideo.load(); } catch {}
+        throw e;
     }
 }
 

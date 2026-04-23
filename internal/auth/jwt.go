@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -14,6 +15,13 @@ var (
 	jwtSecret []byte
 	jwtOnce   sync.Once
 )
+
+// ErrSecretAlreadyInitialized is returned by SetSecret when called after
+// any token op has already caused the secret to be auto-generated. This is
+// surfaced as an error (rather than a silent no-op) so misordered callers
+// learn their SetSecret call was discarded and tokens are being signed with
+// an ephemeral secret instead of the one they passed in.
+var ErrSecretAlreadyInitialized = errors.New("jwt secret already initialized")
 
 const tokenExpiry = 24 * time.Hour
 
@@ -39,14 +47,21 @@ func initSecret() {
 	})
 }
 
-// SetSecret allows setting a persistent JWT secret (e.g., from config).
-// Must be called before any token operations. If called after initSecret
-// has already auto-generated a secret, the provided secret is ignored.
-func SetSecret(secret []byte) {
+// SetSecret installs a persistent JWT secret (e.g., from config). Must be
+// called before any token op. Returns ErrSecretAlreadyInitialized if called
+// after initSecret already auto-generated an ephemeral secret — callers must
+// handle this rather than silently getting a different secret than intended.
+func SetSecret(secret []byte) error {
+	installed := false
 	jwtOnce.Do(func() {
 		jwtSecret = make([]byte, len(secret))
 		copy(jwtSecret, secret)
+		installed = true
 	})
+	if !installed {
+		return ErrSecretAlreadyInitialized
+	}
+	return nil
 }
 
 func getSecret() []byte {
@@ -86,7 +101,10 @@ func ValidateToken(tokenStr string) (*Claims, error) {
 	initSecret()
 	secret := getSecret()
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+		// Accept only HS256 — the exact algorithm we sign with. Matching the
+		// broader SigningMethodHMAC interface would also accept HS384/HS512,
+		// which we never issue. Defense-in-depth against future mis-routes.
+		if t.Method != jwt.SigningMethodHS256 {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return secret, nil
