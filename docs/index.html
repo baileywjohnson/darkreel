@@ -1097,6 +1097,7 @@ a:hover { text-decoration: underline; }
 <span class="flag">PERSIST_SESSION</span>=true                  <span class="comment"># master key in sessionStorage (default: on)</span>
 <span class="flag">ALLOW_REGISTRATION</span>=false              <span class="comment"># initial state; admin panel toggle persists to DB</span>
 <span class="flag">TRUST_PROXY</span>=false                     <span class="comment"># enable behind Caddy/nginx for correct rate limiting</span>
+<span class="flag">TRUST_PROXY_CIDR</span>=127.0.0.1/32          <span class="comment"># optional: only honor proxy headers from these CIDRs</span>
 <span class="flag">MAX_STORAGE_GB</span>=50                     <span class="comment"># per-user storage quota in GB (default: 1 GB if not set)</span>
       </code>
     </div>
@@ -1232,7 +1233,7 @@ a:hover { text-decoration: underline; }
 <span class="output">hashed identifiers</span>   <span class="comment">IPs and usernames keyed-hashed (SipHash, per-process random seed) - no plaintext in dumps, no collision attacks</span>
 <span class="output">privacy-safe logs</span>    <span class="comment">no usernames, user IDs, media IDs, or IP addresses in server logs</span>
 <span class="output">path validation</span>      <span class="comment">UUID validation at storage layer - defense-in-depth against path traversal</span>
-<span class="output">proxy-aware IPs</span>      <span class="comment">X-Forwarded-For trust off by default - opt-in via TRUST_PROXY</span>
+<span class="output">proxy-aware IPs</span>      <span class="comment">X-Forwarded-For trust off by default - opt-in via TRUST_PROXY, optionally scoped to TRUST_PROXY_CIDR allowlist</span>
 <span class="output">startup integrity</span>    <span class="comment">incomplete uploads cleaned up on restart, crashed size records backfilled</span>
 <span class="output">encrypted backups</span>    <span class="comment">AES-256-CBC with dedicated key, 30-day retention</span>
 <span class="output">upload concurrency</span>   <span class="comment">max 3 concurrent uploads per user - prevents disk exhaustion</span>

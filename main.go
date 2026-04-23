@@ -6,12 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -62,18 +64,44 @@ func main() {
 		}
 		log.Printf("Admin user created")
 
-		// Write recovery code to a temp file instead of stderr to avoid
-		// it persisting in journald. The file is chmod 0600 and should
-		// be read and deleted by the setup script immediately.
+		// Emit the recovery code to stderr AND to a short-lived file.
+		//
+		// Stderr: the operator is watching the bootstrap log, so they see
+		// the code immediately. In a systemd deployment this also lands
+		// in journald, which is root-only and scoped to the service.
+		//
+		// File: lets an automated setup script read the code without
+		// parsing log output. The file is chmod 0600 and auto-deleted
+		// after the grace window below — previously it persisted forever,
+		// so any backup/snapshot/misconfigured share leaked a permanent
+		// admin recovery primitive (which defeats zero-knowledge for the
+		// admin account). Auto-delete closes that window.
+		fmt.Fprintf(os.Stderr, "\n========================================\n")
+		fmt.Fprintf(os.Stderr, "  ADMIN RECOVERY CODE — save this now!\n")
+		fmt.Fprintf(os.Stderr, "  %s\n", recoveryCode)
+		fmt.Fprintf(os.Stderr, "========================================\n\n")
+
 		rcPath := filepath.Join(*dataDir, ".recovery-code")
+		const recoveryCodeTTL = 5 * time.Minute
 		if err := os.WriteFile(rcPath, []byte(recoveryCode), 0600); err != nil {
-			// Fallback to stderr if file write fails
-			fmt.Fprintf(os.Stderr, "\n========================================\n")
-			fmt.Fprintf(os.Stderr, "  RECOVERY CODE — save this now!\n")
-			fmt.Fprintf(os.Stderr, "  %s\n", recoveryCode)
-			fmt.Fprintf(os.Stderr, "========================================\n\n")
+			log.Printf("Recovery code NOT written to disk (%v) — save the value printed above; it will not be shown again.", err)
 		} else {
-			log.Printf("Recovery code written to data directory — read and delete the .recovery-code file immediately")
+			log.Printf("Recovery code also written to %s — will be deleted automatically in %s.", rcPath, recoveryCodeTTL)
+			go func() {
+				time.Sleep(recoveryCodeTTL)
+				if err := os.Remove(rcPath); err != nil && !os.IsNotExist(err) {
+					log.Printf("Warning: failed to auto-delete recovery-code file %s: %v", rcPath, err)
+				}
+			}()
+		}
+	} else {
+		// Scrub a stale .recovery-code file left behind by an older build
+		// (before auto-delete was added). If someone managed the file
+		// already, this is a no-op; if they forgot, we clean up after
+		// them on next restart.
+		rcPath := filepath.Join(*dataDir, ".recovery-code")
+		if err := os.Remove(rcPath); err == nil {
+			log.Printf("Removed stale .recovery-code file left by a previous bootstrap")
 		}
 	}
 
@@ -203,6 +231,26 @@ func main() {
 
 	shredder := storage.NewShredder(store, 0) // workers default to NumCPU (capped at 8)
 
+	// Parse TRUST_PROXY_CIDR (comma-separated) if set. Invalid entries are
+	// skipped with a warning rather than fatal — the operator still gets a
+	// working server; they just fall back to the legacy "trust any upstream"
+	// behavior for the unparsable entry.
+	var trustCIDRs []*net.IPNet
+	if raw := os.Getenv("TRUST_PROXY_CIDR"); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			p := strings.TrimSpace(part)
+			if p == "" {
+				continue
+			}
+			_, cidr, err := net.ParseCIDR(p)
+			if err != nil {
+				log.Printf("Warning: TRUST_PROXY_CIDR entry %q is not a valid CIDR — skipping", p)
+				continue
+			}
+			trustCIDRs = append(trustCIDRs, cidr)
+		}
+	}
+
 	srv := &server.Server{
 		DB:                database,
 		Storage:           store,
@@ -212,6 +260,7 @@ func main() {
 		PersistSession:    os.Getenv("PERSIST_SESSION") != "false",
 		AllowRegistration: os.Getenv("ALLOW_REGISTRATION") == "true", // default false
 		TrustProxy:        os.Getenv("TRUST_PROXY") == "true",        // default false — only enable behind a reverse proxy
+		TrustProxyCIDRs:   trustCIDRs,
 		MaxStorageBytes:   maxBytes,
 	}
 

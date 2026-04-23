@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -29,6 +30,12 @@ type Server struct {
 	PersistSession    bool
 	AllowRegistration bool
 	TrustProxy        bool // trust X-Forwarded-For/X-Real-IP (only enable behind a reverse proxy)
+	// TrustProxyCIDRs, when non-empty, restricts TrustProxy to only honor
+	// proxy headers from peers inside these CIDRs. If empty and TrustProxy
+	// is true, headers are trusted from any upstream (legacy behavior —
+	// safe only when the bind address is firewalled to the proxy). Set via
+	// the TRUST_PROXY_CIDR env var (comma-separated list).
+	TrustProxyCIDRs   []*net.IPNet
 	MaxStorageBytes   int64 // per-user storage quota in bytes (0 = unlimited)
 	httpServer        *http.Server
 }
@@ -61,8 +68,18 @@ func (s *Server) routes() chi.Router {
 	// Only trust X-Forwarded-For/X-Real-IP when explicitly configured behind a
 	// reverse proxy (e.g. Caddy). Without this, clients can spoof their IP to
 	// bypass per-IP rate limits.
+	//
+	// If TrustProxyCIDRs is set, only honor headers from peers inside those
+	// networks — necessary when the bind address is reachable beyond the
+	// proxy (e.g. a shared Docker network). Empty CIDRs + TrustProxy=true
+	// preserves the legacy "trust any upstream" behavior for operators who
+	// already firewall their bind address to the proxy.
 	if s.TrustProxy {
-		r.Use(middleware.RealIP)
+		if len(s.TrustProxyCIDRs) > 0 {
+			r.Use(trustProxyFromCIDR(s.TrustProxyCIDRs))
+		} else {
+			r.Use(middleware.RealIP)
+		}
 	}
 	// Compression applied selectively — disabled on /api/auth/* routes to
 	// prevent BREACH-style attacks against responses containing secrets
@@ -254,6 +271,48 @@ func (s *Server) routes() chi.Router {
 	})
 
 	return r
+}
+
+// trustProxyFromCIDR returns a middleware that rewrites r.RemoteAddr from
+// X-Forwarded-For / X-Real-IP only when the connecting peer's address sits
+// inside one of the supplied CIDRs. Other peers keep their real RemoteAddr,
+// so rate limiters see the true source IP even if an attacker forges the
+// proxy headers.
+func trustProxyFromCIDR(cidrs []*net.IPNet) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			host, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				host = r.RemoteAddr
+			}
+			peer := net.ParseIP(host)
+			trusted := false
+			if peer != nil {
+				for _, c := range cidrs {
+					if c.Contains(peer) {
+						trusted = true
+						break
+					}
+				}
+			}
+			if trusted {
+				// Honor proxy headers: read X-Real-IP first, then the first
+				// value of X-Forwarded-For. Matches chi's middleware.RealIP
+				// precedence so behavior only differs by the peer check.
+				if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+					r.RemoteAddr = xri
+				} else if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+					if i := strings.Index(xff, ","); i >= 0 {
+						xff = xff[:i]
+					}
+					if xff = strings.TrimSpace(xff); xff != "" {
+						r.RemoteAddr = xff
+					}
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // selectiveCompress applies HTTP compression to all routes except:

@@ -256,7 +256,7 @@ Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOc
 2. The setup script will display your **recovery code** - save it somewhere safe
 3. SSH in as your personal user going forward: `ssh yourname@your-server-ip`
 
-The recovery code is written to a temporary file in the data directory (`{data}/.recovery-code`, chmod 0600), read by the setup script, then securely deleted. It is never logged to stderr or journald. Save it immediately - it's the only way to regain access to your encrypted data if you forget your password. No one - including the server admin - can recover it without this code.
+The recovery code is printed to stderr with a prominent banner and also written to `{data}/.recovery-code` (chmod 0600) so a setup script or automation can pick it up programmatically. The file is **auto-deleted by the server after 5 minutes** to close the persistent-on-disk window — previously it could sit in `data/` forever if the operator forgot to delete it, turning any backup or snapshot into an admin-recovery leak. Save the code somewhere durable during that grace period. No one — including the server admin — can recover it afterward.
 
 ### Manual
 
@@ -286,6 +286,7 @@ DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 | `PERSIST_SESSION` | `true` | Cache master key in sessionStorage (survives page refresh). Set to `false` for higher security - see [Session persistence](#session-persistence) |
 | `ALLOW_REGISTRATION` | `false` | Initial registration state on first run. Once an admin toggles registration via the admin panel, that setting is persisted to the database and takes precedence over this variable on subsequent restarts. |
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` / `X-Real-IP` headers for rate limiting. **Only enable when running behind a trusted reverse proxy** (Caddy, nginx). Without a proxy, clients can spoof these headers to bypass rate limits. |
+| `TRUST_PROXY_CIDR` | *(unset)* | Comma-separated CIDRs of trusted proxy peers (e.g. `127.0.0.1/32,10.0.0.0/8`). When set along with `TRUST_PROXY=true`, proxy headers are honored *only* from peers inside these networks — necessary if the bind address is reachable beyond the proxy (shared Docker network, cluster mesh). When unset, all upstreams are trusted, which is safe only if you firewall the bind address to the proxy yourself. |
 | `MAX_STORAGE_GB` | **1** | Default per-user storage quota in GB. Set to `50` for 50 GB per user. Supports decimals (e.g. `0.5`). Can also be configured via the admin panel (which takes precedence). The setup script prompts for this automatically. |
 
 Password: 16-128 characters, at least one letter, number, and symbol. Username: 3-64 alphanumeric characters.
