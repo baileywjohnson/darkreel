@@ -2893,6 +2893,12 @@ async function renderGalleryItems() {
     galleryGrid.innerHTML = '';
     galleryGrid.appendChild(fragment);
     addRefreshButton();
+
+    // Pagination visibility depends on currentFolderId AND the filtered
+    // gallery contents — both of which can change without going through
+    // loadMedia (folder clicks, breadcrumb hops, type-filter changes).
+    // Re-evaluate here so the chrome stays in sync.
+    updatePaginationVisibility();
 }
 
 document.getElementById('new-folder-btn').addEventListener('click', () => {
@@ -3054,6 +3060,42 @@ function onRefreshClick() {
     });
 }
 
+// Pagination is server-side over the raw total item count (the server
+// doesn't know about folders — those live inside the encrypted metadata).
+// At root, that matches what the user sees. Inside a folder, we filter
+// the current page's items down to that folder's contents, which can
+// leave the gallery showing far fewer items than PAGE_SIZE. In that
+// case the "Page X of Y" chrome is misleading — Y refers to raw item
+// pages, not folder pages — and clicking Next just loads more raw items
+// that may also be filtered out.
+//
+// Hide pagination when the in-folder view is partial (< PAGE_SIZE items
+// for this folder visible on the current page). If a folder has >=
+// PAGE_SIZE visible items, the user is mid-folder and might want more,
+// so expose it.
+//
+// Called from loadMedia (after a fetch) AND from folder navigation
+// (folder clicks, breadcrumb hops) — without the latter, navigating
+// from a paginated root view into a sparse folder kept the stale
+// "Page 1 of N" chrome on screen because nothing toggled the visibility.
+function updatePaginationVisibility() {
+    if (totalItems <= PAGE_SIZE) {
+        pagination.classList.add('hidden');
+        return;
+    }
+    const visibleInFolder = mediaItems.filter(m => (m.folderId || null) === currentFolderId).length;
+    const showPagination = currentFolderId === null || visibleInFolder >= PAGE_SIZE;
+    if (showPagination) {
+        pagination.classList.remove('hidden');
+        document.getElementById('page-info').textContent =
+            `Page ${currentPage} of ${Math.ceil(totalItems / PAGE_SIZE)}`;
+        document.getElementById('prev-page').disabled = currentPage <= 1;
+        document.getElementById('next-page').disabled = currentPage * PAGE_SIZE >= totalItems;
+    } else {
+        pagination.classList.add('hidden');
+    }
+}
+
 async function loadMedia() {
     if (!_silentRefresh) {
         galleryLoading.classList.remove('hidden');
@@ -3104,31 +3146,7 @@ async function loadMedia() {
         renderFolders();
         if (!_silentRefresh) await renderGalleryItems();
 
-        if (totalItems > PAGE_SIZE) {
-            // Pagination is server-side over the raw total item count
-            // (the server doesn't know about folders — those live inside
-            // the encrypted metadata). At root, that matches what the
-            // user sees. Inside a folder, we filter the current page's
-            // items down to that folder's contents, which can leave the
-            // gallery showing far fewer items than PAGE_SIZE. In that
-            // case the "Page X of Y" chrome is misleading — Y refers to
-            // raw item pages, not folder pages — and clicking Next just
-            // loads more raw items that may also be filtered out.
-            //
-            // Hide the pagination when the in-folder view is partial
-            // (showing < PAGE_SIZE items). If a folder genuinely has >=
-            // PAGE_SIZE items on the current page, the user is mid-
-            // folder and might want to load more, so we still expose it.
-            const visibleInFolder = mediaItems.filter(m => (m.folderId || null) === currentFolderId).length;
-            const showPagination = currentFolderId === null || visibleInFolder >= PAGE_SIZE;
-            if (showPagination) {
-                pagination.classList.remove('hidden');
-                document.getElementById('page-info').textContent =
-                    `Page ${currentPage} of ${Math.ceil(totalItems / PAGE_SIZE)}`;
-                document.getElementById('prev-page').disabled = currentPage <= 1;
-                document.getElementById('next-page').disabled = currentPage * PAGE_SIZE >= totalItems;
-            }
-        }
+        updatePaginationVisibility();
     } catch (e) {
         console.error('Failed to load media:', e);
     }
