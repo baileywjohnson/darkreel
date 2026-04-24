@@ -862,7 +862,16 @@ window.addEventListener('beforeunload', (e) => {
 });
 let currentPage = 1;
 let totalItems = 0;
-const PAGE_SIZE = 50;
+// Client-side page size, capped at the server's hard max (see
+// internal/media/handler.go: `limit < 1 || limit > 200`). 200 is chosen
+// deliberately: for accounts under 200 items (the vast majority of
+// personal libraries) everything loads in one request and there's no
+// pagination to navigate, which sidesteps the "items legitimately in
+// the current folder but stuck on page 2 because other folders filled
+// up page 1" failure mode. Accounts over 200 items still paginate —
+// we accept that fewer users hit that path and can address it later
+// with client-side iteration across all server pages if needed.
+const PAGE_SIZE = 200;
 const CHUNK_SIZE = 1024 * 1024;
 
 // Decryption worker pool
