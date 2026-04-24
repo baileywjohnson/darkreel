@@ -860,7 +860,12 @@ const pendingUploads = new Map();
 window.addEventListener('beforeunload', (e) => {
     if (pendingUploads.size > 0) e.preventDefault();
 });
-let currentPage = 1;
+// Client-side pagination was removed — loadMedia iterates all server
+// pages on load so folder filtering operates over the complete dataset.
+// This variable is retained only because `pollMedia` polls page 1 for
+// new uploads, and the server's `/api/media?page=N` parameter is
+// 1-indexed. Value is always 1.
+const POLL_PAGE = 1;
 let totalItems = 0;
 // Client-side page size, capped at the server's hard max (see
 // internal/media/handler.go: `limit < 1 || limit > 200`). 200 is chosen
@@ -3006,12 +3011,10 @@ document.addEventListener('click', (e) => {
     }
 });
 
-document.getElementById('prev-page').addEventListener('click', () => {
-    if (currentPage > 1) { currentPage--; loadMedia(); }
-});
-document.getElementById('next-page').addEventListener('click', () => {
-    if (currentPage * PAGE_SIZE < totalItems) { currentPage++; loadMedia(); }
-});
+// Pagination Prev/Next buttons were removed when loadMedia switched to
+// iterate-all-pages. The #pagination element stays in the DOM for CSS
+// layout compatibility but is permanently hidden; updatePaginationVisibility
+// below is a no-op retained only because other code paths call it.
 
 let _silentRefresh = false;
 function addRefreshButton() {
@@ -3069,54 +3072,48 @@ function onRefreshClick() {
     });
 }
 
-// Pagination is server-side over the raw total item count (the server
-// doesn't know about folders — those live inside the encrypted metadata).
-// At root, that matches what the user sees. Inside a folder, we filter
-// the current page's items down to that folder's contents, which can
-// leave the gallery showing far fewer items than PAGE_SIZE. In that
-// case the "Page X of Y" chrome is misleading — Y refers to raw item
-// pages, not folder pages — and clicking Next just loads more raw items
-// that may also be filtered out.
-//
-// Hide pagination when the in-folder view is partial (< PAGE_SIZE items
-// for this folder visible on the current page). If a folder has >=
-// PAGE_SIZE visible items, the user is mid-folder and might want more,
-// so expose it.
-//
-// Called from loadMedia (after a fetch) AND from folder navigation
-// (folder clicks, breadcrumb hops) — without the latter, navigating
-// from a paginated root view into a sparse folder kept the stale
-// "Page 1 of N" chrome on screen because nothing toggled the visibility.
+// Pagination-chrome updater retained as a no-op so other call sites
+// (renderGalleryItems, etc.) don't need to know pagination was removed.
+// See loadMedia: the UI now fetches every server page and aggregates
+// client-side, so a folder with 5 items always shows 5 items regardless
+// of where those items fall in the server's date-desc paging.
 function updatePaginationVisibility() {
-    if (totalItems <= PAGE_SIZE) {
-        pagination.classList.add('hidden');
-        return;
-    }
-    // If we're past page 1, keep pagination on screen so the user can
-    // navigate back — otherwise they'd be stranded on a sparse later
-    // page with no Prev button.
-    let showPagination = currentPage > 1;
-    if (!showPagination) {
-        // On page 1: show only when the current view (root OR folder)
-        // has enough items at this level that there might be more
-        // worth loading via Next. Folders are client-side, so a root
-        // view with 60 items all-in-subfolders is just as misleading
-        // as a sparse folder view — both should hide the chrome.
-        const visibleHere = mediaItems.filter(m => (m.folderId || null) === currentFolderId).length;
-        showPagination = visibleHere >= PAGE_SIZE;
-    }
-    if (showPagination) {
-        pagination.classList.remove('hidden');
-        document.getElementById('page-info').textContent =
-            `Page ${currentPage} of ${Math.ceil(totalItems / PAGE_SIZE)}`;
-        document.getElementById('prev-page').disabled = currentPage <= 1;
-        document.getElementById('next-page').disabled = currentPage * PAGE_SIZE >= totalItems;
-    } else {
-        pagination.classList.add('hidden');
+    pagination.classList.add('hidden');
+}
+
+// Generation counter for loadMedia's background-page iteration. A new
+// loadMedia call (e.g., post-upload refresh, manual refresh button)
+// increments this; background fetches from a prior invocation check the
+// generation before mutating mediaItems so stale pages from a cancelled
+// sync don't leak into the current view.
+let _loadGeneration = 0;
+
+// Decrypt metadata in place on a raw server item. Best-effort: a failed
+// decrypt (or a missing/mismatched sealed key) leaves the item in the
+// list as "Encrypted" without its plaintext fields, which is better
+// than silently dropping it.
+async function decryptItemMetadata(item) {
+    try {
+        if (item.metadata_enc && item.metadata_nonce && item.metadata_key_sealed && hasKeypair()) {
+            const metadataKey = await openSealed(base64ToBuffer(item.metadata_key_sealed));
+            const encData = base64ToBuffer(item.metadata_enc);
+            const nonce = base64ToBuffer(item.metadata_nonce);
+            const combined = new Uint8Array(nonce.length + encData.length);
+            combined.set(nonce, 0);
+            combined.set(encData, nonce.length);
+            const mediaIdAad = new TextEncoder().encode(item.id);
+            const decrypted = await decryptBlock(combined, metadataKey, mediaIdAad);
+            const meta = JSON.parse(new TextDecoder().decode(decrypted));
+            Object.assign(item, meta);
+        }
+    } catch (e) {
+        console.warn('Failed to decrypt metadata for', item.id, e);
     }
 }
 
 async function loadMedia() {
+    const myGeneration = ++_loadGeneration;
+
     if (!_silentRefresh) {
         galleryLoading.classList.remove('hidden');
         galleryGrid.innerHTML = '';
@@ -3124,41 +3121,31 @@ async function loadMedia() {
     if (!_silentRefresh) galleryEmpty.classList.add('hidden');
     pagination.classList.add('hidden');
 
-    const [sort, order] = sortSelect.value.split('-');
-    const type = typeFilter.value;
-
     try {
-        const res = await api(`/api/media?page=${currentPage}&limit=${PAGE_SIZE}`);
-        const rawItems = res.items || [];
-        totalItems = res.total;
+        // Fetch page 1 synchronously so we can render something immediately
+        // and know the total item count. The server caps `limit` at 200
+        // (internal/media/handler.go), so totals > 200 require additional
+        // pages which we iterate below.
+        const first = await api(`/api/media?page=1&limit=${PAGE_SIZE}`);
+        if (myGeneration !== _loadGeneration) return; // a newer loadMedia raced us
+        const firstItems = first.items || [];
+        totalItems = first.total;
 
-        // Decrypt metadata for each item
-        mediaItems = [];
-        for (const item of rawItems) {
-            try {
-                if (item.metadata_enc && item.metadata_nonce && item.metadata_key_sealed && hasKeypair()) {
-                    const metadataKey = await openSealed(base64ToBuffer(item.metadata_key_sealed));
-                    const encData = base64ToBuffer(item.metadata_enc);
-                    const nonce = base64ToBuffer(item.metadata_nonce);
-                    const combined = new Uint8Array(nonce.length + encData.length);
-                    combined.set(nonce, 0);
-                    combined.set(encData, nonce.length);
-                    const mediaIdAad = new TextEncoder().encode(item.id);
-                    const decrypted = await decryptBlock(combined, metadataKey, mediaIdAad);
-                    const meta = JSON.parse(new TextDecoder().decode(decrypted));
-                    Object.assign(item, meta);
-                }
-            } catch (e) {
-                console.warn('Failed to decrypt metadata for', item.id, e);
-            }
-            if (!pendingDeletes.has(item.id)) {
-                mediaItems.push(item);
-            }
+        // Reset mediaItems and seed with page 1. We assign a fresh array
+        // rather than clearing in-place so any lingering reference held
+        // by an in-flight background iteration from the previous
+        // generation can't mutate the new buffer.
+        const items = [];
+        for (const item of firstItems) {
+            await decryptItemMetadata(item);
+            if (!pendingDeletes.has(item.id)) items.push(item);
         }
+        mediaItems = items;
 
-        // Load folder tree and render
+        // Folder tree + render what we have so far. This is the point at
+        // which the user sees their gallery populated — everything below
+        // is background fill-in for accounts over 200 items.
         await loadFolderTree();
-        // Validate restored folder ID still exists
         if (currentFolderId && !folders.some(f => f.id === currentFolderId)) {
             currentFolderId = null;
             sessionStorage.removeItem('currentFolderId');
@@ -3166,7 +3153,39 @@ async function loadMedia() {
         renderFolders();
         if (!_silentRefresh) await renderGalleryItems();
 
-        updatePaginationVisibility();
+        // Iterate remaining pages in the background, appending as each
+        // arrives. Re-render the gallery after each batch so new items
+        // appear progressively — most noticeable on accounts with many
+        // hundreds of items, where the first page lands in ~250ms and
+        // the rest trickle in over the next second or two. For accounts
+        // under PAGE_SIZE items this loop doesn't run at all.
+        const totalPages = Math.ceil(totalItems / PAGE_SIZE);
+        for (let page = 2; page <= totalPages; page++) {
+            if (myGeneration !== _loadGeneration) return;
+            let pageRes;
+            try {
+                pageRes = await api(`/api/media?page=${page}&limit=${PAGE_SIZE}`);
+            } catch (e) {
+                console.warn('Failed to fetch media page', page, e);
+                continue; // skip this page, keep going for the rest
+            }
+            if (myGeneration !== _loadGeneration) return;
+            const rawItems = pageRes.items || [];
+            for (const item of rawItems) {
+                await decryptItemMetadata(item);
+                if (myGeneration !== _loadGeneration) return;
+                if (!pendingDeletes.has(item.id)) {
+                    mediaItems.push(item);
+                }
+            }
+            // Re-render so newly-arrived items become visible. Skip
+            // during silent refresh — the caller will render after
+            // loadMedia() fully resolves, and re-rendering mid-refresh
+            // would destroy the "refreshing" visual state.
+            if (!_silentRefresh && myGeneration === _loadGeneration) {
+                await renderGalleryItems();
+            }
+        }
     } catch (e) {
         console.error('Failed to load media:', e);
     }
@@ -3178,7 +3197,7 @@ async function loadMedia() {
 async function pollMedia() {
     if (pendingUploads.size > 0) return; // skip entirely during uploads
     try {
-        const res = await api(`/api/media?page=${currentPage}&limit=${PAGE_SIZE}`);
+        const res = await api(`/api/media?page=${POLL_PAGE}&limit=${PAGE_SIZE}`);
         const rawItems = res.items || [];
         const newTotal = res.total;
 
