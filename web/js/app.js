@@ -3083,8 +3083,19 @@ function updatePaginationVisibility() {
         pagination.classList.add('hidden');
         return;
     }
-    const visibleInFolder = mediaItems.filter(m => (m.folderId || null) === currentFolderId).length;
-    const showPagination = currentFolderId === null || visibleInFolder >= PAGE_SIZE;
+    // If we're past page 1, keep pagination on screen so the user can
+    // navigate back — otherwise they'd be stranded on a sparse later
+    // page with no Prev button.
+    let showPagination = currentPage > 1;
+    if (!showPagination) {
+        // On page 1: show only when the current view (root OR folder)
+        // has enough items at this level that there might be more
+        // worth loading via Next. Folders are client-side, so a root
+        // view with 60 items all-in-subfolders is just as misleading
+        // as a sparse folder view — both should hide the chrome.
+        const visibleHere = mediaItems.filter(m => (m.folderId || null) === currentFolderId).length;
+        showPagination = visibleHere >= PAGE_SIZE;
+    }
     if (showPagination) {
         pagination.classList.remove('hidden');
         document.getElementById('page-info').textContent =
@@ -3454,6 +3465,11 @@ viewer.addEventListener('touchstart', (e) => {
     _touchStartY = e.touches[0].clientY;
 }, { passive: true });
 viewer.addEventListener('touchend', (e) => {
+    // Text files are scrollable AND editable — a horizontal swipe while
+    // reading or mid-edit shouldn't yank the user to a neighboring item
+    // and lose their place / unsaved changes. Photos and videos have no
+    // such conflict so swipe-to-navigate stays on for them.
+    if (currentViewerItem?.media_type === 'text') return;
     const dx = e.changedTouches[0].clientX - _touchStartX;
     const dy = e.changedTouches[0].clientY - _touchStartY;
     // Only trigger if horizontal swipe is dominant and long enough
