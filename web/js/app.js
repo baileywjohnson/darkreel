@@ -3105,11 +3105,29 @@ async function loadMedia() {
         if (!_silentRefresh) await renderGalleryItems();
 
         if (totalItems > PAGE_SIZE) {
-            pagination.classList.remove('hidden');
-            document.getElementById('page-info').textContent =
-                `Page ${currentPage} of ${Math.ceil(totalItems / PAGE_SIZE)}`;
-            document.getElementById('prev-page').disabled = currentPage <= 1;
-            document.getElementById('next-page').disabled = currentPage * PAGE_SIZE >= totalItems;
+            // Pagination is server-side over the raw total item count
+            // (the server doesn't know about folders — those live inside
+            // the encrypted metadata). At root, that matches what the
+            // user sees. Inside a folder, we filter the current page's
+            // items down to that folder's contents, which can leave the
+            // gallery showing far fewer items than PAGE_SIZE. In that
+            // case the "Page X of Y" chrome is misleading — Y refers to
+            // raw item pages, not folder pages — and clicking Next just
+            // loads more raw items that may also be filtered out.
+            //
+            // Hide the pagination when the in-folder view is partial
+            // (showing < PAGE_SIZE items). If a folder genuinely has >=
+            // PAGE_SIZE items on the current page, the user is mid-
+            // folder and might want to load more, so we still expose it.
+            const visibleInFolder = mediaItems.filter(m => (m.folderId || null) === currentFolderId).length;
+            const showPagination = currentFolderId === null || visibleInFolder >= PAGE_SIZE;
+            if (showPagination) {
+                pagination.classList.remove('hidden');
+                document.getElementById('page-info').textContent =
+                    `Page ${currentPage} of ${Math.ceil(totalItems / PAGE_SIZE)}`;
+                document.getElementById('prev-page').disabled = currentPage <= 1;
+                document.getElementById('next-page').disabled = currentPage * PAGE_SIZE >= totalItems;
+            }
         }
     } catch (e) {
         console.error('Failed to load media:', e);
