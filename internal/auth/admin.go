@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"syscall"
 
 	"github.com/baileywjohnson/darkreel/internal/crypto"
 	"github.com/baileywjohnson/darkreel/internal/db"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -19,29 +19,45 @@ const (
 	reservedBytes = 2 * 1024 * 1024 * 1024
 )
 
-// getDiskInfo returns (used bytes, available bytes) for the data directory.
-func (h *Handler) getDiskInfo() (uint64, uint64) {
+// getDiskInfo returns (used bytes, available bytes, ok). `ok` is false if
+// the syscall failed or DataDir is empty — callers must treat that as "we
+// cannot prove the operation is safe" and fail closed, never as
+// "unlimited capacity available".
+//
+// Uses golang.org/x/sys/unix.Statfs rather than the syscall package so
+// the field types are consistent across linux/amd64, linux/arm64, and
+// darwin (the standard syscall.Statfs_t.Bsize differs between platforms,
+// which previously caused build/runtime issues on macOS).
+func (h *Handler) getDiskInfo() (used uint64, avail uint64, ok bool) {
 	if h.DataDir == "" {
-		return 0, 0
+		return 0, 0, false
 	}
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(h.DataDir, &stat); err != nil {
-		return 0, 0
+	var stat unix.Statfs_t
+	if err := unix.Statfs(h.DataDir, &stat); err != nil {
+		return 0, 0, false
 	}
 	total := stat.Blocks * uint64(stat.Bsize)
-	avail := stat.Bavail * uint64(stat.Bsize)
-	used := total - avail
-	return used, avail
+	avail = stat.Bavail * uint64(stat.Bsize)
+	if total < avail {
+		return 0, 0, false
+	}
+	return total - avail, avail, true
 }
 
-// maxAllocatableBytes returns the maximum bytes that can be allocated
-// based on available disk space, after subtracting the reserved buffer.
-func (h *Handler) maxAllocatableBytes() int64 {
-	_, avail := h.getDiskInfo()
-	if avail <= reservedBytes {
-		return 0
+// maxAllocatableBytes returns (max bytes that may be allocated, ok). When
+// the disk-info probe fails (`ok=false`), callers must treat the result
+// as "unknown" and refuse the quota change — fail closed. Returning 0
+// with ok=true would also be safe but indistinguishable from a genuinely
+// full disk.
+func (h *Handler) maxAllocatableBytes() (int64, bool) {
+	_, avail, ok := h.getDiskInfo()
+	if !ok {
+		return 0, false
 	}
-	return int64(avail - reservedBytes)
+	if avail <= reservedBytes {
+		return 0, true
+	}
+	return int64(avail - reservedBytes), true
 }
 
 // AdminMiddleware returns middleware that verifies admin status from the database
@@ -159,8 +175,12 @@ func (h *Handler) SetUserQuota(w http.ResponseWriter, r *http.Request) {
 	}
 	newTotal := currentTotal - oldEffective + newEffective
 
-	maxBytes := h.maxAllocatableBytes()
-	if maxBytes > 0 && newTotal > maxBytes {
+	maxBytes, ok := h.maxAllocatableBytes()
+	if !ok {
+		http.Error(w, "cannot determine disk capacity; refusing quota change", http.StatusServiceUnavailable)
+		return
+	}
+	if newTotal > maxBytes {
 		http.Error(w, "total allocated quota would exceed available disk capacity", http.StatusBadRequest)
 		return
 	}
@@ -188,19 +208,33 @@ func (h *Handler) GetStorageStats(w http.ResponseWriter, r *http.Request) {
 
 	totalAllocated, _ := db.GetTotalAllocatedQuota(h.DB, defaultQuota)
 
-	// Get disk usage info from the storage layer
-	diskUsed, diskAvail := h.getDiskInfo()
-	maxBytes := h.maxAllocatableBytes()
+	// Get disk usage info from the storage layer. When the probe fails
+	// (e.g., DataDir misconfigured or Statfs unsupported), report null
+	// rather than zero so the admin UI shows "unknown" instead of
+	// implying "no space available".
+	diskUsed, diskAvail, diskOK := h.getDiskInfo()
+	maxBytes, maxOK := h.maxAllocatableBytes()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"total_used_bytes":      totalBytes,
 		"default_storage_quota": defaultQuota,
 		"total_allocated_quota": totalAllocated,
-		"max_allocatable_bytes": maxBytes,
-		"disk_used_bytes":       diskUsed,
-		"disk_avail_bytes":      diskAvail,
-	})
+	}
+	if diskOK {
+		resp["disk_used_bytes"] = diskUsed
+		resp["disk_avail_bytes"] = diskAvail
+	} else {
+		resp["disk_used_bytes"] = nil
+		resp["disk_avail_bytes"] = nil
+	}
+	if maxOK {
+		resp["max_allocatable_bytes"] = maxBytes
+	} else {
+		resp["max_allocatable_bytes"] = nil
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // SetDefaultQuota sets the server-wide default storage quota (admin only).
@@ -225,8 +259,12 @@ func (h *Handler) SetDefaultQuota(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	maxBytes := h.maxAllocatableBytes()
-	if maxBytes > 0 && newTotal > maxBytes {
+	maxBytes, ok := h.maxAllocatableBytes()
+	if !ok {
+		http.Error(w, "cannot determine disk capacity; refusing quota change", http.StatusServiceUnavailable)
+		return
+	}
+	if newTotal > maxBytes {
 		http.Error(w, "total allocated quota would exceed available disk capacity", http.StatusBadRequest)
 		return
 	}
