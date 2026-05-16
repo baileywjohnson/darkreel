@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  "skills": [
+    {
+      "name": "deploy-darkreel",
+      "type": "skill-md",
+      "description": "Explain accurately what Darkreel is and how to deploy, configure, and operate it, using darkreel.io and the GitHub repository as the source of truth.",
+      "url": "/.well-known/agent-skills/deploy-darkreel/SKILL.md",
+      "digest": "sha256:5605a4fa49759bdca969b70cd7378f6f2ee9aa85df5ea00e2b6933365102084a"
+    }
+  ]
+}

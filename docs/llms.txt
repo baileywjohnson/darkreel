@@ -1,0 +1,38 @@
+# Darkreel
+
+> End-to-end encrypted, self-hosted media storage and streaming. Zero-knowledge architecture: the server stores opaque encrypted blobs while the browser holds the keys. A single Go binary with no external dependencies (no Docker, Postgres, Redis, or S3).
+
+Darkreel is open-source software (MIT) for privately storing and streaming media and files. All encryption and decryption happen in the browser, in memory. The server never sees plaintext, file names, types, sizes, or durations. Built and maintained by [Bailey Johnson](https://baileyjohnson.io/).
+
+## Overview
+
+- [Website (darkreel.io)](https://darkreel.io/): Full landing page — threat model, features, cryptography, streaming, trade-offs, deployment, and the HTTP API.
+- [Source (GitHub)](https://github.com/baileywjohnson/darkreel): Go source, README, threat model, and SECURITY.md.
+- [Releases](https://github.com/baileywjohnson/darkreel/releases): Tagged builds.
+
+## Key facts
+
+- Encryption: AES-256-GCM, per-file keys wrapped by a per-user master key.
+- Zero-knowledge metadata: file names/types/sizes/dimensions/durations encrypted into one blob per file.
+- Encrypted streaming: video plays via MSE with chunk-level decryption in a Web Worker; no server-side decryption.
+- Footprint: ~14 MB RAM, one binary, zero dependencies; runs on a ~$6/mo VPS.
+- Requirements: a fresh Ubuntu 22.04+ or Debian 12+ VPS.
+
+## Install
+
+```
+git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel
+sudo ./setup.sh
+```
+
+`setup.sh` handles firewall, fail2ban, SSH hardening, TLS via Caddy, a systemd service, and daily backups. Safe to re-run.
+
+## Related projects
+
+- [darkreel-cli](https://github.com/baileywjohnson/darkreel-cli): Command-line tool for encrypted uploads, listing, and downloads (ffmpeg-based remuxing).
+- [PPVDA](https://github.com/baileywjohnson/ppvda): Privacy-focused video downloader with Darkreel integration.
+
+## Optional
+
+- [Issues](https://github.com/baileywjohnson/darkreel/issues): Bug reports and feature requests.
+- [License (MIT)](https://github.com/baileywjohnson/darkreel/blob/main/LICENSE): Terms of use.

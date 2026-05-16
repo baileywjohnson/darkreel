@@ -3,9 +3,47 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Darkreel</title>
+<title>Darkreel — End-to-End Encrypted, Self-Hosted Media Storage & Streaming</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
 <meta name="description" content="End-to-end encrypted media storage, streaming & file vault. Single Go binary. Zero-knowledge architecture. Your server stores opaque blobs. Your browser holds the keys.">
+<link rel="canonical" href="https://darkreel.io/">
+<meta name="robots" content="index,follow,max-image-preview:large">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Darkreel">
+<meta property="og:title" content="Darkreel — End-to-End Encrypted, Self-Hosted Media Storage & Streaming">
+<meta property="og:description" content="End-to-end encrypted media storage, streaming & file vault. Single Go binary. Zero-knowledge architecture. Your server stores opaque blobs. Your browser holds the keys.">
+<meta property="og:url" content="https://darkreel.io/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Darkreel — End-to-End Encrypted, Self-Hosted Media Storage & Streaming">
+<meta name="twitter:description" content="End-to-end encrypted media storage, streaming & file vault. Single Go binary. Zero-knowledge architecture. Your server stores opaque blobs. Your browser holds the keys.">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Darkreel",
+  "description": "End-to-end encrypted, self-hosted media storage and streaming. Zero-knowledge architecture: the server stores opaque encrypted blobs while the browser holds the keys. Single Go binary, no external dependencies.",
+  "url": "https://darkreel.io/",
+  "applicationCategory": "SecurityApplication",
+  "operatingSystem": "Linux (Ubuntu 22.04+ / Debian 12+)",
+  "softwareRequirements": "A Linux VPS (Ubuntu 22.04+ or Debian 12+)",
+  "isAccessibleForFree": true,
+  "license": "https://opensource.org/licenses/MIT",
+  "codeRepository": "https://github.com/baileywjohnson/darkreel",
+  "downloadUrl": "https://github.com/baileywjohnson/darkreel",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": {
+    "@type": "Person",
+    "name": "Bailey Johnson",
+    "url": "https://baileyjohnson.io/",
+    "sameAs": [
+      "https://github.com/baileywjohnson",
+      "https://www.linkedin.com/in/baileywjohnson/"
+    ]
+  }
+}
+</script>
 <style>
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1376,6 +1414,77 @@ a:hover { text-decoration: underline; }
 
   window.addEventListener('scroll', update, { passive: true });
   update();
+})();
+</script>
+
+<!-- WebMCP: expose this page's real actions to in-browser agents.
+     Progressive enhancement — only runs where navigator.modelContext exists. -->
+<script>
+(function registerAgentTools() {
+  const mc = navigator.modelContext;
+  if (!mc) return;
+
+  const text = v => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] });
+  const noInput = { type: 'object', properties: {}, additionalProperties: false };
+  const navLinks = [...document.querySelectorAll('.nav a[href^="#"]')];
+
+  const installCommand =
+    'git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel\nsudo ./setup.sh';
+
+  const links = {
+    website: 'https://darkreel.io/',
+    source: 'https://github.com/baileywjohnson/darkreel',
+    issues: 'https://github.com/baileywjohnson/darkreel/issues',
+    releases: 'https://github.com/baileywjohnson/darkreel/releases',
+    cli: 'https://github.com/baileywjohnson/darkreel-cli',
+    ppvda: 'https://github.com/baileywjohnson/ppvda'
+  };
+
+  const tools = [
+    {
+      name: 'list_sections',
+      description: "List the documentation sections on the Darkreel landing page (threat model, features, cryptography, deploy, api, etc.).",
+      inputSchema: noInput,
+      execute: async () => text(navLinks.map(a => ({
+        id: a.getAttribute('href').slice(1),
+        label: a.textContent.trim()
+      })))
+    },
+    {
+      name: 'open_section',
+      description: "Scroll the Darkreel page to a documentation section by its id (e.g. 'deploy', 'crypto', 'api'). Use list_sections to see valid ids.",
+      inputSchema: {
+        type: 'object',
+        properties: { section: { type: 'string', description: "Section id without the leading '#'." } },
+        required: ['section'],
+        additionalProperties: false
+      },
+      execute: async (params) => {
+        const args = params && (params.arguments || params) || {};
+        const id = String(args.section || '').replace(/^#/, '');
+        const el = document.getElementById(id);
+        if (!el) return text(`No section with id "${id}". Call list_sections for valid ids.`);
+        el.scrollIntoView({ behavior: 'smooth' });
+        location.hash = '#' + id;
+        return text(`Scrolled to the "${id}" section.`);
+      }
+    },
+    {
+      name: 'get_install_command',
+      description: "Get the one-command setup for deploying Darkreel on a fresh Ubuntu 22.04+/Debian 12+ VPS.",
+      inputSchema: noInput,
+      execute: async () => text(installCommand)
+    },
+    {
+      name: 'get_links',
+      description: "Get Darkreel's key links: website, source, issues, releases, and the related darkreel-cli and PPVDA projects.",
+      inputSchema: noInput,
+      execute: async () => text(links)
+    }
+  ];
+
+  if (typeof mc.registerTool === 'function') tools.forEach(t => mc.registerTool(t));
+  else if (typeof mc.provideContext === 'function') mc.provideContext({ tools });
 })();
 </script>
 </body>
