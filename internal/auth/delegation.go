@@ -139,8 +139,17 @@ func (h *Handler) ExchangeDelegationCode(w http.ResponseWriter, r *http.Request)
 	}
 	delegationID := uuid.New().String()
 	d := &db.Delegation{
-		ID:        delegationID,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		ID: delegationID,
+		// Date granularity, not RFC3339. users.created_at and media.created_at
+		// are coarsened to the year precisely so the database does not become
+		// an activity timeline; storing second-precision timestamps here
+		// reintroduced exactly that for anyone who seizes darkreel.db.
+		//
+		// Date rather than year because the Connected Apps panel uses these to
+		// spot a delegation that is authorized or uploading when it shouldn't
+		// be — year granularity would destroy that signal. A day is coarse
+		// enough to defeat correlation with an observed network event.
+		CreatedAt: time.Now().UTC().Format(db.DelegationTimeFormat),
 		// UserID / ClientName / ClientURL / Scope are filled in by
 		// ExchangeAuthorizationCode from the code row.
 	}

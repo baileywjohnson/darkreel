@@ -2647,7 +2647,7 @@ function createFolderElements() {
         el.innerHTML = `
             <svg class="folder-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             <span class="folder-name">${escapeHtml(f.name)}</span>
-            <button class="folder-menu-btn" data-folder-action="${f.id}" title="Folder options" aria-label="Folder options"><svg width="4" height="16" viewBox="0 0 4 16" fill="currentColor" aria-hidden="true"><circle cx="2" cy="3" r="1.5"/><circle cx="2" cy="8" r="1.5"/><circle cx="2" cy="13" r="1.5"/></svg></button>
+            <button class="folder-menu-btn" data-folder-action="${escapeHtml(f.id)}" title="Folder options" aria-label="Folder options"><svg width="4" height="16" viewBox="0 0 4 16" fill="currentColor" aria-hidden="true"><circle cx="2" cy="3" r="1.5"/><circle cx="2" cy="8" r="1.5"/><circle cx="2" cy="13" r="1.5"/></svg></button>
         `;
 
         el.addEventListener('click', (e) => {
@@ -6107,10 +6107,14 @@ function getImageInfo(file) {
 }
 
 // ─── Utilities ───
+// textContent -> innerHTML escapes < > & but NOT quotes, and several call
+// sites interpolate into double-quoted attributes (data-folder-id="...",
+// data-quota-uid="..."). Escape both quote characters so escapeHtml is safe
+// in attribute position as well as in element content.
 function escapeHtml(s) {
     const div = document.createElement('div');
     div.textContent = s;
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ─── Init ───
