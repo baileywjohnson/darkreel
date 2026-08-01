@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+// DelegationTimeFormat is the granularity at which delegation timestamps are
+// stored: date only, no clock time. See the comment on TouchDelegation for the
+// reasoning. Anything finer turns the delegations table into a per-user upload
+// activity log, which is the property the year-coarsening on users.created_at
+// and media.created_at exists to prevent.
+const DelegationTimeFormat = "2006-01-02"
+
 // Delegation represents an authorized delegated upload client for a user.
 // Scope is "upload" in v1; the column is reserved for later expansion.
 // The plaintext refresh token is returned to the client exactly once (at
@@ -162,10 +169,26 @@ func GetDelegationByTokenHash(db *sql.DB, tokenHash []byte) (*Delegation, error)
 
 // TouchDelegation updates last_used_at for observability in the user's
 // "Connected Apps" UI.
+// Stored at date granularity. This column is rewritten on every token
+// refresh — i.e. before every upload batch a delegated client sends — so at
+// RFC3339 precision it recorded, to the second, when the user was last
+// uploading. Anyone who seizes darkreel.db (the artifact the whole threat
+// model is built around) could read that off directly, and repeated
+// snapshots would reconstruct a full activity history.
+//
+// A date still answers the question the Connected Apps panel exists to
+// answer ("is this app active when it shouldn't be?") without being
+// correlatable against an observed network event.
+//
+// The WHERE clause skips the write when the date is unchanged, so a busy
+// client no longer rewrites this row — and dirties a WAL page — on every
+// single refresh.
 func TouchDelegation(db *sql.DB, id string, now time.Time) error {
+	stamp := now.UTC().Format(DelegationTimeFormat)
 	_, err := db.Exec(
-		`UPDATE delegations SET last_used_at = ? WHERE id = ?`,
-		now.UTC().Format(time.RFC3339), id,
+		`UPDATE delegations SET last_used_at = ?
+		 WHERE id = ? AND (last_used_at IS NULL OR last_used_at <> ?)`,
+		stamp, id, stamp,
 	)
 	return err
 }

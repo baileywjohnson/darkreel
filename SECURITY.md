@@ -13,7 +13,13 @@ Darkreel is designed for **zero-knowledge** self-hosted media storage. A hosted 
 
 ### Out of scope
 
-- **Attackers with live memory access** to the server process. The decrypted master key sits in `SessionStore` for the duration of each authenticated session (up to 24 h). A live-process attacker can recover plaintext for logged-in users.
+- **Attackers with live memory access** to the server process. The master key is decrypted during `/api/auth/login`, re-wrapped for the client, and cleared from `SessionStore` immediately (`Sessions.ClearKey`) — so the window is the login request, not the 24 h session. An attacker who can read process memory *during a login* recovers that user's master key, and one who can read it at any time recovers the password of anyone logging in, since Argon2id runs server-side.
+- **The admin recovery code reaches the system journal.** On first run it is printed to stderr, which under systemd means journald retains it indefinitely (root-readable, and captured by journal backups). The `data/.recovery-code` file self-deletes after five minutes, but the journal copy does not, and `setup.sh` documents `journalctl | grep 'recovery code'` as a fallback for retrieving it. This is a durable, root-readable primitive for unwrapping the admin master key — the one exception to "no backdoor, no admin recovery." After you have saved the code, purge it:
+
+  ```bash
+  sudo journalctl --rotate
+  sudo journalctl --vacuum-time=1s --unit=darkreel
+  ```
 - **Attackers who compromise a user's device.** The browser (or CLI) sees plaintext; client-side compromise is client-side compromise.
 - **Traffic analysis at the network layer.** Chunk sizes are bucketed (1/2/4/8/16 MB) to frustrate per-chunk fingerprinting, but per-user activity timing is visible to any on-path observer.
 - **Side channels in the underlying OS, browser, or Go runtime** (e.g., Spectre, GC-driven plaintext-residue, swap to disk).
