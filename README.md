@@ -43,7 +43,7 @@ data/
       thumb.enc    [256 KB]        # encrypted thumbnail
 ```
 
-Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded to 1, 2, 4, 8, or 16 MB with random data. Upload dates are coarsened to year only. An attacker with root on your server sees uniform blobs with no meaningful metadata.
+Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded to 1, 2, 4, 8, or 16 MB with random data. Upload dates are coarsened to year only (delegation records use date granularity — see below). An attacker with root on your server sees uniform blobs with no meaningful metadata.
 
 | Data | Visible to server? |
 |------|--------------------|
@@ -52,12 +52,20 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 | File sizes, dimensions, duration | **no** - chunk padding + encrypted metadata |
 | Thumbnails | **no** - separate encrypted key |
 | Folder structure | **no** - encrypted blob |
-| Passwords | **never** - Argon2id hash only |
-| Master key | **never** - encrypted, browser-only. Cleared from server memory immediately after login. |
+| Passwords | **not stored** - Argon2id hash only. Sent to the server at login, where the KDF runs (see note) |
+| Master key | **not stored** - encrypted at rest. Held in plaintext only for the duration of the login request, then cleared (see note) |
 | Usernames | yes |
 | File count per user | yes (database row count) |
 | Approximate total storage | yes (quantized to 256 KB buckets, padding obscures per-file) |
 | Upload timestamps | year only (coarsened) |
+| Delegation authorize / last-used dates | date only (coarsened) — see "Timestamps are coarsened" |
+
+> **What "zero-knowledge" means here — and where it stops.** Everything above describes what the server holds **at rest**: a stolen `darkreel.db`, a disk image, or a backup yields only Argon2id hashes and ciphertext, with no way to derive a key. That property is real and is the threat model Darkreel is built for.
+>
+> It is not the same as the server never seeing the material. Web Crypto has no Argon2id, so the browser cannot run the KDF; the password is sent over TLS and **the server performs the derivation** (this is the same work described under "concurrent login throughput"). During that request the server necessarily holds your password and, briefly, your decrypted master key — it is cleared as soon as it has been re-wrapped for the client. Registration and admin-created accounts likewise generate the master key and X25519 keypair server-side before wrapping them.
+>
+> So: a passive operator, a database thief, or anyone with the disk after the fact learns nothing. An operator running **modified server code** can capture the password of anyone who logs in. If that is in your threat model, the mitigation is to run the binary you built from source yourself — which is the intended deployment anyway.
+
 
 ## Features
 
@@ -114,7 +122,7 @@ Per-file symmetric keys (one trio generated per upload)
     the 92-byte sealed blobs alongside the encrypted content.
 ```
 
-The master key and private key never leave the browser after login. The browser unwraps the private key once per session and imports it as a non-extractable `CryptoKey` — even an XSS cannot exfiltrate its raw bytes, only use it to derive shared secrets.
+Once login completes, the master key and private key live only in the browser. The browser unwraps the private key once per session and imports it as a non-extractable `CryptoKey` — even an XSS cannot exfiltrate its raw bytes, only use it to derive shared secrets.
 
 All uploads (browser, CLI, or delegated third-party) produce the same sealed-box wire format. Delegated clients receive only the public key and never hold the master key or private key, so they can seal uploads to the user but cannot open anything.
 
@@ -188,6 +196,8 @@ These are deliberate:
 - **Chunk padding wastes disk space and bandwidth.** A 3 MB file becomes 4 MB on disk and over the wire. A 5 MB file becomes 8 MB. Thumbnails are always 256 KB regardless of actual size. This is the cost of preventing size fingerprinting — if an observer can correlate chunk sizes to known files, encryption is weakened.
 
 - **Timestamps are coarsened.** Upload dates are stored as year only. Precise timestamps reveal usage patterns. That precision is deliberately discarded.
+
+  Delegation records (`created_at`, `last_used_at` in the Connected Apps panel) are the one exception: they keep **date** granularity rather than year. `last_used_at` is rewritten on every token refresh, so at second precision it would have been a per-second log of when a connected client last uploaded — recoverable by anyone who seizes the database. A date defeats correlation with an observed network event while still letting you spot an app that is active when it shouldn't be, which is the entire point of the panel.
 
 - **No server-side thumbnails.** The server can't see your files, so it can't generate thumbnails. The browser encrypts them before upload with a separate per-file key.
 

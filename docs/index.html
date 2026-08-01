@@ -760,7 +760,8 @@ a:hover { text-decoration: underline; }
     </div>
 
     <p>Every file timestamp on disk reads <code>2024-01-01T00:00:00Z</code>. Every chunk is padded
-    to 1, 2, 4, 8, or 16 MB with random data. Upload dates are coarsened to year only.
+    to 1, 2, 4, 8, or 16 MB with random data. Upload dates are coarsened to year only
+    (delegation records use date granularity).
     An attacker with root on your server sees uniform blobs with no meaningful metadata.</p>
 
     <table class="threat-table">
@@ -772,13 +773,31 @@ a:hover { text-decoration: underline; }
       <tr><td>dimensions / duration</td><td><span class="no">no</span> <span class="detail">- encrypted metadata blob</span></td></tr>
       <tr><td>thumbnails</td><td><span class="no">no</span> <span class="detail">- separate encrypted key</span></td></tr>
       <tr><td>folder structure</td><td><span class="no">no</span> <span class="detail">- encrypted blob</span></td></tr>
-      <tr><td>passwords</td><td><span class="never">never</span> <span class="detail">- Argon2id hash only</span></td></tr>
-      <tr><td>master key</td><td><span class="never">never</span> <span class="detail">- encrypted, browser-only. Cleared from server memory immediately after login.</span></td></tr>
+      <tr><td>passwords</td><td><span class="never">not stored</span> <span class="detail">- Argon2id hash only; sent to the server at login, where the KDF runs (see note)</span></td></tr>
+      <tr><td>master key</td><td><span class="never">not stored</span> <span class="detail">- encrypted at rest; held in plaintext only for the login request, then cleared (see note)</span></td></tr>
       <tr><td>usernames</td><td><span class="yes">yes</span></td></tr>
       <tr><td>file count per user</td><td><span class="yes">yes</span> <span class="detail">- database row count</span></td></tr>
       <tr><td>total storage</td><td><span class="yes">~approx</span> <span class="detail">- quantized to 256 KB buckets, padding obscures per-file</span></td></tr>
       <tr><td>upload time</td><td><span class="yes">year only</span> <span class="detail">- coarsened</span></td></tr>
+      <tr><td>delegation authorize / last used</td><td><span class="yes">date only</span> <span class="detail">- coarsened</span></td></tr>
     </table>
+
+    <p class="detail" style="margin-top:16px;line-height:1.6">
+      <strong>What &ldquo;zero-knowledge&rdquo; means here &mdash; and where it stops.</strong>
+      The table describes what the server holds <strong>at rest</strong>: a stolen database, disk
+      image, or backup yields only Argon2id hashes and ciphertext. That property is real, and it is
+      the threat model Darkreel is built for.
+      It is not the same as the server never seeing the material. Web Crypto has no Argon2id, so the
+      browser cannot run the KDF &mdash; the password is sent over TLS and the server performs the
+      derivation (the same work described under <em>concurrent login throughput</em> below). During
+      that request the server necessarily holds your password and, briefly, your decrypted master key,
+      which is cleared as soon as it has been re-wrapped for the client. Registration generates the
+      master key and X25519 keypair server-side before wrapping them.
+      A passive operator, a database thief, or anyone with the disk afterwards learns nothing. An
+      operator running <strong>modified server code</strong> can capture the password of anyone who
+      logs in &mdash; the mitigation being to run a binary you built yourself, which is the intended
+      deployment anyway.
+    </p>
   </section>
 
   <!-- ────────────────────────── FEATURES ────────────────────────── -->
@@ -911,7 +930,7 @@ a:hover { text-decoration: underline; }
     <span class="algo">X25519 + HKDF-SHA256 + AES-256-GCM</span> <span class="leaf">(info: "darkreel-seal-v1")</span>
     </div>
 
-    <p>The master key and private key never leave the browser after login. The browser imports the
+    <p>Once login completes, the master key and private key live only in the browser. The browser imports the
     private key as a non-extractable <code>CryptoKey</code> &mdash; even XSS cannot exfiltrate its
     bytes, only use it to derive shared secrets. Both master key and private key are also wrapped
     by a 256-bit recovery code generated at account creation and rotated on every password change.</p>
@@ -1014,7 +1033,7 @@ a:hover { text-decoration: underline; }
 
     <div class="tradeoff">
       <div class="tradeoff-title">timestamps are coarsened</div>
-      <p>Upload dates are stored as year only. Precise timestamps reveal usage patterns.
+      <p>Upload dates are stored as year only; delegation authorize / last-used dates keep date granularity so the Connected Apps panel can still surface an app that is active when it shouldn&rsquo;t be. Precise timestamps reveal usage patterns.
       That precision is deliberately discarded.</p>
     </div>
 
