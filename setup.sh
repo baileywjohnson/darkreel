@@ -11,15 +11,15 @@
 #   6. Builds Darkreel from source
 #   7. Creates a hardened systemd service
 #   8. Configures Caddy as a reverse proxy with automatic HTTPS
-#   9. Sets up daily database backups via cron
+#   9. Sets up daily encrypted database backups via cron (age, offline key)
 #   10. Starts everything
 #
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/baileywjohnson/darkreel/main/setup.sh | bash
-#
-# Or clone first and run locally:
+# Usage — download, read, then run (don't pipe it into a shell: you should
+# see what you are about to run as root, and the interactive prompts need
+# the terminal's stdin):
 #   git clone https://github.com/baileywjohnson/darkreel.git
 #   cd darkreel
+#   less setup.sh
 #   sudo ./setup.sh
 #
 set -euo pipefail
@@ -103,6 +103,24 @@ AUTO_UPDATE="n"
 echo ""
 read -rp "Enable auto-updates from tagged releases? (daily check, checksum verified) [y/N]: " AUTO_UPDATE
 
+# Backups are encrypted with age to a public key; only the matching private
+# key (identity) can decrypt them, and it must NOT live on this server.
+BACKUP_RECIPIENT_FILE="/etc/darkreel/backup-recipient.txt"
+BACKUP_RECIPIENT=""
+if [ -f "$BACKUP_RECIPIENT_FILE" ]; then
+  BACKUP_RECIPIENT=$(grep -m1 '^age1' "$BACKUP_RECIPIENT_FILE" || true)
+fi
+if [ -z "$BACKUP_RECIPIENT" ]; then
+  echo ""
+  echo "Database backups are encrypted to an age public key. Paste one you generated"
+  echo "offline (age-keygen on another machine), or leave empty to generate a key"
+  echo "pair now — the private key is then shown once and not kept on this server."
+  read -rp "age recipient for backups (age1...) [generate]: " BACKUP_RECIPIENT
+  if [ -n "$BACKUP_RECIPIENT" ] && ! echo "$BACKUP_RECIPIENT" | grep -qE '^age1[0-9a-z]{58}$'; then
+    error "Not an age X25519 recipient (expected age1 followed by 58 characters)"
+  fi
+fi
+
 DISABLE_ACCESS_LOGS="y"
 echo ""
 read -rp "Disable Caddy access logs for privacy? (recommended unless you need debugging) [Y/n]: " DISABLE_ACCESS_LOGS_INPUT
@@ -131,6 +149,10 @@ info "System updated"
 info "Installing security packages..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fail2ban unattended-upgrades ufw >/dev/null
 info "fail2ban, unattended-upgrades, and UFW installed"
+
+# sqlite3 + age for the nightly encrypted backup; jq to read Go's release index.
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sqlite3 age jq >/dev/null
+info "sqlite3, age, and jq installed"
 
 # --- Enable unattended security updates ---
 cat > /etc/apt/apt.conf.d/20auto-upgrades <<EOF
@@ -219,11 +241,39 @@ fi
 # ============================================================
 
 # --- Install Go ---
+# GO_VERSION must match the `go` directive in go.mod. The tarball is verified
+# against a SHA-256 before extraction: pinned here for amd64/arm64 (from
+# https://go.dev/dl/?mode=json&include=all), looked up in that index for
+# other architectures. Update both when bumping go.mod.
 if ! command -v go &>/dev/null; then
   info "Installing Go..."
-  GO_VERSION="1.26.2"
+  GO_VERSION="1.26.7"
   ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
-  curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /usr/local -xzf -
+  case "$ARCH" in
+    armhf) ARCH="armv6l" ;;
+    i386)  ARCH="386" ;;
+  esac
+  GO_TARBALL="go${GO_VERSION}.linux-${ARCH}.tar.gz"
+  case "$GO_TARBALL" in
+    go1.26.7.linux-amd64.tar.gz) GO_SHA256="ffb5f8de10c62550dfddab66b36b57030721e0a44a3218e9e1181d7b59f121ca" ;;
+    go1.26.7.linux-arm64.tar.gz) GO_SHA256="5a4ec883379d51ee9ce1040d5e87f8d35e20387574dd8c947feb01eabc3c1b37" ;;
+    *)
+      GO_SHA256=$(curl -fsSL "https://go.dev/dl/?mode=json&include=all" \
+        | jq -r --arg f "$GO_TARBALL" '[.[].files[] | select(.filename == $f) | .sha256][0] // empty')
+      ;;
+  esac
+  if ! echo "$GO_SHA256" | grep -qE '^[0-9a-f]{64}$'; then
+    error "No SHA-256 found for $GO_TARBALL — refusing to install an unverified Go toolchain"
+  fi
+  GO_TMP=$(mktemp -d)
+  curl -fsSL -o "${GO_TMP}/${GO_TARBALL}" "https://go.dev/dl/${GO_TARBALL}"
+  if ! echo "${GO_SHA256}  ${GO_TMP}/${GO_TARBALL}" | sha256sum -c --quiet -; then
+    rm -rf "$GO_TMP"
+    error "Checksum mismatch for $GO_TARBALL — not installing"
+  fi
+  rm -rf /usr/local/go
+  tar -C /usr/local -xzf "${GO_TMP}/${GO_TARBALL}"
+  rm -rf "$GO_TMP"
   export PATH="/usr/local/go/bin:$PATH"
   echo 'export PATH="/usr/local/go/bin:$PATH"' >> /etc/profile.d/golang.sh
   info "Go $(go version | awk '{print $3}') installed"
@@ -372,27 +422,77 @@ WantedBy=multi-user.target
 EOF
 
 # --- Set up daily database backups (encrypted, 30-day retention) ---
-mkdir -p "${DATA_DIR}/backups"
-chown darkreel:darkreel "${DATA_DIR}/backups"
-chmod 700 "${DATA_DIR}/backups"
+# Backups live outside the data directory, owned by root: the service can't
+# read or delete them, and nothing the server does to its data dir (orphan
+# cleanup, a restore) touches them.
+BACKUP_DIR="/var/backups/darkreel"
+install -d -m 700 -o root -g root "$BACKUP_DIR"
 
-# Generate a backup encryption key if one doesn't exist
-BACKUP_KEY_FILE="/etc/darkreel/backup.key"
-if [ ! -f "$BACKUP_KEY_FILE" ]; then
-  openssl rand -hex 32 > "$BACKUP_KEY_FILE"
-  chmod 600 "$BACKUP_KEY_FILE"
-  chown darkreel:darkreel "$BACKUP_KEY_FILE"
-  info "Backup encryption key generated at $BACKUP_KEY_FILE"
-  warn "Back up this key separately — without it, encrypted backups cannot be restored."
+if [ ! -f "$BACKUP_RECIPIENT_FILE" ] || ! grep -q '^age1' "$BACKUP_RECIPIENT_FILE"; then
+  if [ -z "$BACKUP_RECIPIENT" ]; then
+    # Generate a key pair in memory; only the public half is written to disk.
+    BACKUP_IDENTITY=$(age-keygen 2>/dev/null)
+    BACKUP_RECIPIENT=$(echo "$BACKUP_IDENTITY" | age-keygen -y)
+    echo ""
+    echo -e "${YELLOW}${BOLD}BACKUP DECRYPTION KEY — shown once, not stored on this server:${NC}"
+    echo ""
+    echo "$BACKUP_IDENTITY"
+    echo ""
+    echo -e "${YELLOW}Copy all three lines into a file on another machine or a password manager"
+    echo -e "(e.g. darkreel-backup-key.txt). Without it the backups cannot be decrypted;"
+    echo -e "anyone who has it (plus a backup) gets the database.${NC}"
+    unset BACKUP_IDENTITY
+    read -rp "Press Enter once the key is saved somewhere off this server... " _
+    clear 2>/dev/null || true
+  fi
+  echo "$BACKUP_RECIPIENT" > "$BACKUP_RECIPIENT_FILE"
+  chown root:root "$BACKUP_RECIPIENT_FILE"
+  chmod 644 "$BACKUP_RECIPIENT_FILE"
+  info "Backup recipient (public key) saved to $BACKUP_RECIPIENT_FILE"
 fi
 
+cat > /usr/local/sbin/darkreel-backup <<'BACKUPEOF'
+#!/usr/bin/env bash
+# Nightly Darkreel database backup: a consistent SQL dump, encrypted with age
+# to the public key in /etc/darkreel/backup-recipient.txt. The plaintext never
+# touches disk — sqlite3 streams the dump straight into age — and a failed
+# run leaves no partial file behind.
+set -euo pipefail
+umask 077
+DATA_DIR="DATADIR"
+BACKUP_DIR="/var/backups/darkreel"
+RECIPIENTS="/etc/darkreel/backup-recipient.txt"
+
+out="${BACKUP_DIR}/darkreel-$(date +%Y%m%d).sql.age"
+partial=$(mktemp "${BACKUP_DIR}/.darkreel-backup.XXXXXX")
+trap 'rm -f "$partial"' EXIT
+
+# Read the database as the service user so SQLite's -wal/-shm files are
+# never created root-owned (that would lock the service out of its DB).
+runuser -u darkreel -- sqlite3 "${DATA_DIR}/darkreel.db" .dump \
+  | age --encrypt -R "$RECIPIENTS" -o "$partial"
+mv "$partial" "$out"
+find "$BACKUP_DIR" -name 'darkreel-*.age' -mtime +30 -delete
+BACKUPEOF
+sed -i "s|DATADIR|${DATA_DIR}|g" /usr/local/sbin/darkreel-backup
+chown root:root /usr/local/sbin/darkreel-backup
+chmod 755 /usr/local/sbin/darkreel-backup
+
 cat > /etc/cron.d/darkreel-backup <<'CRONEOF'
-# Daily Darkreel database backup at 3 AM, encrypted, 30-day retention
-0 3 * * * darkreel /bin/bash -c 'BACKUP_TMP=$(mktemp) && sqlite3 DATADIR/darkreel.db ".backup $BACKUP_TMP" && openssl enc -aes-256-cbc -salt -pbkdf2 -in "$BACKUP_TMP" -out "DATADIR/backups/darkreel-$(date +\%Y\%m\%d).db.enc" -pass file:/etc/darkreel/backup.key && rm -f "$BACKUP_TMP" && find DATADIR/backups -name "darkreel-*.db.enc" -mtime +30 -delete'
+# Daily Darkreel database backup at 3 AM (age-encrypted, 30-day retention).
+# Output and failures go to the journal: journalctl -t darkreel-backup
+0 3 * * * root /usr/local/sbin/darkreel-backup 2>&1 | logger -t darkreel-backup
 CRONEOF
-# Replace DATADIR placeholder with actual path (avoids nested variable expansion in heredoc)
-sed -i "s|DATADIR|${DATA_DIR}|g" /etc/cron.d/darkreel-backup
-info "Daily encrypted database backup configured (3 AM, 30-day retention)"
+info "Daily encrypted database backup configured (3 AM, ${BACKUP_DIR}, 30-day retention)"
+
+# Earlier versions kept openssl-encrypted backups inside the data directory
+# with the key next to them. Leave them for the operator to move or delete.
+if [ -d "${DATA_DIR}/backups" ] || [ -f /etc/darkreel/backup.key ]; then
+  warn "Old-format backups found (${DATA_DIR}/backups, key /etc/darkreel/backup.key)."
+  warn "They use AES-CBC with the key on this host. Once the new backups are verified,"
+  warn "move them off the server or delete them:"
+  warn "  sudo rm -rf ${DATA_DIR}/backups && sudo shred -u /etc/darkreel/backup.key"
+fi
 
 # --- Auto-updates ---
 if [ "$AUTO_UPDATE" = "y" ] || [ "$AUTO_UPDATE" = "Y" ]; then
@@ -462,7 +562,7 @@ if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
   echo "    - Automatic security updates"
   echo "    - Caddy reverse proxy with automatic TLS"
   echo "    - Hardened systemd service"
-  echo "    - Daily database backups (${DATA_DIR}/backups/)"
+  echo "    - Daily age-encrypted database backups (/var/backups/darkreel/)"
   echo "    - Deploy user for CI/CD (limited sudo)"
   [ "$AUTO_UPDATE" = "y" ] || [ "$AUTO_UPDATE" = "Y" ] && echo "    - Auto-updates from tagged releases (daily at 4 AM)"
   [ -n "$SSH_USER" ] && echo "    - SSH user '$SSH_USER' with sudo access"

@@ -104,6 +104,13 @@ func shredDirectory(dir string) {
 		}
 	}
 	os.RemoveAll(dir)
-	// Remove parent user directory if now empty (no-op if not empty)
-	os.Remove(filepath.Dir(dir))
+	// Remove parent user directory if now empty (no-op if not empty).
+	// Otherwise reset its mtime, which the removal just set to the deletion
+	// time.
+	userDir := filepath.Dir(dir)
+	os.Remove(userDir)
+	if isUUIDName(filepath.Base(userDir)) {
+		os.Chtimes(userDir, epoch, epoch)
+		os.Chtimes(filepath.Dir(userDir), epoch, epoch)
+	}
 }

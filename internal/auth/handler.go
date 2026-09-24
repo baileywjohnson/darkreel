@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"bytes"
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -54,7 +56,10 @@ type Handler struct {
 	DB             *sql.DB
 	Storage        interface{ RemoveMedia(userID, mediaID string) error }
 	Shredder       MediaShredder     // async secure file deletion (used by HTTP handlers)
-	AccountLimiter *AccountLimiter   // per-username rate limiter for login/recovery
+	AccountLimiter *AccountLimiter   // per-username limiter for login and password change
+	// RecoveryLimiter is a separate per-username limiter for /recover, so
+	// failed recovery attempts and failed logins don't share one budget.
+	RecoveryLimiter *AccountLimiter
 	DataDir        string            // data directory path (for disk usage stats)
 	// OnUserDeleted is called after a user is atomically deleted so other
 	// subsystems (e.g., media handler's per-user upload semaphore map) can
@@ -288,9 +293,10 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	// Per-username rate limit: prevents distributed brute-force against a single
 	// account even when per-IP limits are bypassed. Checked for all usernames
-	// (including non-existent) to avoid leaking account existence via timing.
+	// (including non-existent) to avoid leaking account existence: the budget,
+	// the 429 and its message are the same either way.
 	if h.AccountLimiter != nil && !h.AccountLimiter.Allow(req.Username) {
-		http.Error(w, "Username and/or password is incorrect.", http.StatusUnauthorized)
+		http.Error(w, AccountLockedMessage, http.StatusTooManyRequests)
 		return
 	}
 
@@ -309,6 +315,9 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Username and/or password is incorrect.", http.StatusUnauthorized)
 		return
 	}
+	if h.AccountLimiter != nil {
+		h.AccountLimiter.Succeeded(req.Username)
+	}
 
 	// Decrypt master key from stored encrypted copy using password-derived key
 	userIDBytes := []byte(user.ID)
@@ -323,6 +332,16 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := GenerateSessionID()
 	Sessions.Set(sessionID, user.ID, masterKey)
+
+	// A password change or recovery that committed after the user row was
+	// read above has retired the keys this response would hand out. Rotation
+	// drops the user's sessions after it commits, so a key still unchanged
+	// now means that drop hasn't happened yet and will cover this session.
+	if cur, err := db.GetUserPublicKey(h.DB, user.ID); err != nil || !bytes.Equal(cur, user.PublicKey) {
+		Sessions.Delete(sessionID)
+		http.Error(w, "Username and/or password is incorrect.", http.StatusUnauthorized)
+		return
+	}
 
 	// Encrypt master key with a password-derived session key for the client.
 	// Client derives the same session key via PBKDF2(password, kdfSalt)
@@ -397,16 +416,19 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-account rate limit: defends against brute-force of the old password
-	// via a stolen JWT. Checked before password verification so the limit
-	// applies to all attempts, not just successful verifications.
+	// via a stolen JWT. Every attempt is counted before verification (so
+	// parallel guesses can't race past it); a correct one is refunded.
 	if h.AccountLimiter != nil && !h.AccountLimiter.Allow(user.Username) {
-		http.Error(w, "Current password is incorrect.", http.StatusBadRequest)
+		http.Error(w, AccountLockedMessage, http.StatusTooManyRequests)
 		return
 	}
 
 	if !crypto.VerifyPassword(req.OldPassword, user.AuthSalt, user.PasswordHash) {
 		http.Error(w, "Current password is incorrect.", http.StatusBadRequest)
 		return
+	}
+	if h.AccountLimiter != nil {
+		h.AccountLimiter.Succeeded(user.Username)
 	}
 
 	// Decrypt master key with old password
@@ -420,56 +442,14 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clear(masterKey)
 
-	// Re-encrypt master key with new password
-	newAuthSalt, err := crypto.GenerateSalt()
+	// Replace the master key, keypair and recovery code, and re-seal every
+	// item to the new public key (see rotate.go).
+	rot, err := prepareKeyRotation(h.DB, user, masterKey, req.NewPassword)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	newKdfSalt, err := crypto.GenerateSalt()
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	newKdfKey := crypto.DeriveKey(req.NewPassword, newKdfSalt)
-	defer clear(newKdfKey)
-	newEncryptedMK, err := crypto.EncryptBlock(masterKey, newKdfKey, userIDBytes)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	newPasswordHash := crypto.HashPassword(req.NewPassword, newAuthSalt)
-
-	// Rotate recovery code so old recovery codes are invalidated on password change
-	newRecoveryCode, err := crypto.GenerateRecoveryCode()
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	defer clear(newRecoveryCode)
-	newRecoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, newRecoveryCode, userIDBytes)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// The X25519 private key is wrapped with the master key (unchanged by a
-	// password rotation), so encrypted_priv_key does not need updating. But the
-	// recovery-code-wrapped copy does — unwrap with master key, re-wrap with
-	// the new recovery code.
-	privKey, err := crypto.DecryptBlock(user.EncryptedPrivKey, masterKey, userIDBytes)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	defer clear(privKey)
-	newRecoveryPrivKey, err := crypto.EncryptBlock(privKey, newRecoveryCode, userIDBytes)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
+	defer rot.wipe()
 
 	// Compute the new session key, client-wrapped master key, and new JWT
 	// BEFORE opening the DB transaction. These are in-memory crypto ops that
@@ -479,9 +459,9 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	// out by the account rate limiter. Computing up front means any failure
 	// aborts the request cleanly with no DB mutation.
 	newSessionID := GenerateSessionID()
-	newSessionKey := crypto.DeriveSessionKey(req.NewPassword, newKdfSalt)
+	newSessionKey := crypto.DeriveSessionKey(req.NewPassword, rot.keys.KDFSalt)
 	defer clear(newSessionKey)
-	newEncMKForClient, err := crypto.EncryptBlock(masterKey, newSessionKey, userIDBytes)
+	newEncMKForClient, err := crypto.EncryptBlock(rot.newMK, newSessionKey, userIDBytes)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -492,56 +472,41 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.DB.Begin()
+	// Sessions are dropped while the write lock is held (and again after
+	// commit): a request authenticated with one of them could otherwise start
+	// after the commit and write data encrypted to the retired keys.
+	err = rot.commit(h.DB, func() { Sessions.DeleteAllForUser(user.ID) })
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "user no longer exists", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, db.ErrKeysChanged) {
+		http.Error(w, "Your account keys were changed by another request. Sign in again and retry.", http.StatusConflict)
+		return
+	}
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	defer tx.Rollback()
 
-	if err := db.UpdateUserAuthTx(tx, user.ID, newPasswordHash, newAuthSalt, newKdfSalt, newEncryptedMK); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "user no longer exists", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if err := db.UpdateUserRecoveryKeysTx(tx, user.ID, newRecoveryMK, newRecoveryPrivKey); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "user no longer exists", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	// Password change implies "assume compromise, reset everything": revoke
-	// all outstanding delegations so stolen refresh tokens cannot outlive the
-	// old credentials. User re-authorizes each client on demand.
-	if err := db.DeleteAllDelegationsForUserTx(tx, user.ID); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
+	recoveryCodeB64 := base64.URLEncoding.EncodeToString(rot.recoveryCode)
 
-	if err := tx.Commit(); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	recoveryCodeB64 := base64.URLEncoding.EncodeToString(newRecoveryCode)
-
-	// Post-commit: only in-memory SessionStore ops. These cannot fail.
+	// Post-commit: only in-memory SessionStore ops. These cannot fail. The
+	// session holds no master key; the client gets it wrapped below.
 	Sessions.DeleteAllForUser(user.ID)
-	Sessions.Set(newSessionID, user.ID, masterKey)
-	// Master key re-encrypted for client — clear from session immediately
-	Sessions.ClearKey(newSessionID)
+	Sessions.Set(newSessionID, user.ID, nil)
 
+	// The client must replace its master key AND its keypair from this
+	// response: every item is now sealed to the new public key, and uploads
+	// sealed to the old one would be undecryptable.
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"success":              true,
 		"token":                newToken,
-		"kdf_salt":             base64.StdEncoding.EncodeToString(newKdfSalt),
+		"kdf_salt":             base64.StdEncoding.EncodeToString(rot.keys.KDFSalt),
 		"encrypted_master_key": base64.StdEncoding.EncodeToString(newEncMKForClient),
+		"public_key":           base64.StdEncoding.EncodeToString(rot.keys.PublicKey),
+		"encrypted_priv_key":   base64.StdEncoding.EncodeToString(rot.keys.EncryptedPrivKey),
 		"recovery_code":        recoveryCodeB64,
 	})
 }
@@ -623,122 +588,62 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-username rate limit (same rationale as Login)
-	if h.AccountLimiter != nil && !h.AccountLimiter.Allow(req.Username) {
-		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
+	// Per-username rate limit (same rationale as Login), with its own budget
+	// so failed logins and failed recoveries don't lock each other out.
+	if h.RecoveryLimiter != nil && !h.RecoveryLimiter.Allow(req.Username) {
+		http.Error(w, AccountLockedMessage, http.StatusTooManyRequests)
 		return
 	}
 
-	user, err := db.GetUserByUsername(h.DB, req.Username)
-	if err != nil || user.RecoveryMK == nil {
-		// Perform dummy derivation + decryption to prevent timing-based username enumeration.
-		// Without this, "user not found" returns faster than "wrong recovery code".
-		dummySalt, _ := crypto.GenerateSalt()
-		crypto.DeriveKey(req.NewPassword, dummySalt)
-		dummyCiphertext := make([]byte, 60) // realistic ciphertext length
-		crypto.DecryptMasterKeyWithRecovery(dummyCiphertext, make([]byte, 32), []byte("dummy"))
-		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
-		return
-	}
-
-	// Decode recovery code — always attempt decryption to prevent timing leaks.
-	// If decode fails, use a dummy code so the decrypt call takes the same time.
+	// A nonexistent username and a wrong recovery code must be
+	// indistinguishable, including by timing. Both paths do exactly one
+	// AES-GCM open of a master-key-sized blob and nothing else (previously
+	// the unknown-user path ran a dummy Argon2id while a wrong code failed in
+	// microseconds). Undecodable codes are replaced by a dummy of the right
+	// size so they take the same path.
 	recoveryCode, decodeErr := base64.URLEncoding.DecodeString(req.RecoveryCode)
 	if decodeErr != nil || len(recoveryCode) != 32 {
-		recoveryCode = make([]byte, 32) // dummy code for constant-time path
+		recoveryCode = make([]byte, 32)
 	}
+	defer clear(recoveryCode)
 
-	// Decrypt master key with recovery code
-	userIDBytes := []byte(user.ID)
-	masterKey, err := crypto.DecryptMasterKeyWithRecovery(user.RecoveryMK, recoveryCode, userIDBytes)
-	clear(recoveryCode)
-	if decodeErr != nil || err != nil {
+	user, err := db.GetUserByUsername(h.DB, req.Username)
+	userFound := err == nil && user.RecoveryMK != nil
+	wrappedMK, aad := dummyRecoveryMK, dummyRecoveryAAD
+	if userFound {
+		wrappedMK, aad = user.RecoveryMK, []byte(user.ID)
+	}
+	masterKey, err := crypto.DecryptMasterKeyWithRecovery(wrappedMK, recoveryCode, aad)
+	if !userFound || decodeErr != nil || err != nil {
+		clear(masterKey)
 		http.Error(w, "Username and/or recovery code is incorrect.", http.StatusBadRequest)
 		return
 	}
 	defer clear(masterKey)
-
-	// Generate new auth/KDF salts and hash
-	newAuthSalt, err := crypto.GenerateSalt()
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	newKdfSalt, err := crypto.GenerateSalt()
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+	if h.RecoveryLimiter != nil {
+		h.RecoveryLimiter.Succeeded(req.Username)
 	}
 
-	newPasswordHash := crypto.HashPassword(req.NewPassword, newAuthSalt)
+	// Replace the master key, keypair and recovery code, and re-seal every
+	// item to the new public key (see rotate.go). The recovery code that was
+	// just used unwraps only the retired keys.
+	rot, err := prepareKeyRotation(h.DB, user, masterKey, req.NewPassword)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer rot.wipe()
 
-	// Re-encrypt master key with new password-derived key
-	newKdfKey := crypto.DeriveKey(req.NewPassword, newKdfSalt)
-	defer clear(newKdfKey)
-	newEncryptedMK, err := crypto.EncryptBlock(masterKey, newKdfKey, userIDBytes)
+	err = rot.commit(h.DB, func() { Sessions.DeleteAllForUser(user.ID) })
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "user no longer exists", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, db.ErrKeysChanged) {
+		http.Error(w, "Your account keys were changed by another request. Try again.", http.StatusConflict)
+		return
+	}
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// Re-encrypt recovery MK with new recovery code
-	newRecoveryCode, err := crypto.GenerateRecoveryCode()
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	defer clear(newRecoveryCode)
-	newRecoveryMK, err := crypto.EncryptMasterKeyForRecovery(masterKey, newRecoveryCode, userIDBytes)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// Re-wrap the X25519 private key under the new recovery code. The master-
-	// key-wrapped copy stays valid because the master key itself is preserved
-	// across recovery (only the outer KDF key changes).
-	privKey, err := crypto.DecryptBlock(user.EncryptedPrivKey, masterKey, userIDBytes)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	defer clear(privKey)
-	newRecoveryPrivKey, err := crypto.EncryptBlock(privKey, newRecoveryCode, userIDBytes)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// Update auth and recovery MK atomically
-	tx, err := h.DB.Begin()
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	defer tx.Rollback()
-
-	if err := db.UpdateUserAuthTx(tx, user.ID, newPasswordHash, newAuthSalt, newKdfSalt, newEncryptedMK); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "user no longer exists", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if err := db.UpdateUserRecoveryKeysTx(tx, user.ID, newRecoveryMK, newRecoveryPrivKey); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "user no longer exists", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	// A recovery is always an assume-compromise flow: kill all delegations.
-	if err := db.DeleteAllDelegationsForUserTx(tx, user.ID); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if err := tx.Commit(); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -746,11 +651,27 @@ func (h *Handler) Recover(w http.ResponseWriter, r *http.Request) {
 	// Invalidate all existing sessions for this user
 	Sessions.DeleteAllForUser(user.ID)
 
-	recoveryCodeB64 := base64.URLEncoding.EncodeToString(newRecoveryCode)
+	recoveryCodeB64 := base64.URLEncoding.EncodeToString(rot.recoveryCode)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"success":       true,
 		"recovery_code": recoveryCodeB64,
 	})
+}
+
+// dummyRecoveryMK stands in for a user's recovery-wrapped master key when the
+// username doesn't exist: nonce(12) + key(32) + tag(16), random so it never
+// decrypts. dummyRecoveryAAD has the length of a real user ID (a UUID).
+var (
+	dummyRecoveryMK  = mustRandom(12 + 32 + 16)
+	dummyRecoveryAAD = []byte("00000000-0000-0000-0000-000000000000")
+)
+
+func mustRandom(n int) []byte {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
+	return b
 }

@@ -306,8 +306,13 @@ func main() {
 		MaxStorageBytes:   maxBytes,
 	}
 
-	// Graceful shutdown: drain in-flight requests, finish pending shreds, then close DB
+	// Graceful shutdown: drain in-flight requests, finish pending shreds, then
+	// close DB. srv.Run returns as soon as Shutdown starts, so main waits on
+	// shutdownDone — otherwise returning from main would kill the process
+	// mid-drain and drop every queued shred (whose DELETE already returned).
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
@@ -324,5 +329,6 @@ func main() {
 	if err := srv.Run(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+	<-shutdownDone
 	log.Println("Shutdown complete")
 }

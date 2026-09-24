@@ -1,11 +1,14 @@
 // Client-side cryptography using Web Crypto API
 // All encryption/decryption happens in the browser — server never sees plaintext.
 
-const CHUNK_SIZE = 1024 * 1024; // 1 MB — must match server
-const ARGON2_PARAMS = { time: 3, mem: 65536, threads: 4, keyLen: 32 };
-
-let _masterKey = null;
-let _masterKeyRaw = null;
+// The master key exists only as non-extractable CryptoKeys: an AES-GCM key
+// for the folder tree and the wrapped private key, and an HMAC key derived
+// from it for owner tags. Its raw bytes are never held in JS — script running
+// in the page (e.g. via XSS) can use the keys while the page is open, but it
+// cannot read them out.
+let _masterKey = null;  // CryptoKey, AES-GCM, non-extractable
+let _ownerKey = null;   // CryptoKey, HMAC-SHA256, non-extractable
+const OWNER_INFO = new TextEncoder().encode('darkreel-owner-v1');
 
 // Shape 2: X25519 keypair. Public key is used to seal per-file AES keys
 // (browser uploads now use the same sealing path delegated clients use).
@@ -42,27 +45,34 @@ const SEAL_OVERHEAD = SEAL_EPHPK_LEN + SEAL_NONCE_LEN + SEAL_TAG_LEN; // 60
 // in the login response. This avoids needing Argon2id in the browser entirely.
 // The session key is HKDF(password, "darkreel-session").
 
-export async function deriveSessionKey(password, kdfSaltB64) {
-    const enc = new TextEncoder();
-    const keyMaterial = await crypto.subtle.importKey(
-        'raw', enc.encode(password), 'PBKDF2', false, ['deriveBits', 'deriveKey']
-    );
-    const salt = base64ToBuffer(kdfSaltB64);
-    return crypto.subtle.deriveKey(
-        { name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' },
-        keyMaterial, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']
+// Derive both master-key handles from an HKDF base key and an AES-GCM key.
+async function installMasterKey(aesKey, hkdfBase) {
+    _masterKey = aesKey;
+    _ownerKey = await crypto.subtle.deriveKey(
+        { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: OWNER_INFO },
+        hkdfBase, { name: 'HMAC', hash: 'SHA-256', length: 256 }, false, ['sign', 'verify']
     );
 }
 
-export async function setMasterKeyDirect(masterKeyBytes) {
-    _masterKeyRaw = new Uint8Array(masterKeyBytes);
-    _masterKey = await crypto.subtle.importKey(
-        'raw', _masterKeyRaw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
+// Unwrap the master key from the login / change-password response straight
+// into non-extractable keys. encryptedMK is nonce(12) || ciphertext;
+// password and kdfSaltB64 derive the PBKDF2 session key the server wrapped
+// it under.
+export async function unwrapMasterKey(encryptedMK, password, kdfSaltB64, aad) {
+    const material = await crypto.subtle.importKey(
+        'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']
     );
-}
-
-export function getMasterKeyRaw() {
-    return _masterKeyRaw;
+    const sessionKey = await crypto.subtle.deriveKey(
+        { name: 'PBKDF2', salt: base64ToBuffer(kdfSaltB64), iterations: 600000, hash: 'SHA-256' },
+        material, { name: 'AES-GCM', length: 256 }, false, ['unwrapKey']
+    );
+    const params = { name: 'AES-GCM', iv: encryptedMK.slice(0, 12), additionalData: aad };
+    const ct = encryptedMK.slice(12);
+    const aesKey = await crypto.subtle.unwrapKey(
+        'raw', ct, sessionKey, params, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
+    );
+    const hkdfBase = await crypto.subtle.unwrapKey('raw', ct, sessionKey, params, 'HKDF', false, ['deriveKey']);
+    await installMasterKey(aesKey, hkdfBase);
 }
 
 export function hasMasterKey() {
@@ -70,9 +80,117 @@ export function hasMasterKey() {
 }
 
 export function clearMasterKey() {
-    if (_masterKeyRaw) _masterKeyRaw.fill(0);
     _masterKey = null;
-    _masterKeyRaw = null;
+    _ownerKey = null;
+}
+
+// AES-GCM under the master key; nonce(12) || ciphertext, like encryptBlock.
+export async function encryptWithMasterKey(plaintext, aad) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, _masterKey, plaintext));
+    const out = new Uint8Array(12 + ct.length);
+    out.set(iv, 0);
+    out.set(ct, 12);
+    return out;
+}
+
+export async function decryptWithMasterKey(data, aad) {
+    return new Uint8Array(await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: data.slice(0, 12), additionalData: aad }, _masterKey, data.slice(12)
+    ));
+}
+
+// --- Owner tags ---
+//
+// Anyone holding the user's public key — the server, a DB writer, any
+// delegated app — can seal keys to it and so create a fully valid item. The
+// owner tag, stored inside the item's encrypted metadata, is an HMAC only the
+// master-key holder can compute over the media ID and the three sealed keys.
+// Items without a valid tag are shown as not uploaded by the owner. Covering
+// the sealed keys means a tag can't be moved to substituted content: new
+// content needs new keys, and the tag no longer matches.
+
+function ownerTagMessage(mediaId, fileKeySealed, thumbKeySealed, metadataKeySealed) {
+    const id = new TextEncoder().encode(mediaId);
+    const parts = [OWNER_INFO, id, fileKeySealed, thumbKeySealed, metadataKeySealed];
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let off = 0;
+    for (const p of parts) { out.set(p, off); off += p.length; }
+    return out;
+}
+
+// Returns the base64 owner tag for an item, given its sealed keys as bytes.
+export async function computeOwnerTag(mediaId, fileKeySealed, thumbKeySealed, metadataKeySealed) {
+    const sig = await crypto.subtle.sign('HMAC', _ownerKey, ownerTagMessage(mediaId, fileKeySealed, thumbKeySealed, metadataKeySealed));
+    return bufferToBase64(new Uint8Array(sig));
+}
+
+export async function verifyOwnerTag(tagB64, mediaId, fileKeySealed, thumbKeySealed, metadataKeySealed) {
+    if (typeof tagB64 !== 'string' || !_ownerKey) return false;
+    let tag;
+    try { tag = base64ToBuffer(tagB64); } catch { return false; }
+    if (tag.length !== 32) return false;
+    return crypto.subtle.verify('HMAC', _ownerKey, tag, ownerTagMessage(mediaId, fileKeySealed, thumbKeySealed, metadataKeySealed));
+}
+
+// --- Session persistence (PERSIST_SESSION) ---
+//
+// To survive a page refresh the keys are kept in IndexedDB as the
+// non-extractable CryptoKey objects themselves — never as raw bytes in
+// sessionStorage, where they were previously kept base64-encoded (readable by
+// any script in the page and written to disk by browser session restore).
+// Records are keyed by a random per-tab session id kept in sessionStorage.
+
+const KEY_DB = 'darkreel-keys';
+const KEY_STORE = 'session';
+
+function openKeyDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(KEY_DB, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore(KEY_STORE);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+function keyStoreOp(mode, fn) {
+    return openKeyDB().then((db) => new Promise((resolve, reject) => {
+        const tx = db.transaction(KEY_STORE, mode);
+        const req = fn(tx.objectStore(KEY_STORE));
+        tx.oncomplete = () => { db.close(); resolve(req ? req.result : undefined); };
+        tx.onerror = () => { db.close(); reject(tx.error); };
+    }));
+}
+
+export async function persistSessionKeys(sessionId) {
+    if (!_masterKey || !_ownerKey || !_privateKey || !_publicKeyRaw) return;
+    const record = { mk: _masterKey, owner: _ownerKey, priv: _privateKey, pub: new Uint8Array(_publicKeyRaw) };
+    await keyStoreOp('readwrite', (store) => store.put(record, sessionId));
+}
+
+// Returns true if keys for sessionId were found and installed.
+export async function restoreSessionKeys(sessionId) {
+    const record = await keyStoreOp('readonly', (store) => store.get(sessionId));
+    if (!record || !record.mk || !record.owner || !record.priv || !record.pub) return false;
+    _masterKey = record.mk;
+    _ownerKey = record.owner;
+    _privateKey = record.priv;
+    _publicKeyRaw = new Uint8Array(record.pub);
+    return true;
+}
+
+// Delete persisted keys — all sessions', or all but keepSessionId's.
+export async function forgetSessionKeys(keepSessionId) {
+    try {
+        await keyStoreOp('readwrite', (store) => {
+            if (!keepSessionId) return store.clear();
+            const req = store.getAllKeys();
+            req.onsuccess = () => { for (const k of req.result) if (k !== keepSessionId) store.delete(k); };
+            return req;
+        });
+    } catch {
+        // IndexedDB unavailable (private mode) — nothing was persisted.
+    }
 }
 
 // Install the user's X25519 keypair. privKeyBytes is zeroed as soon as it is
@@ -269,47 +387,72 @@ export async function decryptChunk(data, keyBytes, chunkIndex, mediaId) {
     ));
 }
 
-// Encrypt a file key with the master key. mediaId binds the key to its media item.
-export async function encryptFileKey(fileKey, mediaId) {
-    const aad = new TextEncoder().encode(mediaId);
-    return encryptBlock(fileKey, _masterKeyRaw, aad);
-}
+// --- Chunk format 2: length and truncation hidden inside the AEAD ---
+//
+// Plaintext of every chunk (and thumbnail) is a frame:
+//   version(1) = 2 | flags(1, bit0 = last chunk) | u32be data length | data | zero padding
+// padded so the ciphertext (nonce + frame + tag) is exactly one of a few bucket
+// sizes. The server and the network therefore only ever see bucket sizes — no
+// exact chunk lengths (a strong fingerprint for known videos) — and the
+// authenticated last-chunk flag lets the reader detect a dropped tail.
+// Items opt in with `chunk_format: 2` in their encrypted metadata; items
+// without it use the original unframed format.
 
-// Decrypt a file key with the master key. mediaId must match the value used during encryption.
-export async function decryptFileKey(encryptedFileKey, mediaId) {
-    const aad = new TextEncoder().encode(mediaId);
-    return decryptBlock(encryptedFileKey, _masterKeyRaw, aad);
-}
+export const CHUNK_FORMAT = 2;
+const FRAME_HEADER = 6;
+const GCM_OVERHEAD = 28; // 12-byte nonce + 16-byte tag
+const MiB = 1024 * 1024;
 
-// Encrypt a filename. mediaId binds the name to its media item.
-export async function encryptName(name, mediaId) {
-    const enc = new TextEncoder();
-    const aad = enc.encode(mediaId);
-    return encryptBlock(enc.encode(name), _masterKeyRaw, aad);
-}
+// Largest chunk payload that still fits the smallest (1 MiB) bucket.
+export const CHUNK_DATA_SIZE = MiB - GCM_OVERHEAD - FRAME_HEADER;
+// Every thumbnail ciphertext is exactly this size (the server's maximum).
+const THUMB_CIPHERTEXT_SIZE = 256 * 1024;
 
-// Decrypt a filename. mediaId must match the value used during encryption.
-export async function decryptName(encData, mediaId) {
-    const dec = new TextDecoder();
-    const aad = new TextEncoder().encode(mediaId);
-    const plaintext = await decryptBlock(encData, _masterKeyRaw, aad);
-    return dec.decode(plaintext);
-}
-
-// Split a file into encrypted chunks
-export async function encryptFile(fileData, fileKey, mediaId) {
-    const chunks = [];
-    const totalChunks = Math.ceil(fileData.length / CHUNK_SIZE);
-
-    for (let i = 0; i < totalChunks; i++) {
-        const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, fileData.length);
-        const chunk = fileData.slice(start, end);
-        const encrypted = await encryptChunk(chunk, fileKey, i, mediaId);
-        chunks.push(encrypted);
+// Ciphertext size for a chunk carrying dataLen bytes: 1, 2, 4, 8 or 16 MiB,
+// then whole MiB (the server caps a chunk at 20 MiB).
+function chunkCiphertextSize(dataLen) {
+    const need = dataLen + FRAME_HEADER + GCM_OVERHEAD;
+    for (const b of [1, 2, 4, 8, 16]) {
+        if (need <= b * MiB) return b * MiB;
     }
+    return Math.ceil(need / MiB) * MiB;
+}
 
-    return chunks;
+function frame(data, isLast, ciphertextSize) {
+    const frameLen = ciphertextSize - GCM_OVERHEAD;
+    if (data.length + FRAME_HEADER > frameLen) throw new Error('chunk too large for its frame');
+    const out = new Uint8Array(frameLen);
+    out[0] = CHUNK_FORMAT;
+    out[1] = isLast ? 1 : 0;
+    new DataView(out.buffer).setUint32(2, data.length);
+    out.set(data, FRAME_HEADER);
+    return out;
+}
+
+// Encrypt one chunk of an item in chunk format 2.
+export async function encryptFramedChunk(data, keyBytes, chunkIndex, mediaId, isLast) {
+    return encryptChunk(frame(data, isLast, chunkCiphertextSize(data.length)), keyBytes, chunkIndex, mediaId);
+}
+
+// Encrypt a thumbnail in chunk format 2 (always one final chunk, fixed size).
+export async function encryptFramedThumbnail(data, keyBytes, mediaId) {
+    return encryptChunk(frame(data, true, THUMB_CIPHERTEXT_SIZE), keyBytes, 0, mediaId);
+}
+
+// Extract the payload from a decrypted format-2 frame. expectLast must say
+// whether this is the item's final chunk: a mismatch means chunks were
+// dropped (or the count in the metadata was altered).
+export function unframeChunk(plain, expectLast) {
+    if (plain.length < FRAME_HEADER || plain[0] !== CHUNK_FORMAT) {
+        throw new Error('invalid chunk frame');
+    }
+    const isLast = (plain[1] & 1) === 1;
+    if (isLast !== expectLast) {
+        throw new Error(expectLast ? 'chunk stream truncated' : 'unexpected final chunk');
+    }
+    const len = new DataView(plain.buffer, plain.byteOffset, plain.byteLength).getUint32(2);
+    if (len > plain.length - FRAME_HEADER) throw new Error('invalid chunk frame length');
+    return plain.slice(FRAME_HEADER, FRAME_HEADER + len);
 }
 
 // Generate thumbnail from image/video

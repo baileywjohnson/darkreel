@@ -12,6 +12,18 @@ MP4BOX_HASH="sha384-$(openssl dgst -sha384 -binary web/js/vendor/mp4box.min.js |
 # so the hash in index.html matches the final embedded file content.
 perl -i -pe "s|MP4BOX_SRI = '[^']*'|MP4BOX_SRI = '${MP4BOX_HASH}'|" web/js/app.js
 
+# Point app.js at the exact crypto.js URL index.html loads with SRI, and at a
+# versioned worker URL. A module is identified by its full URL: an
+# unversioned `./crypto.js` import is a different module from the
+# integrity-checked `/js/crypto.js?v=...` script, so without this the crypto
+# code that actually runs was fetched with no integrity check — and the
+# unversioned URLs were cached for a year, keeping fixes from reaching
+# returning browsers.
+CRYPTO_VER_IMPORT=$(openssl dgst -sha256 -binary web/js/crypto.js | xxd -p -l 8)
+WORKER_VER=$(openssl dgst -sha256 -binary web/js/worker.js | xxd -p -l 8)
+perl -i -pe "s|from '\\./crypto\\.js(\\?v=[a-f0-9]+)?'|from './crypto.js?v=${CRYPTO_VER_IMPORT}'|" web/js/app.js
+perl -i -pe "s|new Worker\\('/js/worker\\.js(\\?v=[a-f0-9]+)?'\\)|new Worker('/js/worker.js?v=${WORKER_VER}')|" web/js/app.js
+
 APP_HASH="sha384-$(openssl dgst -sha384 -binary web/js/app.js | openssl base64 -A)"
 
 # Generate short content hashes for cache-busting query parameters.

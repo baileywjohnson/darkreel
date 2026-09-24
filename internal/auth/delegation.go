@@ -23,9 +23,9 @@ const (
 	// narrow. Expired codes are deleted on exchange regardless.
 	authCodeTTL = 2 * time.Minute
 
-	// Short-lived access tokens minted from a refresh token. One hour matches
-	// session JWT policy; revocation of the underlying delegation takes effect
-	// when the next refresh is attempted.
+	// Short-lived access tokens minted from a refresh token. Each carries the
+	// delegation ID and is refused as soon as the delegation is deleted, so the
+	// TTL only bounds how often the client refreshes.
 	delegationAccessTTL = time.Hour
 
 	// Upper bounds on operator-supplied strings so a malicious consent request
@@ -181,8 +181,8 @@ func (h *Handler) ExchangeDelegationCode(w http.ResponseWriter, r *http.Request)
 
 // RefreshDelegationToken exchanges a refresh token for a short-lived scoped
 // JWT. Called by the delegated client immediately before each upload batch.
-// Revocation of the backing delegation takes effect here: once deleted, no
-// new access tokens can be minted.
+// Once the backing delegation is deleted no new access tokens can be minted,
+// and the auth middleware rejects the ones already issued.
 //
 // Unauthenticated — the refresh token is itself the authentication.
 func (h *Handler) RefreshDelegationToken(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +214,7 @@ func (h *Handler) RefreshDelegationToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	access, err := GenerateDelegationToken(d.UserID, delegationAccessTTL)
+	access, err := GenerateDelegationToken(d.UserID, d.ID, delegationAccessTTL)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

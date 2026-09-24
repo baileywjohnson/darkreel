@@ -1,25 +1,26 @@
 import {
-    setMasterKeyDirect, clearMasterKey, hasMasterKey, getMasterKeyRaw,
+    unwrapMasterKey, clearMasterKey, hasMasterKey, encryptWithMasterKey, decryptWithMasterKey,
+    computeOwnerTag, verifyOwnerTag, persistSessionKeys, restoreSessionKeys, forgetSessionKeys,
     setKeypair, hasKeypair, getPublicKey, clearKeypair, sealTo, openSealed,
     generateFileKey, generateHashNonce,
     encryptChunk, decryptChunk, encryptBlock, decryptBlock,
-    encryptName, decryptName, generateThumbnail, modifyHash,
+    CHUNK_FORMAT, CHUNK_DATA_SIZE, encryptFramedChunk, encryptFramedThumbnail, unframeChunk,
+    generateThumbnail, modifyHash,
     bufferToBase64, base64ToBuffer, formatSize
-} from './crypto.js';
+} from './crypto.js?v=09d991cbdfdcc215';
 
 // Shape 2: after a master key lands, unwrap the user's X25519 private key
 // (the server returns encrypted_priv_key wrapped with AES-GCM under the master
 // key, AAD = userID) and install it as a non-extractable CryptoKey for seal/
-// open operations. Optionally stashes the public key + wrapped private key in
-// sessionStorage so the keypair survives a page refresh when PERSIST_SESSION.
-async function loadKeypairFromBase64(publicKeyB64, encryptedPrivKeyB64, masterKeyBytes, uidStr, persist) {
+// open operations.
+async function loadKeypairFromBase64(publicKeyB64, encryptedPrivKeyB64, uidStr) {
     if (!publicKeyB64 || !encryptedPrivKeyB64) {
         throw new Error('login response missing public_key / encrypted_priv_key');
     }
     const pubKey = base64ToBuffer(publicKeyB64);
     const encPriv = base64ToBuffer(encryptedPrivKeyB64);
     const uidAad = new TextEncoder().encode(uidStr);
-    const privKey = await decryptBlock(encPriv, masterKeyBytes, uidAad);
+    const privKey = await decryptWithMasterKey(encPriv, uidAad);
     try {
         await setKeypair(privKey, pubKey);
     } finally {
@@ -27,9 +28,20 @@ async function loadKeypairFromBase64(publicKeyB64, encryptedPrivKeyB64, masterKe
         // to clobber whatever is in the buffer.
         privKey.fill(0);
     }
-    if (persist) {
-        sessionStorage.setItem('publicKey', publicKeyB64);
-        sessionStorage.setItem('encryptedPrivKey', encryptedPrivKeyB64);
+}
+
+// With PERSIST_SESSION, keep the (non-extractable) keys in IndexedDB under a
+// fresh per-tab id so a refresh doesn't require logging in again.
+async function persistKeysForRefresh() {
+    if (!serverConfig.persistSession) return;
+    const id = crypto.randomUUID();
+    await forgetSessionKeys();
+    try {
+        await persistSessionKeys(id);
+        sessionStorage.setItem('keySession', id);
+    } catch {
+        // IndexedDB unavailable (private mode): the session just won't
+        // survive a refresh.
     }
 }
 
@@ -456,28 +468,26 @@ async function remuxToFMP4(data) {
         // Sort by time position so both tracks advance together
         allSegments.sort((a, b) => a.timePos - b.timePos || a.trackIdx - b.trackIdx);
 
-        // Merge into ~1MB encrypted chunks
-        const TARGET = 1024 * 1024;
+        // Merge segments into chunks that fit the smallest (1 MiB) ciphertext
+        // bucket; flushing only after reaching 1 MiB would push nearly every
+        // chunk into the 2 MiB bucket. A single segment larger than that
+        // gets a chunk (and bucket) of its own.
         const chunks = [initSegment];
         let buf = [], bufSize = 0;
-        for (const { seg } of allSegments) {
-            buf.push(seg);
-            bufSize += seg.length;
-            if (bufSize >= TARGET) {
-                const merged = new Uint8Array(bufSize);
-                let p = 0;
-                for (const b of buf) { merged.set(b, p); p += b.length; }
-                chunks.push(merged);
-                buf = [];
-                bufSize = 0;
-            }
-        }
-        if (buf.length > 0) {
+        const flush = () => {
             const merged = new Uint8Array(bufSize);
             let p = 0;
             for (const b of buf) { merged.set(b, p); p += b.length; }
             chunks.push(merged);
+            buf = [];
+            bufSize = 0;
+        };
+        for (const { seg } of allSegments) {
+            if (bufSize > 0 && bufSize + seg.length > CHUNK_DATA_SIZE) flush();
+            buf.push(seg);
+            bufSize += seg.length;
         }
+        if (buf.length > 0) flush();
 
         return { segments: chunks, codecs: codecStrings.join(',') };
     } catch (e) {
@@ -877,7 +887,25 @@ let totalItems = 0;
 // we accept that fewer users hit that path and can address it later
 // with client-side iteration across all server pages if needed.
 const PAGE_SIZE = 200;
-const CHUNK_SIZE = 1024 * 1024;
+// JSON encoded and padded with trailing spaces (which JSON.parse ignores) to a
+// power-of-two size from 512 bytes, then to 64 KiB steps. Metadata and the
+// folder tree are encrypted this way so their ciphertext length doesn't reveal
+// file- or folder-name lengths. maxBytes is the largest plaintext the server
+// accepts for the field; if padding would exceed it the JSON goes unpadded.
+function paddedJsonBytes(obj, maxBytes) {
+    const json = new TextEncoder().encode(JSON.stringify(obj));
+    let size = 512;
+    while (size < json.length && size < 256 * 1024) size *= 2;
+    if (size < json.length) size = Math.ceil(json.length / (64 * 1024)) * 64 * 1024;
+    if (size > maxBytes) return json;
+    const out = new Uint8Array(size).fill(0x20);
+    out.set(json);
+    return out;
+}
+// Largest plaintexts the server accepts (limits minus the 16-byte GCM tag).
+const MAX_METADATA_PLAINTEXT = 64 * 1024 - 16;
+// The folder tree travels base64-encoded in a JSON body capped at 1 MiB.
+const MAX_FOLDER_TREE_PLAINTEXT = 700 * 1024;
 
 // Decryption worker pool
 const WORKER_COUNT = navigator.hardwareConcurrency || 4;
@@ -887,7 +915,7 @@ let workIdCounter = 0;
 
 function initWorkers() {
     for (let i = 0; i < WORKER_COUNT; i++) {
-        const w = new Worker('/js/worker.js');
+        const w = new Worker('/js/worker.js?v=0c234ef9c6be472c');
         w.onmessage = (e) => {
             const { id, result, error } = e.data;
             const pending = pendingWork[id];
@@ -912,6 +940,21 @@ function workerDecrypt(type, data, keyBytes, chunkIndex, aadOrMediaId) {
             worker.postMessage({ type, id, data, keyBytes, chunkIndex, aad: aadOrMediaId });
         }
     });
+}
+
+// Decrypt chunk `index` of `item`. Format-2 items carry their payload in a
+// padded frame with an authenticated last-chunk flag; checking it against the
+// (authenticated) chunk_count turns a silently truncated item into an error.
+async function decryptItemChunk(item, encData, keyBytes, index) {
+    const plain = await workerDecrypt('decryptChunk', encData, keyBytes, index, item.id);
+    if (item.chunk_format !== CHUNK_FORMAT) return plain;
+    return unframeChunk(plain, index === item.chunk_count - 1);
+}
+
+async function decryptItemThumbnail(item, encData, thumbKey) {
+    const plain = await workerDecrypt('decryptChunk', encData, thumbKey, 0, item.id);
+    if (item.chunk_format !== CHUNK_FORMAT) return plain;
+    return unframeChunk(plain, true);
 }
 
 // ─── API helpers ───
@@ -984,23 +1027,12 @@ async function handleLogin(overrideUsername, overridePassword) {
         // Receive encrypted master key and decrypt it using per-user KDF salt
         // User ID is used as AAD to bind the encrypted key to this user
         if (res.encrypted_master_key) {
-            const encMK = base64ToBuffer(res.encrypted_master_key);
             const userIdAad = new TextEncoder().encode(res.user_id);
-            const sessionKeyMaterial = await crypto.subtle.importKey(
-                'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits', 'deriveKey']
-            );
-            const sessionKey = await crypto.subtle.deriveKey(
-                { name: 'PBKDF2', salt: base64ToBuffer(res.kdf_salt), iterations: 600000, hash: 'SHA-256' },
-                sessionKeyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
-            );
-            const iv = encMK.slice(0, 12);
-            const ct = encMK.slice(12);
-            const mk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: userIdAad }, sessionKey, ct));
-            await setMasterKeyDirect(mk);
+            await unwrapMasterKey(base64ToBuffer(res.encrypted_master_key), password, res.kdf_salt, userIdAad);
             // Unwrap the X25519 private key using the freshly-minted master key.
             // Every media operation after this point (upload seal, view open)
             // needs the keypair, so any failure here must abort the login.
-            await loadKeypairFromBase64(res.public_key, res.encrypted_priv_key, mk, res.user_id, serverConfig.persistSession);
+            await loadKeypairFromBase64(res.public_key, res.encrypted_priv_key, res.user_id);
         }
 
         // Store session
@@ -1010,13 +1042,7 @@ async function handleLogin(overrideUsername, overridePassword) {
         sessionStorage.setItem('username', username);
         sessionStorage.setItem('isAdmin', serverConfig.isAdmin ? '1' : '0');
 
-        // Optionally persist master key for refresh survival
-        if (serverConfig.persistSession) {
-            const mkRaw = getMasterKeyRaw();
-            if (mkRaw) {
-                sessionStorage.setItem('masterKey', bufferToBase64(mkRaw));
-            }
-        }
+        await persistKeysForRefresh();
 
         showGallery();
     } catch (e) {
@@ -1995,7 +2021,20 @@ const authorizeCodeEl = document.getElementById('authorize-code');
 const authorizeExpiryEl = document.getElementById('authorize-expiry');
 const authorizeCopyBtn = document.getElementById('authorize-copy');
 
+// SHA-256 of the raw 32-byte public key, hex in groups of four — the same
+// value connected apps (e.g. PPVDA) display, so the user can confirm the app
+// was given their real key and not one substituted in transit.
+async function showKeyFingerprint() {
+    const el = document.getElementById('delegation-key-fp');
+    const pub = getPublicKey();
+    if (!el || !pub) return;
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', pub));
+    const hex = Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+    el.textContent = hex.replace(/(.{4})(?=.)/g, '$1 ');
+}
+
 async function loadDelegations() {
+    showKeyFingerprint().catch(() => {});
     if (!delegationsList) return;
     delegationsList.innerHTML = '';
     delegationsEmpty.classList.add('hidden');
@@ -2245,22 +2284,18 @@ document.getElementById('settings-change-pw-form').addEventListener('submit', as
         }
         if (res.encrypted_master_key) {
             if (res.kdf_salt) kdfSalt = res.kdf_salt;
-            const encMK = base64ToBuffer(res.encrypted_master_key);
             const userIdAad = new TextEncoder().encode(userId);
-            const sessionKeyMaterial = await crypto.subtle.importKey(
-                'raw', new TextEncoder().encode(newPw), 'PBKDF2', false, ['deriveBits', 'deriveKey']
-            );
-            const sessionKey = await crypto.subtle.deriveKey(
-                { name: 'PBKDF2', salt: base64ToBuffer(kdfSalt), iterations: 600000, hash: 'SHA-256' },
-                sessionKeyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
-            );
-            const iv = encMK.slice(0, 12);
-            const ct = encMK.slice(12);
-            const mk = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: userIdAad }, sessionKey, ct));
-            await setMasterKeyDirect(mk);
-            if (serverConfig.persistSession) {
-                sessionStorage.setItem('masterKey', bufferToBase64(getMasterKeyRaw()));
+            await unwrapMasterKey(base64ToBuffer(res.encrypted_master_key), newPw, kdfSalt, userIdAad);
+            // A password change rotates the master key AND the X25519 keypair;
+            // uploads must be sealed to the new public key from now on.
+            if (res.public_key && res.encrypted_priv_key) {
+                clearKeypair();
+                await loadKeypairFromBase64(res.public_key, res.encrypted_priv_key, userId);
             }
+            await persistKeysForRefresh();
+            // Owner tags were re-computed under the new master key; reload so
+            // the gallery re-verifies them.
+            loadMedia();
         }
 
         succEl.textContent = 'Password changed successfully.';
@@ -2351,6 +2386,7 @@ async function doLogout() {
     // across sessions. Best-effort — if this fails the SW stays, but it
     // only intercepts /_dl/* and holds no keys/tokens.
     unregisterSWDownload().catch(() => {});
+    await forgetSessionKeys();
     clearMasterKey();
     // Drop the X25519 private key from its non-extractable CryptoKey slot.
     // The key itself cannot be exfiltrated, but dropping the reference means
@@ -2374,6 +2410,20 @@ async function doLogout() {
     folders.length = 0;
     sessionStorage.clear();
     showAuth();
+}
+
+// Idle lock: after IDLE_LOCK_MS without interaction, log out and drop the
+// keys, so an unattended tab doesn't keep the library open indefinitely.
+// A playing video counts as activity.
+const IDLE_LOCK_MS = 30 * 60 * 1000;
+let idleTimer = null;
+function resetIdleTimer() {
+    clearTimeout(idleTimer);
+    if (!token) return;
+    idleTimer = setTimeout(() => { if (token) doLogout(); }, IDLE_LOCK_MS);
+}
+for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll', 'timeupdate']) {
+    document.addEventListener(ev, resetIdleTimer, { passive: true, capture: true });
 }
 
 document.getElementById('logout-btn').addEventListener('click', doLogout);
@@ -2434,6 +2484,7 @@ function showAuth() {
 let pollTimer = null;
 
 async function showGallery() {
+    resetIdleTimer();
     authView.classList.add('hidden');
     header.classList.remove('hidden');
     // Warm up the streaming-download service worker in the background so the
@@ -2484,7 +2535,7 @@ async function loadFolderTree() {
             combined.set(nonce, 0);
             combined.set(encData, nonce.length);
             const userIdAad = new TextEncoder().encode(userId);
-            const decrypted = await decryptBlock(combined, getMasterKeyRaw(), userIdAad);
+            const decrypted = await decryptWithMasterKey(combined, userIdAad);
             folders = JSON.parse(new TextDecoder().decode(decrypted));
         } else {
             folders = [];
@@ -2495,9 +2546,9 @@ async function loadFolderTree() {
 }
 
 async function saveFolderTree() {
-    const data = new TextEncoder().encode(JSON.stringify(folders));
+    const data = paddedJsonBytes(folders, MAX_FOLDER_TREE_PLAINTEXT);
     const userIdAad = new TextEncoder().encode(userId);
-    const enc = await encryptBlock(data, getMasterKeyRaw(), userIdAad);
+    const enc = await encryptWithMasterKey(data, userIdAad);
     const nonce = enc.slice(0, 12);
     const ciphertext = enc.slice(12);
     await api('/api/folders', {
@@ -3102,6 +3153,7 @@ const METADATA_FIELDS = {
     codecs: 'string', folderId: 'string',
     size: 'number', width: 'number', height: 'number',
     duration: 'number', rotation: 'number', chunk_count: 'number',
+    chunk_format: 'number',
     fragmented: 'boolean',
 };
 const MAX_CHUNK_COUNT = 50000; // mirrors the server's maxChunkCount
@@ -3137,6 +3189,9 @@ async function decryptItemMetadata(item) {
             const decrypted = await decryptBlock(combined, metadataKey, mediaIdAad);
             const meta = JSON.parse(new TextDecoder().decode(decrypted));
             applyDecryptedMetadata(item, meta);
+            item.owner_verified = await verifyOwnerTag(meta && meta.owner_tag, item.id,
+                base64ToBuffer(item.file_key_sealed), base64ToBuffer(item.thumb_key_sealed),
+                base64ToBuffer(item.metadata_key_sealed));
         }
     } catch (e) {
         console.warn('Failed to decrypt metadata for', item.id, e);
@@ -3263,6 +3318,26 @@ async function pollMedia() {
     } catch {}
 }
 
+// Items whose owner tag doesn't verify were not created by this account's
+// own browser or CLI: they came from a connected app (which can seal keys to
+// the account but can't sign as the owner), or were added or swapped outside
+// the account entirely. Flag them rather than present them as the user's own.
+function unverifiedMarker() {
+    const el = document.createElement('span');
+    el.className = 'unverified-badge';
+    el.textContent = 'APP';
+    el.title = 'Not verified as your own upload: added by a connected app, or changed outside your account. '
+        + 'Renaming or moving it marks it as yours.';
+    return el;
+}
+
+function markTileVerified(item) {
+    const tile = document.querySelector(`.gallery-item[data-id="${item.id}"]`);
+    if (!tile) return;
+    tile.classList.remove('unverified');
+    tile.querySelector('.unverified-badge')?.remove();
+}
+
 async function createGalleryItem(item) {
     const div = document.createElement('div');
     div.className = 'gallery-item';
@@ -3327,6 +3402,10 @@ async function createGalleryItem(item) {
     div.appendChild(badge);
     div.appendChild(menuBtn);
     div.appendChild(nameEl);
+    if (item.owner_verified === false) {
+        div.classList.add('unverified');
+        div.appendChild(unverifiedMarker());
+    }
     div.addEventListener('click', (e) => {
         if (e.target.closest('.item-menu-btn') || e.target.closest('.folder-context-menu')) return;
         openViewer(item);
@@ -3409,7 +3488,7 @@ async function loadThumbnail(item, img, loader) {
         const thumbKey = await openSealed(base64ToBuffer(item.thumb_key_sealed));
 
         // Decrypt thumbnail (it's encrypted as chunk index 0)
-        const decrypted = await workerDecrypt('decryptChunk', encData, thumbKey, 0, item.id);
+        const decrypted = await decryptItemThumbnail(item, encData, thumbKey);
 
         // If the thumbnail is the tiny JFIF placeholder (failed generation), show fallback
         if (decrypted.length <= 20) {
@@ -3579,8 +3658,14 @@ async function moveItemToFolder(item, newFolderId, skipDupeCheck) {
     if (item.rotation) meta.rotation = item.rotation;
     if (item.fragmented) meta.fragmented = true;
     if (item.codecs) meta.codecs = item.codecs;
+    // Dropping this would make the item's chunks undecryptable.
+    if (item.chunk_format) meta.chunk_format = item.chunk_format;
+    // Re-saving metadata is an explicit act by the owner, so it (re)tags the
+    // item as theirs — this is how an app upload gets adopted.
+    meta.owner_tag = await computeOwnerTag(item.id, base64ToBuffer(item.file_key_sealed),
+        base64ToBuffer(item.thumb_key_sealed), base64ToBuffer(item.metadata_key_sealed));
 
-    const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
+    const metaBytes = paddedJsonBytes(meta, MAX_METADATA_PLAINTEXT);
     const mediaIdAad = new TextEncoder().encode(item.id);
     // Reuse the item's existing metadata key — the server's PATCH endpoint
     // only rewrites metadata_enc/metadata_nonce and is unaware of the sealed
@@ -3600,6 +3685,8 @@ async function moveItemToFolder(item, newFolderId, skipDupeCheck) {
         },
     });
     item.folderId = newFolderId;
+    item.owner_verified = true;
+    markTileVerified(item);
     return true;
 }
 
@@ -4161,7 +4248,7 @@ async function showImage(item, fileKey) {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
-        const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
+        const dec = await decryptItemChunk(item, encData, fileKey, i);
         chunks.push(dec);
     }
     verifyChunkCount(item, chunks.length);
@@ -4195,7 +4282,7 @@ async function showText(item, fileKey) {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
-            const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
+            const dec = await decryptItemChunk(item, encData, fileKey, i);
             chunks.push(dec);
             total += dec.length;
             if (total > TEXT_EDITOR_MAX_BYTES) {
@@ -4503,7 +4590,7 @@ async function playVideoMSE(item, fileKey) {
                 });
                 if (!res.ok) throw new Error(`Chunk ${index} fetch failed: ${res.status}`);
                 const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
-                const dec = await workerDecrypt('decryptChunk', encData, fileKey, index, item.id);
+                const dec = await decryptItemChunk(item, encData, fileKey, index);
                 chunkCache.set(index, dec);
                 return dec;
             } finally {
@@ -4766,7 +4853,7 @@ async function playVideoBlob(item, fileKey, mime) {
                 });
                 if (!res.ok) throw new Error(`Chunk ${idx} fetch failed: ${res.status}`);
                 const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
-                decrypted[idx] = await workerDecrypt('decryptChunk', encData, fileKey, idx, item.id);
+                decrypted[idx] = await decryptItemChunk(item, encData, fileKey, idx);
                 done++;
             }
         }
@@ -4965,7 +5052,7 @@ async function rotateCurrentItem() {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
-            chunks.push(await workerDecrypt('decryptChunk', encData, fileKey, i, item.id));
+            chunks.push(await decryptItemChunk(item, encData, fileKey, i));
         }
         const totalLen = chunks.reduce((s, c) => s + c.length, 0);
         const merged = new Uint8Array(totalLen);
@@ -5002,13 +5089,13 @@ async function rotateCurrentItem() {
         const newMediaId = crypto.randomUUID();
 
         // Encrypt
-        const encThumb = await encryptChunk(thumbData, newThumbKey, 0, newMediaId);
-        const chunkCount = Math.ceil(modifiedData.length / CHUNK_SIZE);
+        const encThumb = await encryptFramedThumbnail(thumbData, newThumbKey, newMediaId);
+        const chunkCount = Math.ceil(modifiedData.length / CHUNK_DATA_SIZE);
         const encChunks = [];
         for (let i = 0; i < chunkCount; i++) {
-            const start = i * CHUNK_SIZE;
-            const end = Math.min(start + CHUNK_SIZE, modifiedData.length);
-            encChunks.push(await encryptChunk(modifiedData.slice(start, end), newFileKey, i, newMediaId));
+            const start = i * CHUNK_DATA_SIZE;
+            const end = Math.min(start + CHUNK_DATA_SIZE, modifiedData.length);
+            encChunks.push(await encryptFramedChunk(modifiedData.slice(start, end), newFileKey, i, newMediaId, i === chunkCount - 1));
         }
 
         // Get rotated dimensions
@@ -5027,22 +5114,24 @@ async function rotateCurrentItem() {
             mime_type: item.mime_type || 'image/jpeg',
             size: modifiedData.length,
             chunk_count: chunkCount,
+            chunk_format: CHUNK_FORMAT,
             width: dims.width,
             height: dims.height,
         };
         if (item.folderId) metaPlain.folderId = item.folderId;
-
-        const metaBytes = new TextEncoder().encode(JSON.stringify(metaPlain));
-        const newMediaIdAad = new TextEncoder().encode(newMediaId);
-        const encMetadata = await encryptBlock(metaBytes, newMetadataKey, newMediaIdAad);
-        const metadataNonce = encMetadata.slice(0, 12);
-        const metadataCiphertext = encMetadata.slice(12);
 
         // Seal all three keys to the user's own public key.
         const ownPub = getPublicKey();
         const newFileKeySealed = await sealTo(newFileKey, ownPub);
         const newThumbKeySealed = await sealTo(newThumbKey, ownPub);
         const newMetadataKeySealed = await sealTo(newMetadataKey, ownPub);
+        metaPlain.owner_tag = await computeOwnerTag(newMediaId, newFileKeySealed, newThumbKeySealed, newMetadataKeySealed);
+
+        const metaBytes = paddedJsonBytes(metaPlain, MAX_METADATA_PLAINTEXT);
+        const newMediaIdAad = new TextEncoder().encode(newMediaId);
+        const encMetadata = await encryptBlock(metaBytes, newMetadataKey, newMediaIdAad);
+        const metadataNonce = encMetadata.slice(0, 12);
+        const metadataCiphertext = encMetadata.slice(12);
 
         const metadata = {
             media_id: newMediaId,
@@ -5334,7 +5423,7 @@ async function downloadItem(item) {
                         headers: { 'Authorization': `Bearer ${token}` }
                     });
                     const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
-                    const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
+                    const dec = await decryptItemChunk(item, encData, fileKey, i);
                     buf.push(dec);
                 }
                 const totalLen = buf.reduce((s, c) => s + c.length, 0);
@@ -5351,7 +5440,7 @@ async function downloadItem(item) {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
-                const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
+                const dec = await decryptItemChunk(item, encData, fileKey, i);
                 yield dec;
             }
         }
@@ -5430,7 +5519,7 @@ async function downloadFolder(folder) {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 const encData = stripPadding(new Uint8Array(await res.arrayBuffer()));
-                const dec = await workerDecrypt('decryptChunk', encData, fileKey, i, item.id);
+                const dec = await decryptItemChunk(item, encData, fileKey, i);
                 chunks.push(dec);
             }
             verifyChunkCount(item, chunks.length);
@@ -5686,8 +5775,14 @@ async function updateItemMetadata(item) {
     if (item.rotation) meta.rotation = item.rotation;
     if (item.fragmented) meta.fragmented = true;
     if (item.codecs) meta.codecs = item.codecs;
+    // Dropping this would make the item's chunks undecryptable.
+    if (item.chunk_format) meta.chunk_format = item.chunk_format;
+    // Re-saving metadata is an explicit act by the owner, so it (re)tags the
+    // item as theirs — this is how an app upload gets adopted.
+    meta.owner_tag = await computeOwnerTag(item.id, base64ToBuffer(item.file_key_sealed),
+        base64ToBuffer(item.thumb_key_sealed), base64ToBuffer(item.metadata_key_sealed));
 
-    const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
+    const metaBytes = paddedJsonBytes(meta, MAX_METADATA_PLAINTEXT);
     const mediaIdAad = new TextEncoder().encode(item.id);
     // Same reuse-existing-key pattern as moveToFolder above.
     const metadataKey = await openSealed(base64ToBuffer(item.metadata_key_sealed));
@@ -5702,6 +5797,8 @@ async function updateItemMetadata(item) {
             metadata_nonce: bufferToBase64(nonce),
         },
     });
+    item.owner_verified = true;
+    markTileVerified(item);
 }
 
 // ─── Upload ───
@@ -5999,7 +6096,7 @@ async function uploadFile(file, itemEl, targetFolderId) {
     const mediaId = crypto.randomUUID();
 
     // Encrypt thumbnail
-    const encThumb = await encryptChunk(thumbData, thumbKey, 0, mediaId);
+    const encThumb = await encryptFramedThumbnail(thumbData, thumbKey, mediaId);
 
     // Split into segments: use pre-split fMP4 segments or fixed-size chunks
     let segments;
@@ -6007,8 +6104,8 @@ async function uploadFile(file, itemEl, targetFolderId) {
         segments = fmp4Segments;
     } else {
         segments = [];
-        for (let start = 0; start < modifiedData.length; start += CHUNK_SIZE) {
-            segments.push(modifiedData.slice(start, Math.min(start + CHUNK_SIZE, modifiedData.length)));
+        for (let start = 0; start < modifiedData.length; start += CHUNK_DATA_SIZE) {
+            segments.push(modifiedData.slice(start, Math.min(start + CHUNK_DATA_SIZE, modifiedData.length)));
         }
     }
     const chunkCount = segments.length;
@@ -6016,7 +6113,7 @@ async function uploadFile(file, itemEl, targetFolderId) {
     // Encrypt segments
     const encChunks = [];
     for (let i = 0; i < chunkCount; i++) {
-        encChunks.push(await encryptChunk(segments[i], fileKey, i, mediaId));
+        encChunks.push(await encryptFramedChunk(segments[i], fileKey, i, mediaId, i === chunkCount - 1));
         setUploadProgress(itemEl, Math.round(((i + 1) / chunkCount) * 50));
     }
 
@@ -6027,6 +6124,7 @@ async function uploadFile(file, itemEl, targetFolderId) {
         mime_type: fragmented ? 'video/mp4' : (file.type || 'application/octet-stream'),
         size: file.size,
         chunk_count: chunkCount,
+        chunk_format: CHUNK_FORMAT,
     };
     if (fragmented) metaPlain.fragmented = true;
     if (detectedCodecs) metaPlain.codecs = detectedCodecs;
@@ -6048,13 +6146,6 @@ async function uploadFile(file, itemEl, targetFolderId) {
         } catch {}
     }
 
-    const metaBytes = new TextEncoder().encode(JSON.stringify(metaPlain));
-    const mediaIdAad = new TextEncoder().encode(mediaId);
-    const encMetadata = await encryptBlock(metaBytes, metadataKey, mediaIdAad);
-    // encryptBlock returns nonce (12 bytes) || ciphertext
-    const metadataNonce = encMetadata.slice(0, 12);
-    const metadataCiphertext = encMetadata.slice(12);
-
     // Shape 2: seal the three per-file symmetric keys to the uploading user's
     // own X25519 public key. The browser can only decrypt them later using the
     // private key it unwrapped at login (and holds as a non-extractable
@@ -6064,6 +6155,16 @@ async function uploadFile(file, itemEl, targetFolderId) {
     const fileKeySealed = await sealTo(fileKey, ownPub);
     const thumbKeySealed = await sealTo(thumbKey, ownPub);
     const metadataKeySealed = await sealTo(metadataKey, ownPub);
+    // Only the master-key holder can produce this; it marks the item as the
+    // owner's own upload (see computeOwnerTag in crypto.js).
+    metaPlain.owner_tag = await computeOwnerTag(mediaId, fileKeySealed, thumbKeySealed, metadataKeySealed);
+
+    const metaBytes = paddedJsonBytes(metaPlain, MAX_METADATA_PLAINTEXT);
+    const mediaIdAad = new TextEncoder().encode(mediaId);
+    const encMetadata = await encryptBlock(metaBytes, metadataKey, mediaIdAad);
+    // encryptBlock returns nonce (12 bytes) || ciphertext
+    const metadataNonce = encMetadata.slice(0, 12);
+    const metadataCiphertext = encMetadata.slice(12);
 
     // Build multipart upload
     setUploadStatus(itemEl, 'Uploading...');
@@ -6188,21 +6289,18 @@ initWorkers();
         // Restore admin flag
         serverConfig.isAdmin = sessionStorage.getItem('isAdmin') === '1';
 
-        // Try to restore master key + keypair if persist-session is enabled
-        const savedMK = sessionStorage.getItem('masterKey');
-        const savedPub = sessionStorage.getItem('publicKey');
-        const savedEncPriv = sessionStorage.getItem('encryptedPrivKey');
-        if (savedMK && savedPub && savedEncPriv && serverConfig.persistSession) {
+        // Try to restore the (non-extractable) keys if persist-session is enabled
+        const keySession = sessionStorage.getItem('keySession');
+        if (keySession && serverConfig.persistSession) {
             try {
-                const mkBytes = base64ToBuffer(savedMK);
-                await setMasterKeyDirect(mkBytes);
-                await loadKeypairFromBase64(savedPub, savedEncPriv, mkBytes, userId, true);
-                showGallery();
-                return;
+                if (await restoreSessionKeys(keySession)) {
+                    // Drop keys other tabs left behind; they can log in again.
+                    forgetSessionKeys(keySession);
+                    showGallery();
+                    return;
+                }
             } catch {
-                sessionStorage.removeItem('masterKey');
-                sessionStorage.removeItem('publicKey');
-                sessionStorage.removeItem('encryptedPrivKey');
+                clearMasterKey();
                 clearKeypair();
             }
         }

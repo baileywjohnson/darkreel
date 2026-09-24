@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -142,61 +143,64 @@ func DeleteUserAtomic(database *sql.DB, userID string) error {
 }
 
 
-// UpdateUserAuth rewrites password-derived material. The encrypted private
-// key is NOT touched here because the private key is wrapped with the master
-// key (not with the KDF-derived key), and the master key is unchanged by a
-// password rotation — we simply re-wrap it with a new KDF key.
+// ErrKeysChanged is returned when a write was conditioned on the account's
+// current public key and the key has since been rotated (password change or
+// recovery). The request was authenticated against the old keys; whatever it
+// was writing is encrypted to keys the account no longer uses.
+var ErrKeysChanged = errors.New("account keys have changed")
+
+// UserKeys is every credential- and key-bearing column of a user row: what a
+// password change or recovery replaces in one go.
+type UserKeys struct {
+	PasswordHash     string
+	AuthSalt         []byte
+	KDFSalt          []byte
+	EncryptedMK      []byte
+	RecoveryMK       []byte
+	PublicKey        []byte
+	EncryptedPrivKey []byte
+	RecoveryPrivKey  []byte
+}
+
+// ReplaceUserKeysTx swaps in a new password hash, master key wraps and
+// keypair, provided the stored public key is still oldPublicKey. The
+// compare-and-swap stops two concurrent rotations from both committing: the
+// loser prepared its re-seals with a private key that is no longer current.
 //
-// Returns sql.ErrNoRows if the target user does not exist, so the handler
-// can return 404 instead of committing an apparent success for a ghost
-// account and then resurrecting a session for a deleted user.
-func UpdateUserAuth(db *sql.DB, userID, passwordHash string, authSalt, kdfSalt, encryptedMK []byte) error {
-	res, err := db.Exec(
-		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ?, encrypted_mk = ? WHERE id = ?`,
-		passwordHash, authSalt, kdfSalt, encryptedMK, userID,
-	)
-	if err != nil {
-		return err
-	}
-	return requireOneRow(res)
-}
-
-func UpdateUserAuthTx(tx *sql.Tx, userID, passwordHash string, authSalt, kdfSalt, encryptedMK []byte) error {
+// Returns sql.ErrNoRows if the user no longer exists and ErrKeysChanged if
+// another rotation got there first.
+func ReplaceUserKeysTx(tx *sql.Tx, userID string, oldPublicKey []byte, k *UserKeys) error {
 	res, err := tx.Exec(
-		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ?, encrypted_mk = ? WHERE id = ?`,
-		passwordHash, authSalt, kdfSalt, encryptedMK, userID,
+		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ?,
+		        encrypted_mk = ?, recovery_mk = ?,
+		        public_key = ?, encrypted_priv_key = ?, recovery_priv_key = ?
+		 WHERE id = ? AND public_key = ?`,
+		k.PasswordHash, k.AuthSalt, k.KDFSalt,
+		k.EncryptedMK, k.RecoveryMK,
+		k.PublicKey, k.EncryptedPrivKey, k.RecoveryPrivKey,
+		userID, oldPublicKey,
 	)
 	if err != nil {
 		return err
 	}
-	return requireOneRow(res)
+	if err := requireOneRow(res); err != sql.ErrNoRows {
+		return err
+	}
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM users WHERE id = ?`, userID).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return ErrKeysChanged
 }
 
-// UpdateUserRecoveryKeys rewrites both recovery-code-wrapped blobs together.
-// Called on password recovery when a fresh recovery code is issued, so the new
-// code wraps the current master key and the current private key consistently.
-//
-// Returns sql.ErrNoRows if the user no longer exists (concurrent deletion).
-func UpdateUserRecoveryKeys(db *sql.DB, userID string, recoveryMK, recoveryPrivKey []byte) error {
-	res, err := db.Exec(
-		`UPDATE users SET recovery_mk = ?, recovery_priv_key = ? WHERE id = ?`,
-		recoveryMK, recoveryPrivKey, userID,
-	)
-	if err != nil {
-		return err
-	}
-	return requireOneRow(res)
-}
-
-func UpdateUserRecoveryKeysTx(tx *sql.Tx, userID string, recoveryMK, recoveryPrivKey []byte) error {
-	res, err := tx.Exec(
-		`UPDATE users SET recovery_mk = ?, recovery_priv_key = ? WHERE id = ?`,
-		recoveryMK, recoveryPrivKey, userID,
-	)
-	if err != nil {
-		return err
-	}
-	return requireOneRow(res)
+// GetUserPublicKey returns the account's current X25519 public key.
+func GetUserPublicKey(db *sql.DB, userID string) ([]byte, error) {
+	var pub []byte
+	err := db.QueryRow(`SELECT public_key FROM users WHERE id = ?`, userID).Scan(&pub)
+	return pub, err
 }
 
 // requireOneRow converts an UPDATE that touched zero rows into sql.ErrNoRows

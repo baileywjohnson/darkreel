@@ -71,6 +71,44 @@ func validID(w http.ResponseWriter, r *http.Request, param string) string {
 	return id
 }
 
+// currentKey returns the account's public key for conditioning a write that
+// the client encrypted to the account's keys (upload, metadata edit, folder
+// tree). A password change or recovery replaces the keypair and master key;
+// a request authenticated just before it must not land data encrypted to the
+// retired keys just after it.
+//
+// The key is read first and the request's credential re-checked second. The
+// rotation drops sessions and delegations before it commits, so if the
+// credential is still live now, the rotation hadn't committed when the key
+// was read — the key is the one the client holds. The write is then made
+// conditional on it (db.ErrKeysChanged if a rotation committed in between).
+func (h *Handler) currentKey(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	claims := auth.GetClaims(r)
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return nil, false
+	}
+	pub, err := db.GetUserPublicKey(h.DB, claims.UserID)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return nil, false
+	}
+	live, err := auth.CredentialLive(h.DB, claims)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return nil, false
+	}
+	if !live {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return nil, false
+	}
+	return pub, true
+}
+
+// keysChangedMessage is the 409 body when a write loses the race with a
+// password change / recovery.
+const keysChangedMessage = "Your account keys were changed (password change or recovery). Sign in again and retry."
+
 // QuotaCheck returns the authenticated user's effective quota and current usage (in bytes).
 func (h *Handler) QuotaCheck(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r)
@@ -282,7 +320,17 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		MetadataEnc:       metadataEncBytes,
 		MetadataNonce:     metadataNonceBytes,
 	}
-	if err := db.InsertMedia(h.DB, mediaItem); err != nil {
+	// The sealed keys are only openable if they were sealed to the account's
+	// current public key; see currentKey.
+	pub, keyOK := h.currentKey(w, r)
+	if !keyOK {
+		return
+	}
+	if err := db.InsertMediaForKey(h.DB, mediaItem, pub); err != nil {
+		if errors.Is(err, db.ErrKeysChanged) {
+			http.Error(w, keysChangedMessage, http.StatusConflict)
+			return
+		}
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -403,6 +451,9 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// Every file is in place; reset the directory mtimes that creating them
+	// just bumped, so they don't record when the upload happened.
+	h.Storage.NormalizeDirTimes(userID, mediaID)
 
 	// Atomically verify quota and record the on-disk size in a single
 	// transaction to close the TOCTOU window between concurrent uploads.
@@ -568,7 +619,15 @@ func (h *Handler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.UpdateMediaMetadata(h.DB, mediaID, userID, encBytes, nonceBytes); err != nil {
+	pub, ok := h.currentKey(w, r)
+	if !ok {
+		return
+	}
+	if err := db.UpdateMediaMetadata(h.DB, mediaID, userID, encBytes, nonceBytes, pub); err != nil {
+		if errors.Is(err, db.ErrKeysChanged) {
+			http.Error(w, keysChangedMessage, http.StatusConflict)
+			return
+		}
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -590,7 +649,7 @@ func (h *Handler) GetFolders(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"folder_tree_enc":   B64(unpadFolderTree(data.FolderTreeEnc)),
+		"folder_tree_enc":   B64(storage.UnpadFolderTree(data.FolderTreeEnc)),
 		"folder_tree_nonce": B64(data.FolderTreeNonce),
 	})
 }
@@ -626,48 +685,22 @@ func (h *Handler) SaveFolders(w http.ResponseWriter, r *http.Request) {
 
 	// Pad the encrypted folder tree to a power-of-2 KB bucket to prevent
 	// the blob size from revealing folder structure complexity.
-	paddedEnc := padFolderTree(encBytes)
+	paddedEnc := storage.PadFolderTree(encBytes)
 
-	if err := db.SaveUserData(h.DB, userID, paddedEnc, nonceBytes); err != nil {
+	pub, ok := h.currentKey(w, r)
+	if !ok {
+		return
+	}
+	if err := db.SaveUserData(h.DB, userID, paddedEnc, nonceBytes, pub); err != nil {
+		if errors.Is(err, db.ErrKeysChanged) {
+			http.Error(w, keysChangedMessage, http.StatusConflict)
+			return
+		}
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// padFolderTree pads encrypted folder tree data to a power-of-2 KB bucket.
-// Format: [4 bytes big-endian real length][data][random padding]
-func padFolderTree(data []byte) []byte {
-	bucket := 1024 // 1 KB minimum
-	needed := 4 + len(data)
-	for bucket < needed {
-		bucket *= 2
-	}
-	padded := make([]byte, bucket)
-	padded[0] = byte(len(data) >> 24)
-	padded[1] = byte(len(data) >> 16)
-	padded[2] = byte(len(data) >> 8)
-	padded[3] = byte(len(data))
-	copy(padded[4:], data)
-	// Fill padding with random bytes so a DB-level attacker cannot distinguish
-	// padding from encrypted data and infer the exact folder tree size.
-	if padStart := 4 + len(data); padStart < bucket {
-		storage.FillPadding(padded[padStart:])
-	}
-	return padded
-}
-
-// unpadFolderTree strips the padding from a padded folder tree blob.
-func unpadFolderTree(padded []byte) []byte {
-	if len(padded) < 4 {
-		return padded
-	}
-	realLen := int(padded[0])<<24 | int(padded[1])<<16 | int(padded[2])<<8 | int(padded[3])
-	if realLen <= 0 || 4+realLen > len(padded) {
-		return padded // not padded (legacy data), return as-is
-	}
-	return padded[4 : 4+realLen]
 }
 
 func toAPIItem(m *db.MediaItem) APIMediaItem {

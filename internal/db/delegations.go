@@ -244,3 +244,25 @@ func DeleteAllDelegationsForUserTx(tx *sql.Tx, userID string) error {
 	_, err := tx.Exec(`DELETE FROM delegations WHERE user_id = ?`, userID)
 	return err
 }
+
+// DeleteAllDelegationCodesForUserTx removes the user's unexchanged
+// authorization codes. Called alongside DeleteAllDelegationsForUserTx on
+// password change / recovery, so a code minted before the reset can't be
+// exchanged for a fresh delegation afterwards.
+func DeleteAllDelegationCodesForUserTx(tx *sql.Tx, userID string) error {
+	_, err := tx.Exec(`DELETE FROM delegation_codes WHERE user_id = ?`, userID)
+	return err
+}
+
+// DelegationExists reports whether delegation id is still active for userID.
+// Checked on every request made with a delegation access token, so revoking a
+// delegation (or anything that deletes it: password change, recovery, account
+// deletion) cuts off its outstanding access tokens immediately.
+func DelegationExists(db *sql.DB, id, userID string) (bool, error) {
+	var one int
+	err := db.QueryRow(`SELECT 1 FROM delegations WHERE id = ? AND user_id = ?`, id, userID).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}

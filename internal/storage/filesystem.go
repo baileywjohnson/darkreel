@@ -35,6 +35,39 @@ func fillPaddingWith(rng interface{ Uint64() uint64 }, buf []byte) {
 	}
 }
 
+// PadFolderTree pads an encrypted folder tree blob to a power-of-2 KB bucket
+// so its stored size doesn't reveal folder structure complexity.
+// Format: [4 bytes big-endian real length][data][random padding]
+func PadFolderTree(data []byte) []byte {
+	bucket := 1024 // 1 KB minimum
+	needed := 4 + len(data)
+	for bucket < needed {
+		bucket *= 2
+	}
+	padded := make([]byte, bucket)
+	binary.BigEndian.PutUint32(padded, uint32(len(data)))
+	copy(padded[4:], data)
+	// Fill padding with random bytes so a DB-level attacker cannot distinguish
+	// padding from encrypted data and infer the exact folder tree size.
+	if padStart := 4 + len(data); padStart < bucket {
+		FillPadding(padded[padStart:])
+	}
+	return padded
+}
+
+// UnpadFolderTree strips the padding added by PadFolderTree. Blobs that don't
+// carry a plausible length prefix (legacy, unpadded data) are returned as-is.
+func UnpadFolderTree(padded []byte) []byte {
+	if len(padded) < 4 {
+		return padded
+	}
+	realLen := int(binary.BigEndian.Uint32(padded))
+	if realLen <= 0 || 4+realLen > len(padded) {
+		return padded // not padded (legacy data), return as-is
+	}
+	return padded[4 : 4+realLen]
+}
+
 // paddedChunkSize is the legacy fixed size for 1 MB chunks on disk.
 // 1MB plaintext + 12 nonce + 16 tag = 1048604 bytes max encrypted chunk.
 const paddedChunkSize = 1048576 + 28

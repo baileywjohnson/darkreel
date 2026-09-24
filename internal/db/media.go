@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"strconv"
@@ -31,6 +32,99 @@ func InsertMedia(db *sql.DB, m *MediaItem) error {
 		m.HashNonce, m.MetadataEnc, m.MetadataNonce,
 	)
 	return err
+}
+
+// InsertMediaForKey inserts m only while the owner's public key is still
+// publicKey — the key the uploading client sealed m's keys to. Returns
+// ErrKeysChanged if the account's keypair was rotated in the meantime: the
+// sealed keys would be unopenable, so the row must not land.
+func InsertMediaForKey(db *sql.DB, m *MediaItem, publicKey []byte) error {
+	res, err := db.Exec(
+		`INSERT INTO media (id, user_id, chunk_count, size_bytes,
+		                    file_key_sealed, thumb_key_sealed, metadata_key_sealed,
+		                    hash_nonce, metadata_enc, metadata_nonce, created_at)
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y', 'now')
+		 WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND public_key = ?)`,
+		m.ID, m.UserID, m.ChunkCount, m.SizeBytes,
+		m.FileKeySealed, m.ThumbKeySealed, m.MetadataKeySealed,
+		m.HashNonce, m.MetadataEnc, m.MetadataNonce,
+		m.UserID, publicKey,
+	)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrKeysChanged
+	}
+	return nil
+}
+
+// MediaKeys is the part of a media row that a keypair rotation rewrites: the
+// three sealed keys, plus the encrypted metadata (which carries an ownership
+// tag computed over the sealed keys).
+type MediaKeys struct {
+	ID                string
+	FileKeySealed     []byte
+	ThumbKeySealed    []byte
+	MetadataKeySealed []byte
+	MetadataEnc       []byte
+	MetadataNonce     []byte
+}
+
+// Equal reports whether a and b hold identical bytes.
+func (a *MediaKeys) Equal(b *MediaKeys) bool {
+	return a.ID == b.ID &&
+		bytes.Equal(a.FileKeySealed, b.FileKeySealed) &&
+		bytes.Equal(a.ThumbKeySealed, b.ThumbKeySealed) &&
+		bytes.Equal(a.MetadataKeySealed, b.MetadataKeySealed) &&
+		bytes.Equal(a.MetadataEnc, b.MetadataEnc) &&
+		bytes.Equal(a.MetadataNonce, b.MetadataNonce)
+}
+
+// Querier is satisfied by both *sql.DB and *sql.Tx.
+type Querier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// ListMediaKeys returns the sealed keys and encrypted metadata of every media
+// row belonging to userID.
+func ListMediaKeys(q Querier, userID string) ([]*MediaKeys, error) {
+	rows, err := q.Query(
+		`SELECT id, file_key_sealed, thumb_key_sealed, metadata_key_sealed,
+		        metadata_enc, metadata_nonce
+		 FROM media WHERE user_id = ?`, userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*MediaKeys
+	for rows.Next() {
+		k := &MediaKeys{}
+		if err := rows.Scan(&k.ID, &k.FileKeySealed, &k.ThumbKeySealed, &k.MetadataKeySealed,
+			&k.MetadataEnc, &k.MetadataNonce); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// UpdateMediaKeysTx rewrites a row's sealed keys and encrypted metadata.
+func UpdateMediaKeysTx(tx *sql.Tx, userID string, k *MediaKeys) error {
+	res, err := tx.Exec(
+		`UPDATE media SET file_key_sealed = ?, thumb_key_sealed = ?, metadata_key_sealed = ?,
+		                  metadata_enc = ?, metadata_nonce = ?
+		 WHERE id = ? AND user_id = ?`,
+		k.FileKeySealed, k.ThumbKeySealed, k.MetadataKeySealed,
+		k.MetadataEnc, k.MetadataNonce, k.ID, userID,
+	)
+	if err != nil {
+		return err
+	}
+	return requireOneRow(res)
 }
 
 func ListMedia(db *sql.DB, userID string, limit, offset int) ([]*MediaItem, int, error) {
@@ -247,16 +341,24 @@ func DeleteMediaByID(db *sql.DB, id string) error {
 	return err
 }
 
-func UpdateMediaMetadata(db *sql.DB, id, userID string, metadataEnc, metadataNonce []byte) error {
+// UpdateMediaMetadata replaces an item's encrypted metadata, provided the
+// owner's public key is still publicKey (see InsertMediaForKey). Returns
+// sql.ErrNoRows if the item doesn't exist and ErrKeysChanged if the keypair
+// was rotated since the request was authenticated.
+func UpdateMediaMetadata(db *sql.DB, id, userID string, metadataEnc, metadataNonce, publicKey []byte) error {
 	result, err := db.Exec(
-		`UPDATE media SET metadata_enc = ?, metadata_nonce = ? WHERE id = ? AND user_id = ?`,
-		metadataEnc, metadataNonce, id, userID,
+		`UPDATE media SET metadata_enc = ?, metadata_nonce = ? WHERE id = ? AND user_id = ?
+		 AND EXISTS (SELECT 1 FROM users WHERE id = ? AND public_key = ?)`,
+		metadataEnc, metadataNonce, id, userID, userID, publicKey,
 	)
 	if err != nil {
 		return err
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
+		if cur, err := GetUserPublicKey(db, userID); err == nil && !bytes.Equal(cur, publicKey) {
+			return ErrKeysChanged
+		}
 		return sql.ErrNoRows
 	}
 	return nil
@@ -280,11 +382,48 @@ func GetUserData(db *sql.DB, userID string) (*UserData, error) {
 	return d, nil
 }
 
-func SaveUserData(db *sql.DB, userID string, folderTreeEnc, folderTreeNonce []byte) error {
-	_, err := db.Exec(`
+// SaveUserData stores the folder tree blob, provided the user's public key
+// is still publicKey. The blob is encrypted under the master key, which is
+// rotated together with the keypair; a save authenticated before a rotation
+// but landing after it would replace the tree with one nobody can decrypt.
+// Returns ErrKeysChanged in that case.
+func SaveUserData(db *sql.DB, userID string, folderTreeEnc, folderTreeNonce, publicKey []byte) error {
+	res, err := db.Exec(`
 		INSERT INTO user_data (user_id, folder_tree_enc, folder_tree_nonce)
-		VALUES (?, ?, ?)
+		SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND public_key = ?)
 		ON CONFLICT(user_id) DO UPDATE SET folder_tree_enc = excluded.folder_tree_enc, folder_tree_nonce = excluded.folder_tree_nonce
-	`, userID, folderTreeEnc, folderTreeNonce)
-	return err
+	`, userID, folderTreeEnc, folderTreeNonce, userID, publicKey)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrKeysChanged
+	}
+	return nil
+}
+
+// GetUserDataTx is GetUserData inside a transaction.
+func GetUserDataTx(tx *sql.Tx, userID string) (*UserData, error) {
+	d := &UserData{}
+	err := tx.QueryRow(
+		`SELECT folder_tree_enc, folder_tree_nonce FROM user_data WHERE user_id = ?`, userID,
+	).Scan(&d.FolderTreeEnc, &d.FolderTreeNonce)
+	if err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// UpdateUserDataTx overwrites an existing folder tree blob.
+func UpdateUserDataTx(tx *sql.Tx, userID string, folderTreeEnc, folderTreeNonce []byte) error {
+	res, err := tx.Exec(
+		`UPDATE user_data SET folder_tree_enc = ?, folder_tree_nonce = ? WHERE user_id = ?`,
+		folderTreeEnc, folderTreeNonce, userID,
+	)
+	if err != nil {
+		return err
+	}
+	return requireOneRow(res)
 }

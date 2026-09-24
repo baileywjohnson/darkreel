@@ -20,6 +20,7 @@ Darkreel is designed for **zero-knowledge** self-hosted media storage. A hosted 
   sudo journalctl --rotate
   sudo journalctl --vacuum-time=1s --unit=darkreel
   ```
+- **Old database copies plus old credentials.** A password change or recovery replaces the account's master key and X25519 keypair and re-seals every item's key envelopes to the new public key, but the per-item file/thumbnail/metadata keys are unchanged. Anyone holding a database copy from *before* the change (a backup, a snapshot) plus the password or recovery code valid at that time can still decrypt the items that existed then. Everything uploaded after the change is out of their reach. This includes the admin of an admin-created account, who chose its initial password and saw its recovery code: users should change the password before uploading.
 - **Attackers who compromise a user's device.** The browser (or CLI) sees plaintext; client-side compromise is client-side compromise.
 - **Traffic analysis at the network layer.** Chunk sizes are bucketed (1/2/4/8/16 MB) to frustrate per-chunk fingerprinting, but per-user activity timing is visible to any on-path observer.
 - **Side channels in the underlying OS, browser, or Go runtime** (e.g., Spectre, GC-driven plaintext-residue, swap to disk).
@@ -48,13 +49,17 @@ JWT verification pins the accepted algorithm to exact `HS256` — not just "any 
 
 ### Hardware / host
 
-Run Darkreel on a host you control. The server process must never be accessible to other UIDs on the box. Containerize if sharing infrastructure. Back up the data directory with the same rigor as the server itself — the encrypted blobs are useless without the per-user keys (which live only in user-derived form), but the database contains every user's password hash and recovery-wrapped master key.
+Run Darkreel on a host you control. The server process must never be accessible to other UIDs on the box. Containerize if sharing infrastructure. Back up the data directory with the same rigor as the server itself — the encrypted blobs are useless without the per-user keys (which live only in user-derived form), but the database contains every user's password hash and recovery-wrapped master key. `setup.sh` encrypts nightly database dumps with age to a public key whose private half is kept off the server, and stores them root-only in `/var/backups/darkreel`; ship them off-host and keep retention short (see README, "Backups").
+
+File and directory access/modification times in the data directory are normalized to a fixed epoch, but inode change times (ctime) and birth times cannot be set from userspace and reveal upload times to anyone who images an unencrypted disk. Put the data directory on an encrypted volume, mounted `noatime`.
 
 - Password hashing: Argon2id (t=3, m=64 MiB, p=4, 32-byte output), 32-byte random salt per user.
 - Session key: PBKDF2-HMAC-SHA256, 600,000 iterations, 32-byte output.
 - Content encryption: AES-256-GCM with 12-byte random nonce, AAD = `UTF8(mediaID) || BigEndian(uint64(chunkIndex))` for chunks, `UTF8(mediaID)` for metadata blobs, `UTF8(userID)` for master-key wrapping. AAD binding prevents cross-file and cross-user confused-deputy attacks.
 - Per-file key sealing: each media upload generates three random 32-byte symmetric keys (file, thumbnail, metadata) and seals each to the account's X25519 public key using X25519-ECDH + HKDF-SHA256 + AES-256-GCM (HKDF info = `"darkreel-seal-v1"`; 92 bytes per sealed key). The server never holds plaintext file/thumb/metadata keys and can decrypt content only if it also has the user's master key (which is cleared from the session right after login). Delegated clients (PPVDA, darkreel-cli v0.3.0+) hold only the public key, so a delegated-client compromise grants upload-only capability — not read/list/delete.
 - Recovery: 32-byte random code, AES-256-GCM wrap of master key with AAD = `UTF8(userID)`. The user's X25519 private key is also wrapped twice — once under the master key, once under the recovery code — so recovery restores full access, not just auth.
+- Key rotation: password change and recovery generate a new master key, X25519 keypair and recovery code. In one transaction the server opens each item's three sealed keys with the old private key and re-seals them to the new public key, re-encrypts the folder tree under the new master key (same AAD), recomputes valid item ownership tags, and deletes all sessions, delegations and pending delegation codes. Old and new key material is zeroed after use. Writes that clients encrypt to the account's keys (uploads, metadata edits, folder saves) are conditional on the public key they were authorized against, so a request racing the rotation fails with 409 instead of storing data sealed to a retired key.
+- Delegation access tokens carry the delegation ID; the auth middleware checks the delegation still exists on every request, so revocation, password change, recovery and account deletion cut them off immediately.
 - Nonce policy: every `EncryptBlock` / `EncryptChunk` call generates a fresh random nonce. There is no deterministic-nonce mode.
 
 ## Reporting a vulnerability

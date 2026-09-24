@@ -12,6 +12,13 @@ const accountMaxVisitors = 10000
 // brute-force attacks against a single account. All attempted usernames are
 // tracked — including non-existent ones — to avoid leaking whether an account
 // exists via rate-limit timing differences.
+//
+// Only failed attempts consume the budget: every attempt is counted up front
+// by Allow (so concurrent guesses can't all slip past the check), and a
+// successful one is refunded by Succeeded. Anyone who knows a username can
+// still exhaust its budget with wrong guesses, but the owner then gets an
+// explicit "too many attempts" error rather than a misleading "wrong
+// password", and logging in successfully never counts against them.
 type AccountLimiter struct {
 	mu       sync.Mutex
 	visitors map[uint64]*accountVisitor
@@ -66,7 +73,13 @@ func (al *AccountLimiter) hashUsername(username string) uint64 {
 	return h.Sum64()
 }
 
-// Allow returns true if the username has not exceeded its rate limit.
+// AccountLockedMessage is the 429 body sent when an account's limiter trips.
+// It is the same whether or not the account exists.
+const AccountLockedMessage = "Too many attempts for this account — try again later"
+
+// Allow counts an attempt against username and returns true if the username
+// has not exceeded its limit. Call Succeeded if the attempt turns out to be
+// valid.
 func (al *AccountLimiter) Allow(username string) bool {
 	al.mu.Lock()
 	defer al.mu.Unlock()
@@ -105,4 +118,15 @@ func (al *AccountLimiter) Allow(username string) bool {
 	}
 	v.count++
 	return v.count <= al.max
+}
+
+// Succeeded refunds the attempt counted by the preceding Allow, so successful
+// attempts don't count toward the limit. Only reachable with the right
+// password or recovery code, so it reveals nothing about account existence.
+func (al *AccountLimiter) Succeeded(username string) {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	if v, ok := al.visitors[al.hashUsername(username)]; ok && v.count > 0 {
+		v.count--
+	}
 }

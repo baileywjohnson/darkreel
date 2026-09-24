@@ -86,12 +86,15 @@ func (s *Server) routes() chi.Router {
 	r.Use(securityHeaders)
 	r.Use(RateLimit(6000, time.Minute)) // Global: 6000 req/min per IP (high for chunk streaming)
 
-	// Per-username rate limiter: 10 attempts per 15 minutes per account.
-	// Defends against distributed brute-force even when per-IP limits are bypassed.
+	// Per-username rate limiters: 10 failed attempts per 15 minutes per
+	// account. Defends against distributed brute-force even when per-IP limits
+	// are bypassed. Login and password change share one budget (both guess the
+	// password); recovery has its own.
 	accountLimiter := auth.NewAccountLimiter(10, 15*time.Minute)
+	recoveryLimiter := auth.NewAccountLimiter(10, 15*time.Minute)
 
 	mediaHandler := &media.Handler{DB: s.DB, Storage: s.Storage, Shredder: s.Shredder, MaxStorageBytes: s.MaxStorageBytes}
-	authHandler := &auth.Handler{DB: s.DB, Storage: s.Storage, Shredder: s.Shredder, AccountLimiter: accountLimiter, DataDir: s.Storage.BaseDir, OnUserDeleted: mediaHandler.CleanupUser}
+	authHandler := &auth.Handler{DB: s.DB, Storage: s.Storage, Shredder: s.Shredder, AccountLimiter: accountLimiter, RecoveryLimiter: recoveryLimiter, DataDir: s.Storage.BaseDir, OnUserDeleted: mediaHandler.CleanupUser}
 
 	// Auth rate limiter: 5 attempts per minute per IP
 	authLimiter := RateLimit(5, time.Minute)
@@ -163,7 +166,7 @@ func (s *Server) routes() chi.Router {
 	// refresh tokens (and the access tokens they mint) cannot read, delete,
 	// or modify media beyond their upload grant.
 	r.Group(func(r chi.Router) {
-		r.Use(auth.Middleware)
+		r.Use(auth.Middleware(s.DB))
 		r.Use(auth.RequireFullScope)
 
 		r.Post("/api/auth/logout", authHandler.Logout)
@@ -190,7 +193,7 @@ func (s *Server) routes() chi.Router {
 	// Upload endpoint accepts both full session tokens (browser uploads) and
 	// "upload"-scoped delegation tokens (PPVDA).
 	r.Group(func(r chi.Router) {
-		r.Use(auth.Middleware)
+		r.Use(auth.Middleware(s.DB))
 		r.Use(auth.RequireUploadScope)
 
 		r.Post("/api/media/upload", mediaHandler.Upload)
@@ -198,7 +201,7 @@ func (s *Server) routes() chi.Router {
 
 	// Admin routes (authenticated + admin only + full-scope session)
 	r.Group(func(r chi.Router) {
-		r.Use(auth.Middleware)
+		r.Use(auth.Middleware(s.DB))
 		r.Use(auth.RequireFullScope)
 		r.Use(auth.AdminMiddleware(s.DB))
 
@@ -264,7 +267,15 @@ func (s *Server) routes() chi.Router {
 			case strings.HasSuffix(path, ".woff2"):
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			case strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css"):
-				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				// Only content-versioned URLs (build.sh adds ?v=<hash>) may be
+				// cached forever. An unversioned URL cached as immutable kept
+				// security fixes to crypto.js/worker.js from ever reaching a
+				// returning browser.
+				if r.URL.Query().Get("v") != "" {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				} else {
+					w.Header().Set("Cache-Control", "no-cache")
+				}
 			}
 			fileServer.ServeHTTP(w, r)
 			return

@@ -24,8 +24,9 @@ import (
 //
 // Overhead for a 32-byte payload: 32 (eph_pk) + 12 (nonce) + 32 (msg) + 16
 // (AES-GCM tag) = 92 bytes. Browser seals via Web Crypto's built-in X25519,
-// HKDF, and AES-GCM; the server opens via this implementation (only used in
-// tests — production Darkreel never opens sealed boxes).
+// HKDF, and AES-GCM. The server opens sealed boxes only while rotating a
+// user's keypair on password change / recovery (ResealBox), during which it
+// transiently holds the old private key anyway.
 const (
 	X25519PublicKeySize  = 32
 	X25519PrivateKeySize = 32
@@ -97,9 +98,8 @@ func SealBox(msg, recipientPub []byte) ([]byte, error) {
 	return out, nil
 }
 
-// OpenSealedBox reverses SealBox. The server never opens sealed boxes in
-// production — this exists for tests and any future server-side integrity
-// tooling.
+// OpenSealedBox reverses SealBox. In production the server only calls it
+// (via ResealBox) while rotating a user's keypair.
 func OpenSealedBox(sealed, recipientPub, recipientPriv []byte) ([]byte, error) {
 	if len(sealed) < SealBoxOverhead {
 		return nil, fmt.Errorf("sealbox: input too short (%d bytes, minimum %d)", len(sealed), SealBoxOverhead)
@@ -125,6 +125,28 @@ func OpenSealedBox(sealed, recipientPub, recipientPriv []byte) ([]byte, error) {
 		return nil, fmt.Errorf("sealbox: authentication failed: %w", err)
 	}
 	return msg, nil
+}
+
+// ResealBox opens a sealed box with the old keypair and seals the same payload
+// to newPub. The plaintext payload (a file/thumbnail/metadata key) is zeroed
+// before returning.
+func ResealBox(sealed, oldPub, oldPriv, newPub []byte) ([]byte, error) {
+	msg, err := OpenSealedBox(sealed, oldPub, oldPriv)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(msg)
+	return SealBox(msg, newPub)
+}
+
+// PublicKeyFromPrivate derives the X25519 public key for priv. Used to check
+// that an unwrapped private key actually belongs to the stored public key
+// before anything is re-sealed with it.
+func PublicKeyFromPrivate(priv []byte) ([]byte, error) {
+	if len(priv) != X25519PrivateKeySize {
+		return nil, fmt.Errorf("x25519: private key must be %d bytes", X25519PrivateKeySize)
+	}
+	return curve25519.X25519(priv, curve25519.Basepoint)
 }
 
 // deriveSealCipher computes the ECDH shared secret, runs HKDF-SHA256 over it

@@ -33,6 +33,11 @@ type Claims struct {
 	// minted from a delegation. Handlers use scope to gate which actions a
 	// token is allowed to perform — see RequireFullScope.
 	Scope string `json:"scp,omitempty"`
+	// DelegationID names the delegation a scoped token was minted from. The
+	// auth middleware checks that the delegation still exists on every
+	// request, so revocation takes effect immediately rather than when the
+	// token expires.
+	DelegationID string `json:"did,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -69,25 +74,26 @@ func getSecret() []byte {
 }
 
 func GenerateToken(userID, sessionID string, isAdmin bool) (string, error) {
-	return generateToken(userID, sessionID, isAdmin, "", tokenExpiry)
+	return generateToken(userID, sessionID, isAdmin, "", "", tokenExpiry)
 }
 
 // GenerateDelegationToken returns a short-lived JWT scoped for delegated uploads.
 // The JWT is not tied to a SessionStore entry — delegated clients do not hold
-// a server-side session; authorization is derived from the refresh-token
-// presentation each time a new access token is minted.
-func GenerateDelegationToken(userID string, ttl time.Duration) (string, error) {
-	return generateToken(userID, "", false, "upload", ttl)
+// a server-side session. It carries the delegation ID instead, and is only
+// accepted while that delegation row exists.
+func GenerateDelegationToken(userID, delegationID string, ttl time.Duration) (string, error) {
+	return generateToken(userID, "", false, "upload", delegationID, ttl)
 }
 
-func generateToken(userID, sessionID string, isAdmin bool, scope string, ttl time.Duration) (string, error) {
+func generateToken(userID, sessionID string, isAdmin bool, scope, delegationID string, ttl time.Duration) (string, error) {
 	initSecret()
 	now := time.Now()
 	claims := Claims{
-		UserID:    userID,
-		SessionID: sessionID,
-		IsAdmin:   isAdmin,
-		Scope:     scope,
+		UserID:       userID,
+		SessionID:    sessionID,
+		IsAdmin:      isAdmin,
+		Scope:        scope,
+		DelegationID: delegationID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(now),

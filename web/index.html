@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css?v=53c553f36abd1729" integrity="sha384-nS1q7+ebNC321YDRqb9AvfasPon3PAz9RCP043hOfItJPKnT52LrDHMSQnD3tkNT" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css?v=3c97a77ecd2ab6a0" integrity="sha384-MhlK2gztnpOMogTqrImvIxGdN/NLWHkCgxP2PlAe7L94OSY0e8EqsF1Pm1ReyYLf" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -259,7 +259,8 @@
                         </div>
                         <div class="admin-create">
                             <h3>Connected Apps</h3>
-                            <p class="delete-warning">Apps authorized to upload to your account. Revoking an app immediately prevents new uploads; any upload already in flight completes within 1 hour or fails, whichever comes first.</p>
+                            <p class="delete-warning">Apps authorized to upload to your account. Revoking an app, changing your password or recovering your account stops its uploads immediately.</p>
+                            <p class="hint">Your upload key fingerprint — when connecting an app, check it shows the same value: <code id="delegation-key-fp"></code></p>
                             <div id="delegations-list" class="delegations-list"></div>
                             <p id="delegations-empty" class="hint hidden">No apps authorized yet.</p>
                             <p id="delegations-error" class="error hidden"></p>
@@ -472,7 +473,7 @@
 
     </div>
 
-    <script src="/js/crypto.js?v=e47faa3f91b7f1c9" type="module" integrity="sha384-dkc/VHG2FMeavPL2gbeG8z0E8DzNEPZF8a4p2rLIdt7wPdD2yS+h5EEv54eFkyou" crossorigin="anonymous"></script>
-    <script src="/js/app.js?v=29992131a737eb32" type="module" integrity="sha384-EJbCOUo20icaIEUYvlnSo9hgzQcFC1I9MzSXXeyFtDF3Rz03FUgKvczh9juywAOC" crossorigin="anonymous"></script>
+    <script src="/js/crypto.js?v=09d991cbdfdcc215" type="module" integrity="sha384-L89RLjnvrRjCRcd0iWIDNSqFI0I+95nWeK1rr2rxixDliifGRcmHNylRfMuKNpcq" crossorigin="anonymous"></script>
+    <script src="/js/app.js?v=0697cf6cee626461" type="module" integrity="sha384-m08IkQoHMBbJh9ZShPZnR+wNA5qIzdjvHnWA1i7BAB2bBnHNgPqx14hiq4vhUPjJ" crossorigin="anonymous"></script>
 </body>
 </html>

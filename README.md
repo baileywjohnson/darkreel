@@ -43,7 +43,7 @@ data/
       thumb.enc    [256 KB]        # encrypted thumbnail
 ```
 
-Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded to 1, 2, 4, 8, or 16 MB with random data. Upload dates are coarsened to year only (delegation records use date granularity — see below). An attacker with root on your server sees uniform blobs with no meaningful metadata.
+Every file and directory modification/access time on disk reads `2024-01-01T00:00:00Z` (directory mtimes are reset after each upload and deletion). The inode change time (ctime) and, on filesystems that record one, the birth time cannot be set from userspace, so they still show roughly when each item was uploaded — see [Disk encryption](#disk-encryption-luks) for why an encrypted volume is recommended. Every chunk is padded to 1, 2, 4, 8, or 16 MB with random data. Upload dates are coarsened to year only (delegation records use date granularity — see below). An attacker with root on your server sees uniform blobs with no meaningful metadata beyond those inode times.
 
 | Data | Visible to server? |
 |------|--------------------|
@@ -72,11 +72,12 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **End-to-end encrypted** - AES-256-GCM chunk encryption, keys derived from your password via Argon2id. The server stores only opaque blobs.
 - **Zero-knowledge metadata** - File names, types, sizes, dimensions, and durations are encrypted into a single blob. The server cannot read any of it.
 - **Encrypted streaming** - Videos stream via MSE with chunk-level decryption in a Web Worker. No server-side decryption. Playback starts after the first chunk.
-- **Size fingerprinting resistance** - Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data, both on disk and over the network. Quota usage is recorded as the padded on-disk size, so the database holds nothing more precise than what the disk already shows.
+- **Size fingerprinting resistance** - Clients pad every chunk *inside* the encryption, so each chunk's ciphertext is exactly 1, 2, 4, 8 or 16 MB (then whole MB) and every thumbnail exactly 256 KB — the server and the network only ever see bucket sizes, never exact lengths (which would fingerprint known videos). Metadata and the folder tree are padded before encryption too. Quota usage is recorded as the padded on-disk size, so the database holds nothing more precise than what the disk already shows.
 - **Secure deletion** - Deleted files are overwritten with random data, fsynced, then unlinked. The data is already AES-256-GCM encrypted and the encryption keys are deleted first, making the ciphertext computationally unrecoverable. The overwrite is defense-in-depth. Best-effort on SSDs due to wear leveling.
 - **Multi-user** - Each user has an isolated, encrypted library with their own master key. Admin panel for user management.
 - **Hash modification** - Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box appended at end, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection. The nonce is never sent to or stored by the server — a stored copy would let anyone with database access link a leaked image back to the account that uploaded it.
-- **Chunk integrity verification** - Chunk counts are stored inside the encrypted metadata blob. On download/playback, the client verifies the count matches, detecting truncation attacks where an attacker deletes chunks from the server.
+- **Chunk integrity verification** - The chunk count lives in the encrypted metadata, and each chunk carries an encrypted "last chunk" flag. Clients check the flag against the count, so dropping chunks from the end of an item is detected rather than yielding a silently short file. Every chunk is bound to its item and position by AAD.
+- **Owner verification** - Anyone who holds your public key — a connected app, or someone with write access to the server's database — can create items that decrypt correctly. Uploads from your own browser or CLI carry an owner tag (an HMAC under a key derived from your master key, covering the item ID and its sealed keys) that nobody else can produce. Items without a valid tag are marked **APP** in the gallery and `[not your upload]` in `drk list`; renaming or moving one marks it as yours.
 - **Generic file storage** - Not just media. Upload any file type — PDFs, documents, archives, code. Everything is encrypted with the same zero-knowledge scheme.
 - **Encrypted folders** - Organize your files into folders. The folder structure is encrypted - only you can see it. Drag-and-drop to reorganize (desktop and mobile touch).
 - **Folder download** - Download an entire folder (including subfolders) as a ZIP file, decrypted client-side.
@@ -84,7 +85,8 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **Image rotation** - Rotate images at the pixel level. The original is securely deleted and replaced with a freshly encrypted copy using new keys.
 - **Text editor** - Plain-text files (`.txt`, `.md`, `.log`, `.csv`/`.tsv`, `.json`, `.yaml`/`.yml`, `.xml`, `.ini`/`.conf`/`.cfg`) open directly in the viewer. Click Edit to modify; Save writes a freshly-encrypted copy and deletes the old one in a single action. A "New Text Document" button inside the Upload modal creates blank documents from scratch. 5 MB editor cap; larger text files fall back to Download.
 - **6 color themes** - Classic, cool, forest, neon, ocean, and warm. Stored in localStorage.
-- **Recovery codes** - 256-bit recovery code generated at account creation and rotated on every password change. If you lose your password, this is the only way back in. Lose both and your data is gone.
+- **Recovery codes** - 256-bit recovery code generated at account creation and replaced on every password change or recovery. If you lose your password, this is the only way back in. Lose both and your data is gone.
+- **Key rotation on password change** - changing your password (or recovering with your recovery code) generates a new master key and a new X25519 keypair, re-seals every item's keys to the new public key, and re-encrypts your folder tree. See [Password change and key rotation](#password-change-and-key-rotation) for what this does and does not protect.
 - **Delegated uploads** - Other apps (e.g., [PPVDA](https://github.com/baileywjohnson/ppvda)) can upload to your account without holding your password. Authorize once via a copy-paste consent flow; connected apps get a refresh token that mints short-lived upload-only JWTs. Apps hold your X25519 public key only — they can seal uploads to you but cannot read, list, or delete any existing media. Revoke anytime from Settings → Connected Apps.
 - **Single binary** - One Go binary with an embedded web UI and SQLite. No external dependencies, no containers, no runtime requirements.
 - **Self-hosted** - Runs on your hardware. A $6/month VPS is enough. Your data never touches a third-party service.
@@ -122,7 +124,7 @@ Per-file symmetric keys (one trio generated per upload)
     the 92-byte sealed blobs alongside the encrypted content.
 ```
 
-Once login completes, the master key and private key live only in the browser. The browser unwraps the private key once per session and imports it as a non-extractable `CryptoKey` — even an XSS cannot exfiltrate its raw bytes, only use it to derive shared secrets.
+Once login completes, the master key and private key live only in the browser, as non-extractable `CryptoKey`s: the master key is unwrapped directly into one (its raw bytes are never held in JavaScript), and the private key is imported as one right after it is decrypted. Script running in the page — an XSS, a malicious extension — can use the keys while the page is open, but cannot copy them out to use later. After 30 minutes without interaction the page logs out and drops the keys.
 
 All uploads (browser, CLI, or delegated third-party) produce the same sealed-box wire format. Delegated clients receive only the public key and never hold the master key or private key, so they can seal uploads to the user but cannot open anything.
 
@@ -134,11 +136,12 @@ All uploads (browser, CLI, or delegated third-party) produce the same sealed-box
 | Master key derivation | Argon2id | Separate salt from auth hash |
 | File / thumb / metadata encryption | AES-256-GCM | Media ID + chunk index as AAD (prevents reordering and cross-file substitution) |
 | Per-file key wrapping | X25519 + HKDF-SHA256 + AES-256-GCM | Sealed-box format: ephemeral X25519 ECDH, HKDF with `info="darkreel-seal-v1"`, AES-256-GCM over the derived key. 92-byte output per 32-byte key. Produces the same wire format whether sealed by browser (Web Crypto), CLI (golang.org/x/crypto), or a delegated client. |
-| User keypair | X25519 | Generated at registration, private key dual-wrapped (master key + recovery code), both with user ID as AAD |
+| User keypair | X25519 | Generated at registration and replaced on every password change / recovery, private key dual-wrapped (master key + recovery code), both with user ID as AAD |
 | Session key | PBKDF2-SHA256 | 600,000 iterations |
-| Chunk padding | Random fill | Bucketed to 1/2/4/8/16 MB per chunk (on disk and over the network) |
-| Metadata padding | Space fill | Bucketed to power-of-2 from 512 B before encryption so blob size doesn't leak filename length |
-| Delegation tokens | HS256 JWT (scoped) | 1-hour TTL, `scope=upload`, rejected on all non-upload endpoints |
+| Chunk padding | Inside the AEAD | Plaintext frame `version \| last-chunk flag \| length \| data \| zeros` sized so the ciphertext is exactly 1/2/4/8/16 MB (then whole MB); thumbnails exactly 256 KB |
+| Metadata padding | Space fill | Bucketed to power-of-2 from 512 B before encryption so blob size doesn't leak filename length (folder tree too) |
+| Owner tag | HMAC-SHA256 | Key = HKDF-SHA256(master key, "darkreel-owner-v1"); covers item ID + the three sealed keys; stored in the encrypted metadata |
+| Delegation tokens | HS256 JWT (scoped) | 1-hour TTL, `scope=upload`, carries the delegation ID and is refused as soon as that delegation is revoked; rejected on all non-upload endpoints |
 | Refresh tokens | 32-byte URL-safe random | Stored server-side as `sha256("darkreel:delegation-refresh-v1"‖token)` — DB leak cannot be replayed |
 | Hash modification | Nonce injection | JPEG COM, PNG tEXt, MP4 free box (appended at end), WebM Void element |
 | Secure deletion | 1-pass shred | Random overwrite, fsync, then unlink. Keys deleted first — ciphertext is unrecoverable regardless. |
@@ -160,13 +163,18 @@ This prevents ciphertext substitution attacks - an attacker with database access
 ### On-disk format
 
 ```
-// encrypted chunk
-[nonce: 12 bytes] [ciphertext] [GCM tag: 16 bytes]
-// chunk index bound as AAD - reorder and decryption fails
+// chunk plaintext (chunk_format 2), padded before encryption
+[version=2: 1B] [flags: 1B, bit0 = last chunk] [data length: 4B big-endian] [data] [zeros → bucket]
 
-// padded chunk on disk
-[real length: 4B big-endian] [encrypted data] [random padding → bucket]
+// encrypted chunk — exactly 1/2/4/8/16 MB (then whole MB); thumbnails 256 KB
+[nonce: 12 bytes] [ciphertext] [GCM tag: 16 bytes]
+// media ID + chunk index bound as AAD - reorder and decryption fails
+
+// chunk on disk (the length prefix only ever shows a bucket size)
+[ciphertext length: 4B big-endian] [encrypted chunk] [random padding → server bucket]
 ```
+
+Items uploaded before chunk format 2 (no `chunk_format` in their metadata) use unpadded chunk plaintext and are still readable.
 
 ## Streaming
 
@@ -232,18 +240,22 @@ Darkreel is designed to run well on a single machine, from a $6/month VPS to a d
 - **Concurrent logins** — each login performs two Argon2id derivations (3 iterations, 64 MB RAM, 4 threads each), totaling ~600ms and pinning 8 OS threads. On a machine with 8 cores, only 2 logins can run at full speed concurrently. This is a deliberate security trade-off — weaker KDF parameters would make passwords easier to brute-force.
 - **SQLite write contention** — SQLite allows only one writer at a time. With many concurrent uploads from different users, write operations (quota checks, media record inserts) may briefly queue. This is rarely a bottleneck in practice since the I/O-heavy chunk writes don't hold the database lock.
 - **Single-machine architecture** — Darkreel does not support horizontal scaling or clustering. For most self-hosted use cases (personal, family, small team), a single machine with adequate disk is more than sufficient.
-- **Chunk count sent in plaintext** — The number of chunks per file is sent unencrypted during upload so the server can validate upload completeness. Since chunks are ~1 MB each (or fMP4 segment boundaries), this reveals approximate file size to the server. Exact sizes remain hidden by chunk padding and encrypted metadata.
+- **Chunk count sent in plaintext** — The number of chunks per file is sent unencrypted during upload so the server can validate upload completeness. Together with the chunk bucket sizes this reveals approximate file size to the server (to within the bucket granularity). Exact sizes remain hidden by padding inside the encryption and by encrypted metadata.
 
 ## Deploy
 
-### One command on a fresh VPS
+### Setup script on a fresh VPS
 
 ```bash
 git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel
+git log -1                # note the commit you are about to run
+less setup.sh             # read what it will do as root
 sudo ./setup.sh
 # firewall, fail2ban, SSH hardening, TLS via Caddy,
-# systemd service, daily backups - all handled
+# systemd service, daily encrypted backups - all handled
 ```
+
+Don't pipe the script from the network into a shell (`curl … | bash`): you can't review what runs as root, the branch it comes from can change between your review and the download, and the script's interactive prompts need the terminal's stdin. Download, inspect, then run.
 
 Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOcean droplet, Hetzner VPS, or similar). The script asks for your domain (verified against server IP), an admin password, a per-user storage quota in GB, and optionally a personal SSH user. Safe to re-run.
 
@@ -254,17 +266,18 @@ Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOc
 | fail2ban | Installed and enabled | Auto-bans IPs after failed SSH attempts |
 | SSH hardening | Creates personal user, disables root login | Limits attack surface if an SSH key is compromised |
 | Deploy user | `deploy` user with limited sudo | For CI/CD - can only copy the binary and restart the service |
-| Go | Installs Go if not present | Required to build from source |
+| Go | Installs Go 1.26.7 (the `go.mod` version) if not present, verifying the tarball's SHA-256 before extracting | Required to build from source |
 | Caddy | Installed and configured | Automatic HTTPS via Let's Encrypt, reverse proxies to Darkreel |
 | Darkreel | Built, installed to `/usr/local/bin/` | The application itself |
 | systemd service | Hardened service with 15+ security directives | Runs as dedicated `darkreel` user with capability bounding, syscall filtering, namespace restrictions, and more |
-| Database backups | Daily cron job at 3 AM, encrypted, 30-day retention | SQLite `.backup` → AES-256-CBC encrypted with a dedicated key |
+| Database backups | Daily cron job at 3 AM, 30-day retention, in root-only `/var/backups/darkreel` | SQLite dump streamed into [age](https://age-encryption.org), encrypted to a public key whose private half is kept off the server |
 
 ### When it's done
 
 1. Open `https://your-domain.com` and log in
 2. The setup script will display your **recovery code** - save it somewhere safe
-3. SSH in as your personal user going forward: `ssh yourname@your-server-ip`
+3. If you let the script generate the backup key, it was displayed once (`AGE-SECRET-KEY-1…`) - it must be stored off the server, it is not kept anywhere on it
+4. SSH in as your personal user going forward: `ssh yourname@your-server-ip`
 
 The recovery code is printed to stderr with a prominent banner and also written to `{data}/.recovery-code` (chmod 0600) so a setup script or automation can pick it up programmatically. The file is **auto-deleted by the server after 5 minutes** to close the persistent-on-disk window — previously it could sit in `data/` forever if the operator forgot to delete it, turning any backup or snapshot into an admin-recovery leak. Save the code somewhere durable during that grace period. No one — including the server admin — can recover it afterward.
 
@@ -293,7 +306,7 @@ DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 |----------|---------|-------------|
 | `DARKREEL_ADMIN_USERNAME` | `admin` | Admin username (first-run bootstrap only) |
 | `DARKREEL_ADMIN_PASSWORD` | **(required on first run)** | Admin password (first-run bootstrap only) |
-| `PERSIST_SESSION` | `true` | Cache master key in sessionStorage (survives page refresh). Set to `false` for higher security - see [Session persistence](#session-persistence) |
+| `PERSIST_SESSION` | `true` | Keep the (non-extractable) keys in IndexedDB so a page refresh doesn't require logging in again. Set to `false` to require a login after every refresh - see [Session persistence](#session-persistence) |
 | `ALLOW_REGISTRATION` | `false` | Initial registration state on first run. Once an admin toggles registration via the admin panel, that setting is persisted to the database and takes precedence over this variable on subsequent restarts. |
 | `TRUST_PROXY` | `false` | Take the client address for rate limiting from `X-Forwarded-For` — the rightmost entry that isn't itself a trusted proxy, i.e. the address your proxy appended. `X-Real-IP` and `True-Client-IP` are ignored. **Only enable when running behind a trusted reverse proxy** (Caddy, nginx); `setup.sh` enables it for the Caddy it installs. Behind a proxy with this unset, every client shares the proxy's address and one rate-limit bucket. |
 | `TRUST_PROXY_CIDR` | *(unset)* | Comma-separated CIDRs of trusted proxy peers (e.g. `127.0.0.1/32,10.0.0.0/8`). When set along with `TRUST_PROXY=true`, proxy headers are honored *only* from peers inside these networks — necessary if the bind address is reachable beyond the proxy (shared Docker network, cluster mesh). When unset, all upstreams are trusted, which is safe only if you firewall the bind address to the proxy yourself. |
@@ -355,7 +368,7 @@ Caddy handles TLS automatically via Let's Encrypt. The setup script offers to di
 
 ## API
 
-All endpoints except `/health`, `/api/config`, and `/api/delegation/{exchange,refresh}` require a JWT. JWTs contain user ID, session ID, admin flag, and optional scope. Delegation-minted JWTs carry `scope: "upload"` and are rejected by every endpoint except the upload endpoint itself.
+All endpoints except `/health`, `/api/config`, and `/api/delegation/{exchange,refresh}` require a JWT. JWTs contain user ID, session ID, admin flag, and optional scope. Delegation-minted JWTs carry `scope: "upload"` plus the delegation ID; they are rejected by every endpoint except the upload endpoint itself, and by that one too once the delegation is revoked (checked on every request).
 
 ### Auth
 
@@ -364,8 +377,8 @@ All endpoints except `/health`, `/api/config`, and `/api/delegation/{exchange,re
 | POST | `/api/auth/register` | Register (returns recovery code; also generates the user's X25519 keypair) |
 | POST | `/api/auth/login` | Login (returns JWT + encrypted master key + public key + encrypted private key) |
 | POST | `/api/auth/logout` | Logout (immediate session invalidation) |
-| POST | `/api/auth/recover` | Reset password with recovery code (re-wraps master key and private key; revokes all delegations) |
-| POST | `/api/auth/change-password` | Change password (re-wraps master key and private key, rotates recovery code, invalidates all other sessions, revokes all delegations) |
+| POST | `/api/auth/recover` | Reset password with recovery code. Rotates the master key and keypair (re-seals every item, re-encrypts the folder tree), issues a new recovery code, invalidates all sessions, revokes all delegations and pending delegation codes |
+| POST | `/api/auth/change-password` | Change password. Same rotation as recover; returns a new session token plus the new `kdf_salt`, `encrypted_master_key`, `public_key`, `encrypted_priv_key` and `recovery_code` — the client must replace its master key **and** keypair |
 | DELETE | `/api/auth/account` | Delete account and all media |
 | GET | `/api/config` | Server config (registration, session persistence) |
 
@@ -390,7 +403,7 @@ All endpoints except `/health`, `/api/config`, and `/api/delegation/{exchange,re
 | POST | `/api/delegation/exchange` | Consume an authorization code. Returns `{ user_id, public_key, refresh_token, delegation_id, scope }`. No auth (the code is the auth). Atomic via `DELETE ... RETURNING` — a single code cannot be exchanged twice. |
 | POST | `/api/delegation/refresh` | Trade a refresh token for a 1 h upload-scoped JWT. No auth (the refresh token is the auth). Server lookup is via `sha256("darkreel:delegation-refresh-v1"‖token)` so a DB leak cannot be replayed. |
 | GET | `/api/account/delegations` | List the caller's active delegations (client name, URL, created_at, last_used_at). Full-scope JWT. |
-| DELETE | `/api/account/delegations/:id` | Revoke a delegation. Existing 1 h access tokens remain valid until expiry; the next refresh fails. Full-scope JWT. |
+| DELETE | `/api/account/delegations/:id` | Revoke a delegation. Its access tokens stop working immediately and the refresh token can no longer mint new ones. Full-scope JWT. |
 
 ### Folders
 
@@ -424,8 +437,9 @@ All endpoints except `/health`, `/api/config`, and `/api/delegation/{exchange,re
 **The database is load-bearing.** Every encrypted file key lives in `darkreel.db`. Lose the database and every file on disk becomes permanently undecryptable - even with the correct password.
 
 ```bash
-# Hot backup (server stays running, WAL-safe)
-sqlite3 /var/lib/darkreel/darkreel.db ".backup /path/to/backup.db"
+# Hot backup (server stays running, WAL-safe). Run as the service user so
+# SQLite's -wal/-shm files are never created root-owned.
+sudo -u darkreel sqlite3 /var/lib/darkreel/darkreel.db ".backup /path/to/backup.db"
 
 # Full backup (stop for consistency)
 sudo systemctl stop darkreel
@@ -435,21 +449,56 @@ sudo systemctl start darkreel
 
 Both database and media are required for a full restore. The database without the media means you have keys but no files. The media without the database means you have encrypted blobs with no way to decrypt them.
 
-Backups are safe to store off-site - media is encrypted on disk, keys are encrypted in the database. An attacker with a backup can't decrypt anything without a user's password.
+Keep backups outside the data directory. Startup cleanup only ever touches UUID-named directories there, but a restore or a mistaken `rm` of the data directory would take anything inside it along.
 
-#### SQLite backup with cron
+A backup holds no plaintext media or keys, but it does hold every account's password hash and password- and recovery-code-wrapped keys. Whoever has a backup plus someone's *then-current* password or recovery code can decrypt that account's items as of the backup — a later password change does not undo that for items that already existed (see [Password change and key rotation](#password-change-and-key-rotation)). Encrypt backups, keep the key off the server, and don't keep them longer than you need.
 
-The setup script configures encrypted backups automatically. For manual setups:
+#### Nightly encrypted backups (setup.sh)
+
+`setup.sh` installs `/usr/local/sbin/darkreel-backup`, run by root from `/etc/cron.d/darkreel-backup` at 3 AM:
+
+- `sqlite3 .dump` of the live database (run as the `darkreel` user) is streamed straight into [`age`](https://age-encryption.org), so the plaintext database never touches disk and a failed run leaves no partial file.
+- It is encrypted to the age **public key** in `/etc/darkreel/backup-recipient.txt`. The matching private key (identity) is **not** on the server: either you pasted a recipient you generated elsewhere, or setup generated a key pair, printed the identity once, and kept only the public half.
+- Output goes to `/var/backups/darkreel/darkreel-YYYYMMDD.sql.age` (root-owned, mode 0700), outside the data directory. Files older than 30 days are deleted.
+- Output and errors go to the journal: `journalctl -t darkreel-backup`.
+
+The backups are only on the server until you copy them elsewhere. Because they are encrypted to a key the server doesn't hold, they are safe to ship off-host as-is, e.g. a daily `rsync -a /var/backups/darkreel/ backup-host:darkreel/` or `rclone copy`. Check the first few nights that files are appearing.
+
+To use your own key instead: `age-keygen -o darkreel-backup-key.txt` on another machine, then put the `age1…` public key it prints into `/etc/darkreel/backup-recipient.txt`.
+
+Installs from before this scheme kept AES-CBC (`openssl enc`) backups in `/var/lib/darkreel/backups` with the key in `/etc/darkreel/backup.key` on the same host. Once the new backups are verified, move the old ones off the server or delete them together with that key.
+
+#### Restoring a backup
+
+On a machine that has the age identity:
 
 ```bash
-# Generate a backup encryption key (store this separately!)
-openssl rand -hex 32 > /etc/darkreel/backup.key
-chmod 600 /etc/darkreel/backup.key
-
-# /etc/cron.d/darkreel-backup
-# Daily encrypted backup at 3 AM, keep 30 days
-0 3 * * * darkreel /bin/bash -c 'BACKUP_TMP=$(mktemp) && sqlite3 /var/lib/darkreel/darkreel.db ".backup $BACKUP_TMP" && openssl enc -aes-256-cbc -salt -pbkdf2 -in "$BACKUP_TMP" -out "/var/lib/darkreel/backups/darkreel-$(date +\%Y\%m\%d).db.enc" -pass file:/etc/darkreel/backup.key && rm -f "$BACKUP_TMP" && find /var/lib/darkreel/backups -name "darkreel-*.db.enc" -mtime +30 -delete'
+age --decrypt -i darkreel-backup-key.txt darkreel-20260101.sql.age > darkreel.sql
 ```
+
+On the server (with the media directories from the same point in time or later still in place):
+
+```bash
+sudo systemctl stop darkreel
+sudo mv /var/lib/darkreel/darkreel.db /var/lib/darkreel/darkreel.db.old   # also move any -wal/-shm files
+sudo -u darkreel sqlite3 /var/lib/darkreel/darkreel.db < darkreel.sql
+sudo systemctl start darkreel
+shred -u darkreel.sql
+```
+
+Items uploaded after the backup was taken have no database row and are shredded as orphans at startup; items deleted after it come back as "incomplete" rows and are dropped. Password changes made after the backup are lost — users log in with the password (and recovery code) they had at that time.
+
+#### Manual setups
+
+```bash
+sudo apt install sqlite3 age
+age-keygen -o darkreel-backup-key.txt   # on ANOTHER machine; keep this file safe
+# on the server, the public key only:
+echo 'age1...' | sudo tee /etc/darkreel/backup-recipient.txt
+sudo install -d -m 700 /var/backups/darkreel
+```
+
+then install a script like the one `setup.sh` writes to `/usr/local/sbin/darkreel-backup` and a root cron entry for it.
 
 ### Upgrading
 
@@ -491,25 +540,25 @@ The setup script handles all of this. If deploying manually:
 - systemd sandboxing - `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `PrivateDevices`, `CapabilityBoundingSet=`, `SystemCallFilter`, and more
 - Dedicated `darkreel` user - minimal permissions
 - SRI hashes - frontend JS/CSS integrity verified by browser (including dynamically loaded mp4box.js)
-- Rate limiting - 5 auth attempts/min/IP + 10 attempts/15min/username (per-username limits defend against distributed brute-force even when per-IP limits are bypassed)
+- Rate limiting - 5 auth attempts/min/IP + 10 failed attempts/15min/username (per-username limits defend against distributed brute-force even when per-IP limits are bypassed). Only failures count; login/password change and recovery have separate per-username budgets; a tripped limit returns HTTP 429 "Too many attempts for this account — try again later", identically for existing and nonexistent usernames. Anyone who knows a username can still spend its budget with wrong guesses, locking that account's password login for up to 15 minutes at a time
 - Security headers - `nosniff`, `DENY` framing, `no-referrer`, strict CSP, HSTS, `Permissions-Policy`
 - COOP/COEP - defense-in-depth for SharedArrayBuffer
 - Cache-Control - `no-store` on all API responses to prevent caching of sensitive data
-- Graceful shutdown - in-flight requests drain before the database closes
+- Graceful shutdown - on SIGTERM/SIGINT in-flight requests drain and queued secure-deletes finish before the database closes and the process exits
 - Session expiration - sessions expire after 24 hours, with periodic cleanup
-- Password change - all existing sessions are invalidated immediately
+- Password change - rotates the master key and keypair, invalidates all existing sessions, and revokes all delegations and their access tokens immediately
 - Admin re-verification - admin status is checked from the database on every admin request
-- Timing side-channel mitigation - login and recovery endpoints perform dummy work for non-existent users
+- Timing side-channel mitigation - login performs a dummy Argon2id for non-existent users; recovery does the same single AES-GCM check whether the username exists or not
 - BREACH mitigation - HTTP compression disabled on auth endpoints that return secrets
 - Last-admin protection - the system prevents deletion of the last admin account (atomic transaction prevents TOCTOU race)
 - Mandatory storage quotas - all users have a storage quota (defaults to 1 GB), tracked in on-disk bytes (padding included) and enforced while chunks are written. Per-user quotas can only be raised, never lowered. Total allocated quotas are validated against available disk capacity (with a 2 GB reserve)
 - Startup integrity checks - orphan cleanup, incomplete upload detection, and size backfill run concurrently with parallelized filesystem checks for fast startup even with large media libraries.
 - Proxy-aware rate limiting - `X-Forwarded-For` trust is off by default and must be enabled via `TRUST_PROXY=true`; only the rightmost untrusted hop is used, so client-supplied entries can't choose the rate-limit bucket. IPv6 clients are bucketed per /64. Argon2id work is additionally capped by a global concurrency limit so parallel logins can't exhaust memory
-- Encrypted backups - database backups encrypted with AES-256-CBC using a dedicated key
+- Encrypted backups - nightly database dumps encrypted with age to a public key whose private half is kept off the server, stored root-only outside the data directory
 - Per-user upload concurrency limit - max 3 concurrent uploads per user, prevents disk exhaustion via parallel uploads
 - Network-level padding - chunks and thumbnails sent padded over the wire (not just on disk), so Content-Length reveals only bucket tier
 - Master key cleared immediately - server clears the plaintext master key from memory immediately after the login response, not after 24h session expiry
-- Recovery code rotation - recovery code is rotated on every password change; old codes are immediately invalidated
+- Recovery code rotation - recovery code is replaced on every password change and recovery; old codes are immediately invalidated (they only unwrap the retired keys)
 - Signed auto-updates - auto-updater refuses to install binaries without a valid Ed25519 signature over the release tag, asset name and hash (hard failure on missing signing key), and never downgrades
 - Caddy access log control - setup script offers to disable Caddy access logs for privacy (client IPs and request paths are not logged)
 - SQLite secure deletion - `PRAGMA secure_delete=ON` overwrites deleted content in the database file (the server refuses to start if it isn't in effect), and the WAL is truncated periodically and after account deletion so old page images don't linger there. Deleting a media item or account therefore removes its sealed keys from disk rather than leaving them in free pages.
@@ -518,7 +567,7 @@ The setup script handles all of this. If deploying manually:
 - Batched upload durability - chunk writes are fsynced once after all chunks are written (not per-chunk), maintaining durability guarantees while minimizing I/O overhead
 - Static asset caching - JS, CSS, and font files are served with long-lived immutable cache headers. Cache-busting is handled via content-hash query parameters that change on every build. index.html is always revalidated to pick up new asset versions.
 - Metadata blob size limits - uploaded encrypted metadata fields are validated against strict size limits (128 bytes for encrypted keys, 64 bytes for nonces, 64 KB for metadata blobs) to prevent database bloat attacks.
-- Password-change and account-deletion rate limiting - these endpoints are rate-limited (5/min/IP) in addition to requiring the current password, preventing brute-force attacks via authenticated sessions. Password-change is also protected by the per-account limiter (10 attempts/15min/username), defending against brute-force of the old password via a stolen JWT.
+- Password-change and account-deletion rate limiting - these endpoints are rate-limited (5/min/IP) in addition to requiring the current password, preventing brute-force attacks via authenticated sessions. Password-change is also protected by the per-account limiter (10 failed attempts/15min/username, shared with login), defending against brute-force of the old password via a stolen JWT.
 - Streaming chunk uploads - upload chunks are streamed directly to disk without buffering the entire chunk in memory, reducing peak memory usage from ~36 MB to ~64 KB per concurrent chunk write.
 - Hashed rate-limiter identifiers - IP addresses and usernames are keyed-hashed (SipHash via `hash/maphash` with a per-process random seed) before storage in rate limiters. A process memory dump reveals no plaintext identifiers, and an attacker cannot precompute hash collisions to consume another user's rate-limit budget
 - Privacy-safe logging - server logs contain no usernames, user IDs, media IDs, IP addresses, or file paths. Only generic operational messages are logged
@@ -535,12 +584,12 @@ The setup script handles all of this. If deploying manually:
 
 ### Session persistence
 
-`PERSIST_SESSION` (default: `true`) controls whether the master encryption key is cached in the browser's `sessionStorage` between page refreshes. This is a convenience vs. security trade-off:
+`PERSIST_SESSION` (default: `true`) controls whether the session keys survive a page refresh:
 
 | Setting | Behavior | Security |
 |---------|----------|----------|
-| `true` (default) | Master key survives page refresh. Users stay logged in until they close the tab or their session expires. | If an attacker achieves XSS or has a malicious browser extension, they could read the key from `sessionStorage`. The tight CSP (`script-src 'self'` + SRI on all scripts) makes XSS difficult, but not impossible. |
-| `false` | Master key is cleared on every page refresh. Users must re-enter their password to decrypt their library. | The key only exists in JavaScript memory during the active session. No persistent storage. More secure, but less convenient. |
+| `true` (default) | The master key, owner-tag key and private key are kept in IndexedDB as the non-extractable `CryptoKey` objects themselves, under a random per-tab session id. Users stay logged in across refreshes until they log out, go idle for 30 minutes, or their session expires. | Raw key bytes are never stored — earlier versions kept the master key base64-encoded in `sessionStorage`, readable by any script in the page. Script in the page can still *use* the stored keys, and the browser's IndexedDB files on disk hold them until logout, so on a shared or untrusted device prefer `false`. |
+| `false` | Keys exist only in memory; every refresh requires the password. | Nothing is persisted. More secure, but less convenient. |
 
 To disable:
 
@@ -560,12 +609,16 @@ The secure deletion overwrite is defense-in-depth — encryption keys are delete
 sudo cryptsetup luksFormat /dev/sdX
 sudo cryptsetup open /dev/sdX darkreel-data
 sudo mkfs.ext4 /dev/mapper/darkreel-data
-sudo mount /dev/mapper/darkreel-data /var/lib/darkreel
+sudo mount -o noatime /dev/mapper/darkreel-data /var/lib/darkreel
 ```
+
+`noatime` stops reads from updating file access times; without it, viewing an item records when it was (last) viewed.
 
 With LUKS, all data at rest is encrypted at the block level. The combination of Darkreel's application-layer encryption (keys deleted before shredding) and LUKS block-layer encryption provides two independent layers of protection against physical recovery.
 
 This is the recommended setup for production deployments on VPS providers where you don't control the physical hardware.
+
+It is also the only way to hide *when* things happened on disk. Darkreel resets file and directory access/modification times to a fixed epoch, but every filesystem also keeps an inode change time (ctime), and ext4/btrfs/xfs keep a birth time; neither can be set by a userspace program. Someone who images an unencrypted disk can read upload times (and the last change to each user directory) to the second from them. On an encrypted volume they see nothing without the volume key.
 
 ### Recovery codes
 
@@ -579,9 +632,19 @@ curl -X POST https://media.example.com/api/auth/recover \
   -d '{"username": "you", "recovery_code": "your-code", "new_password": "NewStr0ng!Password"}'
 ```
 
-This resets your password, re-encrypts the master key, and returns a new recovery code. Your data remains accessible.
+This resets your password, rotates your master key and keypair (see below), and returns a new recovery code. Your data remains accessible. Log in again afterwards; connected apps must be re-authorized.
 
-If you lose both your password and recovery code, your data is permanently inaccessible. No one - including the server admin - can recover your encryption keys. This is by design.
+If you lose both your password and recovery code, your data is permanently inaccessible. The server admin cannot recover your current keys either. This is by design.
+
+### Password change and key rotation
+
+Changing your password or recovering your account generates a **new master key and a new X25519 keypair**. In the same database transaction the server re-seals every item's three 92-byte key envelopes to the new public key, re-encrypts your folder tree under the new master key, stores the new password hash and key wraps, issues a new recovery code, and deletes all sessions, connected-app delegations, and pending delegation codes. The old password and old recovery code unwrap only the retired keys.
+
+What this protects: someone who knew your old password or recovery code — including an admin who created your account and saw its initial password and recovery code — and who copies the database *after* the change gets nothing. Everything uploaded after the change is sealed to a key they never had. If an admin created your account, change the password before uploading anything: until then the admin knows everything needed to unwrap your keys.
+
+What it cannot protect: the per-item file, thumbnail and metadata keys are **not** changed (that would mean re-encrypting every file). Items uploaded *before* the rotation are still encrypted with their original file keys, so someone holding an older database copy (a backup, a snapshot) plus the password or recovery code valid at that time can still decrypt those older items. If that matters, delete old backups and treat the old password as compromised for the older items.
+
+The rotation runs the X25519 re-seal for every item (a few hundred microseconds each), so a password change on an account with tens of thousands of items takes several seconds. Clients must use the keys returned by change-password (or log in again); an open browser session that keeps the old keypair would seal new uploads to a retired key, which is why the server refuses uploads, metadata edits and folder saves that were authorized against the old keys (HTTP 409).
 
 ### Upload limits
 
