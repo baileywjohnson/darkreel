@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"strconv"
 )
 
@@ -159,11 +160,30 @@ func GetQuotaInfo(database *sql.DB, userID string) (*QuotaInfo, error) {
 	return qi, nil
 }
 
-// UpdateMediaSize sets the actual byte size after upload completes.
-func UpdateMediaSize(db *sql.DB, id string, sizeBytes int64) error {
-	_, err := db.Exec(`UPDATE media SET size_bytes = ? WHERE id = ?`, sizeBytes, id)
+// EffectiveQuota resolves a user's storage quota in bytes. Priority: per-user
+// DB override > server default in DB > fallback (the MAX_STORAGE_GB env var).
+// Returns <= 0 when no quota is configured.
+func EffectiveQuota(qi *QuotaInfo, fallback int64) int64 {
+	quota := fallback
+	if qi.DefaultQuota > 0 {
+		quota = qi.DefaultQuota
+	}
+	if qi.UserQuota > 0 {
+		quota = qi.UserQuota
+	}
+	return quota
+}
+
+// UpdateMediaSizeIfSet overwrites size_bytes only for completed uploads
+// (size_bytes > 0), leaving in-progress rows alone.
+func UpdateMediaSizeIfSet(db *sql.DB, id string, sizeBytes int64) error {
+	_, err := db.Exec(`UPDATE media SET size_bytes = ? WHERE id = ? AND size_bytes > 0`, sizeBytes, id)
 	return err
 }
+
+// ErrMediaGone is returned by UpdateMediaSizeWithQuotaCheck when the media
+// row no longer exists.
+var ErrMediaGone = errors.New("media record no longer exists")
 
 // UpdateMediaSizeWithQuotaCheck atomically verifies that adding sizeBytes
 // for userID would not exceed quota, then updates the media record.
@@ -182,8 +202,17 @@ func UpdateMediaSizeWithQuotaCheck(database *sql.DB, id, userID string, sizeByte
 	if currentBytes+sizeBytes > quota {
 		return false, nil
 	}
-	if _, err := tx.Exec(`UPDATE media SET size_bytes = ? WHERE id = ? AND user_id = ?`, sizeBytes, id, userID); err != nil {
+	res, err := tx.Exec(`UPDATE media SET size_bytes = ? WHERE id = ? AND user_id = ?`, sizeBytes, id, userID)
+	if err != nil {
 		return false, err
+	}
+	// The row can vanish mid-upload (the user deleted it, or the account was
+	// deleted and cascaded). Reporting success then would tell the client an
+	// upload landed that no longer exists.
+	if n, err := res.RowsAffected(); err != nil {
+		return false, err
+	} else if n != 1 {
+		return false, ErrMediaGone
 	}
 	return true, tx.Commit()
 }

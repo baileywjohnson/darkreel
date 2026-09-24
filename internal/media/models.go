@@ -14,8 +14,7 @@ type APIMediaItem struct {
 	FileKeySealed     string `json:"file_key_sealed"`     // base64, 80-byte sealed box
 	ThumbKeySealed    string `json:"thumb_key_sealed"`    // base64, 80-byte sealed box
 	MetadataKeySealed string `json:"metadata_key_sealed"` // base64, 80-byte sealed box
-	HashNonce         string `json:"hash_nonce"`
-	MetadataEnc       string `json:"metadata_enc"`   // base64 — metadata encrypted under metadata key
+	MetadataEnc       string `json:"metadata_enc"`        // base64 — metadata encrypted under metadata key
 	MetadataNonce     string `json:"metadata_nonce"`
 	CreatedAt         string `json:"created_at"`
 }
@@ -29,10 +28,14 @@ type UploadMeta struct {
 	FileKeySealed     string `json:"file_key_sealed"`     // base64
 	ThumbKeySealed    string `json:"thumb_key_sealed"`    // base64
 	MetadataKeySealed string `json:"metadata_key_sealed"` // base64
-	HashNonce         string `json:"hash_nonce"`
-	MetadataEnc       string `json:"metadata_enc"`
-	MetadataNonce     string `json:"metadata_nonce"`
-	CreatedAt         string `json:"created_at,omitempty"` // optional: preserve original timestamp on rotate
+	// HashNonce is accepted from older clients and discarded. Clients embed
+	// a random nonce in image bytes before encryption; storing that same
+	// nonce in plaintext here turned every downloaded copy of an image into
+	// a beacon linking it back to this account and media item.
+	HashNonce     string `json:"hash_nonce,omitempty"`
+	MetadataEnc   string `json:"metadata_enc"`
+	MetadataNonce string `json:"metadata_nonce"`
+	CreatedAt     string `json:"created_at,omitempty"` // optional: preserve original timestamp on rotate
 }
 
 func B64(data []byte) string {

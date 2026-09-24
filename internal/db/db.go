@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -15,7 +16,17 @@ func Open(dataDir string) (*sql.DB, error) {
 	}
 
 	dbPath := filepath.Join(dataDir, "darkreel.db")
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON&_secure_delete=FAST")
+	// modernc.org/sqlite only applies pragmas given as _pragma=name(value)
+	// (plus a few shorthands such as _foreign_keys). It silently ignored the
+	// previous `_secure_delete=FAST`, so secure delete was never on.
+	// Pragmas in the DSN run on every pooled connection; secure_delete is
+	// per-connection, so it has to be set this way.
+	//   secure_delete(1)       — overwrite deleted content in the DB file
+	//   journal_size_limit(0)  — truncate the WAL whenever it resets, so old
+	//                            page images (which still hold deleted keys)
+	//                            don't linger in darkreel.db-wal
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON"+
+		"&_pragma=secure_delete(1)&_pragma=journal_size_limit(0)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -35,7 +46,57 @@ func Open(dataDir string) (*sql.DB, error) {
 		return nil, fmt.Errorf("chmod database: %w", err)
 	}
 
+	// Deletion of media keys and accounts is only meaningful if SQLite
+	// actually overwrites the freed content. Refuse to run otherwise rather
+	// than silently leaving "deleted" keys recoverable.
+	var secureDelete int
+	if err := db.QueryRow(`PRAGMA secure_delete`).Scan(&secureDelete); err != nil || secureDelete != 1 {
+		db.Close()
+		return nil, fmt.Errorf("SQLite secure_delete is not enabled (got %d, err %v)", secureDelete, err)
+	}
+
+	// Hash nonces are no longer stored (see media.UploadMeta.HashNonce);
+	// blank any left from older versions. Idempotent and cheap after the
+	// first run. secure_delete makes this overwrite the old bytes.
+	if _, err := db.Exec(`UPDATE media SET hash_nonce = x'' WHERE length(hash_nonce) > 0`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("clear hash nonces: %w", err)
+	}
+
+	// Databases created while secure_delete was silently off still hold
+	// deleted rows in free pages. VACUUM once to rebuild the file without them.
+	if v, _ := GetSetting(db, "secure_delete_vacuumed"); v != "1" {
+		if _, err := db.Exec(`VACUUM`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("vacuum: %w", err)
+		}
+		CheckpointWAL(db)
+		if err := SetSetting(db, "secure_delete_vacuumed", "1"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("record vacuum: %w", err)
+		}
+	}
+
 	return db, nil
+}
+
+// CheckpointWAL copies the WAL into the main database and truncates it, so
+// page images from before a delete don't persist in darkreel.db-wal.
+func CheckpointWAL(db *sql.DB) {
+	_, _ = db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+}
+
+// StartWALMaintenance truncates the WAL periodically. SQLite's automatic
+// checkpoints only run every ~1000 pages and don't truncate, so on a quiet
+// server deleted content could otherwise sit in the WAL indefinitely.
+func StartWALMaintenance(db *sql.DB, interval time.Duration) {
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for range t.C {
+			CheckpointWAL(db)
+		}
+	}()
 }
 
 // schemaVersion is the on-disk schema version. Bumped to 2 for Shape 2 of the

@@ -17,7 +17,12 @@ REPO="baileywjohnson/darkreel"
 INSTALL_DIR="/usr/local/bin"
 BINARY="darkreel"
 SERVICE="darkreel"
-VERSION_FILE="/var/lib/darkreel/.version"
+# Installed-version state lives in a root-only directory. It used to be
+# /var/lib/darkreel/.version, inside the service's own writable data dir,
+# where a compromised service could plant a symlink (turning this root
+# write into an arbitrary file overwrite) or pin a fake version.
+STATE_DIR="/var/lib/darkreel-updater"
+VERSION_FILE="${STATE_DIR}/version"
 CRON_FILE="/etc/cron.d/darkreel-update"
 
 RED='\033[0;31m'
@@ -69,16 +74,30 @@ LATEST=$(curl -sf "https://api.github.com/repos/${REPO}/releases/latest" | grep 
 if [ -z "$LATEST" ]; then
   error "Could not fetch latest release from GitHub"
 fi
+TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
+if ! [[ "$LATEST" =~ $TAG_RE ]]; then
+  error "Latest release tag '$LATEST' is not of the form vMAJOR.MINOR.PATCH"
+fi
 
 # --- Check current version ---
+install -d -m 0700 -o root -g root "$STATE_DIR"
+[ -L "$VERSION_FILE" ] && error "$VERSION_FILE is a symlink — refusing to continue"
 CURRENT=""
 if [ -f "$VERSION_FILE" ]; then
   CURRENT=$(cat "$VERSION_FILE")
+  [[ "$CURRENT" =~ $TAG_RE ]] || CURRENT=""
 fi
 
 if [ "$CURRENT" = "$LATEST" ]; then
   info "Already on latest version ($LATEST)"
   exit 0
+fi
+
+# Only ever move forward. Whoever controls the GitHub repo (or the "latest"
+# pointer) could otherwise mark an older, validly signed but vulnerable
+# release as latest and roll every server back to it.
+if [ -n "$CURRENT" ] && [ "$(printf '%s\n%s\n' "$CURRENT" "$LATEST" | sort -V | tail -1)" != "$LATEST" ]; then
+  error "Latest release $LATEST is older than installed $CURRENT — refusing to downgrade"
 fi
 
 info "Update available: ${CURRENT:-unknown} -> $LATEST"
@@ -113,11 +132,15 @@ fi
 info "Checksum verified"
 
 # --- Verify Ed25519 signature ---
+# The signature covers a manifest binding product, tag, asset name and hash
+# (see .github/workflows/release.yml). Rebuilding it from the tag we're
+# installing means a signature for a different release or architecture
+# doesn't verify here.
 if [ -f "$SIGNING_PUB" ]; then
-  echo -n "$ACTUAL" > "${TMP_DIR}/${ASSET}.hash"
+  printf 'darkreel-release-v1\n%s\n%s\n%s\n' "$LATEST" "$ASSET" "$ACTUAL" > "${TMP_DIR}/${ASSET}.manifest"
   if openssl pkeyutl -verify -pubin \
     -inkey "$SIGNING_PUB" \
-    -rawin -in "${TMP_DIR}/${ASSET}.hash" -sigfile "${TMP_DIR}/${ASSET}.sig" 2>/dev/null; then
+    -rawin -in "${TMP_DIR}/${ASSET}.manifest" -sigfile "${TMP_DIR}/${ASSET}.sig" 2>/dev/null; then
     info "Ed25519 signature verified"
   else
     error "Signature verification FAILED — binary may be tampered with"
@@ -133,8 +156,9 @@ systemctl stop "$SERVICE"
 mv "${INSTALL_DIR}/${BINARY}.new" "${INSTALL_DIR}/${BINARY}"
 systemctl start "$SERVICE"
 
-# --- Record version ---
-echo "$LATEST" > "$VERSION_FILE"
+# --- Record version (replace atomically; never write through a symlink) ---
+printf '%s\n' "$LATEST" > "${VERSION_FILE}.new"
+mv -f "${VERSION_FILE}.new" "$VERSION_FILE"
 
 # --- Health check ---
 sleep 2

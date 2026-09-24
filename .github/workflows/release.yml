@@ -4,6 +4,10 @@ on:
   push:
     tags: ["v*"]
 
+# Default to read-only; the release job opts into what it needs.
+permissions:
+  contents: read
+
 jobs:
   build:
     strategy:
@@ -16,10 +20,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -32,42 +38,63 @@ jobs:
           go build -trimpath -ldflags="-s -w" -o darkreel-${{ matrix.goos }}-${{ matrix.goarch }} .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: darkreel-${{ matrix.goos }}-${{ matrix.goarch }}
           path: darkreel-${{ matrix.goos }}-${{ matrix.goarch }}
 
+  # This job holds SIGNING_KEY, so it runs no third-party or marketplace
+  # action code at all — only shell, openssl and the runner's preinstalled
+  # gh CLI. (A compromised action in the same job could read the key from
+  # the runner's memory.) Artifacts are fetched and the release is created
+  # with gh.
   release:
     needs: build
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
     steps:
+      - name: Validate tag
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag $TAG is not vMAJOR.MINOR.PATCH"; exit 1; }
+
       - name: Download artifacts
-        uses: actions/download-artifact@v8
+        run: |
+          gh run download "${{ github.run_id }}" --dir dist
+          mkdir release
+          for bin in dist/darkreel-linux-*/darkreel-linux-*; do
+            cp "$bin" release/
+          done
+          ls -l release
 
       - name: Create checksums and sign
+        working-directory: release
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
         run: |
-          for dir in darkreel-*/; do
-            cp "$dir"/* . 2>/dev/null || true
-          done
-          sha256sum darkreel-* > checksums.txt
+          sha256sum darkreel-linux-* > checksums.txt
           cat checksums.txt
 
-          # Sign each binary with Ed25519 — key passed via fd, never written to disk
+          # Each signature covers a manifest binding the product, the release
+          # tag, the asset name and its hash — not the bare hash. update.sh
+          # rebuilds the manifest from what it is installing, so an older
+          # signed binary can't be re-published under a newer tag and one
+          # architecture's binary can't stand in for another's.
+          # Key passed via fd, never written to disk.
           for bin in darkreel-linux-*; do
-            sha256sum "$bin" | awk '{print $1}' | tr -d '\n' > "$bin.hash"
-            openssl pkeyutl -sign -inkey <(printf '%s' "$SIGNING_KEY") -rawin -in "$bin.hash" -out "$bin.sig"
-            rm -f "$bin.hash"
+            printf 'darkreel-release-v1\n%s\n%s\n%s\n' "$TAG" "$bin" "$(sha256sum "$bin" | awk '{print $1}')" > "$bin.manifest"
+            openssl pkeyutl -sign -inkey <(printf '%s' "$SIGNING_KEY") -rawin -in "$bin.manifest" -out "$bin.sig"
+            rm -f "$bin.manifest"
           done
 
       - name: Create release
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
-          files: |
-            darkreel-linux-*
-            *.sig
-            checksums.txt
+        working-directory: release
+        run: |
+          gh release create "$TAG" --verify-tag --generate-notes \
+            darkreel-linux-* checksums.txt

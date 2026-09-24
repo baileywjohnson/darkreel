@@ -3088,11 +3088,43 @@ function updatePaginationVisibility() {
 // sync don't leak into the current view.
 let _loadGeneration = 0;
 
+// Media IDs are interpolated into API paths, so anything that isn't a
+// canonical UUID is rejected outright.
+const MEDIA_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// Plaintext fields an uploader may set in encrypted metadata, with their
+// types. Metadata is written by whoever can seal to the user's public key,
+// which includes upload-only delegated apps. It must only ever supply these
+// display fields — never override server fields such as `id` (which ends up
+// in DELETE/PATCH URLs) or `*_sealed`, and never touch the prototype.
+const METADATA_FIELDS = {
+    name: 'string', media_type: 'string', mime_type: 'string',
+    codecs: 'string', folderId: 'string',
+    size: 'number', width: 'number', height: 'number',
+    duration: 'number', rotation: 'number', chunk_count: 'number',
+    fragmented: 'boolean',
+};
+const MAX_CHUNK_COUNT = 50000; // mirrors the server's maxChunkCount
+
+function applyDecryptedMetadata(item, meta) {
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return;
+    for (const [key, type] of Object.entries(METADATA_FIELDS)) {
+        if (!Object.prototype.hasOwnProperty.call(meta, key)) continue;
+        const v = meta[key];
+        if (typeof v !== type) continue;
+        if (type === 'number' && !Number.isFinite(v)) continue;
+        if (key === 'chunk_count' && !(Number.isInteger(v) && v >= 1 && v <= MAX_CHUNK_COUNT)) continue;
+        item[key] = v;
+    }
+}
+
 // Decrypt metadata in place on a raw server item. Best-effort: a failed
 // decrypt (or a missing/mismatched sealed key) leaves the item in the
 // list as "Encrypted" without its plaintext fields, which is better
-// than silently dropping it.
+// than silently dropping it. Returns false for items whose server ID isn't
+// a UUID; callers drop those.
 async function decryptItemMetadata(item) {
+    if (typeof item.id !== 'string' || !MEDIA_ID_RE.test(item.id)) return false;
     try {
         if (item.metadata_enc && item.metadata_nonce && item.metadata_key_sealed && hasKeypair()) {
             const metadataKey = await openSealed(base64ToBuffer(item.metadata_key_sealed));
@@ -3104,11 +3136,12 @@ async function decryptItemMetadata(item) {
             const mediaIdAad = new TextEncoder().encode(item.id);
             const decrypted = await decryptBlock(combined, metadataKey, mediaIdAad);
             const meta = JSON.parse(new TextDecoder().decode(decrypted));
-            Object.assign(item, meta);
+            applyDecryptedMetadata(item, meta);
         }
     } catch (e) {
         console.warn('Failed to decrypt metadata for', item.id, e);
     }
+    return true;
 }
 
 async function loadMedia() {
@@ -3137,7 +3170,7 @@ async function loadMedia() {
         // generation can't mutate the new buffer.
         const items = [];
         for (const item of firstItems) {
-            await decryptItemMetadata(item);
+            if (!(await decryptItemMetadata(item))) continue;
             if (!pendingDeletes.has(item.id)) items.push(item);
         }
         mediaItems = items;
@@ -3172,8 +3205,9 @@ async function loadMedia() {
             if (myGeneration !== _loadGeneration) return;
             const rawItems = pageRes.items || [];
             for (const item of rawItems) {
-                await decryptItemMetadata(item);
+                const valid = await decryptItemMetadata(item);
                 if (myGeneration !== _loadGeneration) return;
+                if (!valid) continue;
                 if (!pendingDeletes.has(item.id)) {
                     mediaItems.push(item);
                 }
@@ -3209,20 +3243,7 @@ async function pollMedia() {
 
         for (const item of rawItems) {
             if (existingIds.has(item.id)) continue;
-            try {
-                if (item.metadata_enc && item.metadata_nonce && item.metadata_key_sealed && hasKeypair()) {
-                    const metadataKey = await openSealed(base64ToBuffer(item.metadata_key_sealed));
-                    const encData = base64ToBuffer(item.metadata_enc);
-                    const nonce = base64ToBuffer(item.metadata_nonce);
-                    const combined = new Uint8Array(nonce.length + encData.length);
-                    combined.set(nonce, 0);
-                    combined.set(encData, nonce.length);
-                    const mediaIdAad = new TextEncoder().encode(item.id);
-                    const decrypted = await decryptBlock(combined, metadataKey, mediaIdAad);
-                    const meta = JSON.parse(new TextDecoder().decode(decrypted));
-                    Object.assign(item, meta);
-                }
-            } catch {}
+            if (!(await decryptItemMetadata(item))) continue;
             newItems.push(item);
         }
 
@@ -5029,7 +5050,6 @@ async function rotateCurrentItem() {
             file_key_sealed: bufferToBase64(newFileKeySealed),
             thumb_key_sealed: bufferToBase64(newThumbKeySealed),
             metadata_key_sealed: bufferToBase64(newMetadataKeySealed),
-            hash_nonce: bufferToBase64(newHashNonce),
             metadata_enc: bufferToBase64(metadataCiphertext),
             metadata_nonce: bufferToBase64(metadataNonce),
             created_at: item.created_at,
@@ -5366,12 +5386,24 @@ async function downloadFolder(folder) {
     }
     collectIds(folder.id);
 
+    // One path segment of a ZIP entry name. Item names come from encrypted
+    // metadata that delegated upload-only apps can write, so strip anything
+    // a naive unzip tool could interpret as traversal ("../", "/abs",
+    // "C:\\") or that would otherwise mangle the extracted path.
+    function zipSegment(name, fallback) {
+        const seg = String(name || '')
+            .replace(/[\/\\:\x00-\x1f\x7f]/g, '_')
+            .replace(/^\.+/, '_')
+            .trim();
+        return seg || fallback;
+    }
+
     // Build a map of folder ID -> path prefix
     const folderPaths = new Map();
     function buildPaths(id, prefix) {
         folderPaths.set(id, prefix);
         for (const child of folders.filter(x => x.parentId === id)) {
-            buildPaths(child.id, prefix + child.name + '/');
+            buildPaths(child.id, prefix + zipSegment(child.name, 'folder') + '/');
         }
     }
     buildPaths(folder.id, '');
@@ -5388,7 +5420,7 @@ async function downloadFolder(folder) {
         for (let idx = 0; idx < items.length; idx++) {
             const item = items[idx];
             const prefix = folderPaths.get(item.folderId) || '';
-            const filename = prefix + (item.name || `file-${idx}`);
+            const filename = prefix + zipSegment(item.name, `file-${idx}`);
 
             const fileKey = await openSealed(base64ToBuffer(item.file_key_sealed));
 
@@ -6042,7 +6074,6 @@ async function uploadFile(file, itemEl, targetFolderId) {
         file_key_sealed: bufferToBase64(fileKeySealed),
         thumb_key_sealed: bufferToBase64(thumbKeySealed),
         metadata_key_sealed: bufferToBase64(metadataKeySealed),
-        hash_nonce: bufferToBase64(hashNonce),
         metadata_enc: bufferToBase64(metadataCiphertext),
         metadata_nonce: bufferToBase64(metadataNonce),
     };

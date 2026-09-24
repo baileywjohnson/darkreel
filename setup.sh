@@ -311,6 +311,13 @@ ALLOW_REGISTRATION=false
 # Enabled by default. Set to "false" to disable (more secure, but users
 # must re-enter their password on every page refresh).
 PERSIST_SESSION=true
+# Darkreel sits behind the local Caddy configured above, so every request
+# arrives from loopback. Without these, all clients share one rate-limit
+# bucket and a single client can lock everyone out of login. Only the
+# loopback proxy is trusted; the client address is taken from the
+# X-Forwarded-For entry Caddy appends.
+TRUST_PROXY=true
+TRUST_PROXY_CIDR=127.0.0.1/32,::1/128
 EOF
 chmod 600 /etc/darkreel/env
 chown darkreel:darkreel /etc/darkreel/env

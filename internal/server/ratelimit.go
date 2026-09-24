@@ -93,7 +93,7 @@ func (rl *rateLimiter) allow(ip uint64) bool {
 }
 
 // RateLimit returns middleware that limits requests per IP.
-// Uses r.RemoteAddr which is set by chi's RealIP middleware when behind a proxy,
+// Uses r.RemoteAddr which is set by the trustProxy middleware when behind a proxy,
 // falling back to the direct connection address. The port suffix is stripped
 // so each IP gets a single bucket regardless of ephemeral port.
 func RateLimit(max int, window time.Duration) func(http.Handler) http.Handler {
@@ -105,6 +105,11 @@ func RateLimit(max int, window time.Duration) func(http.Handler) http.Handler {
 			// when set by net/http, and RealIP may also leave it on.
 			if host, _, err := net.SplitHostPort(ip); err == nil {
 				ip = host
+			}
+			// One bucket per IPv6 /64: a single host typically controls a
+			// whole /64, so per-address buckets gave it 2^64 of them.
+			if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+				ip = parsed.Mask(net.CIDRMask(64, 128)).String()
 			}
 			// Keyed hash (SipHash via hash/maphash) with a per-process random
 			// seed. Avoids storing plaintext IPs in memory AND prevents an

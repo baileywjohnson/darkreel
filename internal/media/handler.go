@@ -3,6 +3,7 @@ package media
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -217,11 +218,6 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid metadata_key_sealed", http.StatusBadRequest)
 		return
 	}
-	hashNonceBytes, err := FromB64(meta.HashNonce)
-	if err != nil {
-		http.Error(w, "invalid hash_nonce", http.StatusBadRequest)
-		return
-	}
 	metadataEncBytes, err := FromB64(meta.MetadataEnc)
 	if err != nil {
 		http.Error(w, "invalid metadata_enc", http.StatusBadRequest)
@@ -242,7 +238,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "sealed key has wrong length", http.StatusBadRequest)
 		return
 	}
-	if len(hashNonceBytes) > maxNonceLen || len(metadataNonceBytes) > maxNonceLen {
+	if len(metadataNonceBytes) > maxNonceLen {
 		http.Error(w, "nonce too large", http.StatusBadRequest)
 		return
 	}
@@ -259,19 +255,14 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	quota := h.MaxStorageBytes // env var fallback
-	if qi.DefaultQuota > 0 {
-		quota = qi.DefaultQuota
-	}
-	if qi.UserQuota > 0 {
-		quota = qi.UserQuota
-	}
+	quota := db.EffectiveQuota(qi, h.MaxStorageBytes)
 	if quota <= 0 {
 		http.Error(w, "No storage quota configured. Please contact your administrator.", http.StatusForbidden)
 		return
 	}
-	// Pre-check: reject if already at or over quota before writing any chunks.
-	if qi.UsedBytes >= quota {
+	// Pre-check: reject unless there's room for at least the thumbnail and one
+	// minimum-size chunk before writing anything.
+	if qi.UsedBytes+storage.OnDiskThumbSize+storage.OnDiskChunkSize(1) > quota {
 		http.Error(w, "Storage quota exceeded. Please contact your administrator.", http.StatusForbidden)
 		return
 	}
@@ -287,7 +278,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		FileKeySealed:     fileKeySealed,
 		ThumbKeySealed:    thumbKeySealed,
 		MetadataKeySealed: metadataKeySealed,
-		HashNonce:         hashNonceBytes,
+		HashNonce:         []byte{}, // never stored; see UploadMeta.HashNonce
 		MetadataEnc:       metadataEncBytes,
 		MetadataNonce:     metadataNonceBytes,
 	}
@@ -334,10 +325,18 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stream chunk parts directly to disk, tracking total bytes for quota enforcement.
-	// Each chunk is streamed without buffering the entire chunk in memory.
+	// Stream chunk parts directly to disk. Quota is charged on the on-disk
+	// footprint (length prefix + padded bucket per chunk, fixed-size thumbnail)
+	// and enforced as each chunk lands, so an upload can never put more than
+	// one chunk's worth of data on disk past the user's remaining quota.
+	// The snapshot of UsedBytes is refreshed transactionally at the end, which
+	// covers concurrent uploads by the same user.
+	quotaExceeded := func() {
+		cleanup()
+		http.Error(w, "Storage quota exceeded. Please contact your administrator.", http.StatusForbidden)
+	}
 	chunkIndex := 0
-	var totalBytes int64
+	diskBytes := storage.OnDiskThumbSize
 	for {
 		part, err = mr.NextPart()
 		if err == io.EOF {
@@ -358,8 +357,19 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if qi.UsedBytes+diskBytes+storage.OnDiskChunkSize(1) > quota {
+			part.Close()
+			quotaExceeded()
+			return
+		}
+
 		n, err := h.Storage.WriteChunkFromReader(userID, mediaID, chunkIndex, part, maxChunkSize)
 		part.Close()
+		if errors.Is(err, storage.ErrChunkTooLarge) {
+			cleanup()
+			http.Error(w, "chunk exceeds maximum size", http.StatusRequestEntityTooLarge)
+			return
+		}
 		if err != nil {
 			cleanup()
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -372,8 +382,12 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		totalBytes += int64(n)
+		diskBytes += storage.OnDiskChunkSize(n)
 		chunkIndex++
+		if qi.UsedBytes+diskBytes > quota {
+			quotaExceeded()
+			return
+		}
 	}
 
 	if chunkIndex != meta.ChunkCount {
@@ -390,14 +404,16 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Quantize size to 256 KB buckets to reduce content fingerprinting
-	// precision in the database. Negligible impact on quota accuracy.
-	const sizeQuantum = 256 * 1024
-	quantizedBytes := ((totalBytes + sizeQuantum - 1) / sizeQuantum) * sizeQuantum
-
-	// Atomically verify quota and update size in a single transaction
-	// to close the TOCTOU window between concurrent uploads.
-	ok, err := db.UpdateMediaSizeWithQuotaCheck(h.DB, mediaID, userID, quantizedBytes, quota)
+	// Atomically verify quota and record the on-disk size in a single
+	// transaction to close the TOCTOU window between concurrent uploads.
+	// diskBytes is already bucketed by the padding scheme (and equals what a
+	// disk-level observer can measure), so it reveals nothing further.
+	ok, err := db.UpdateMediaSizeWithQuotaCheck(h.DB, mediaID, userID, diskBytes, quota)
+	if errors.Is(err, db.ErrMediaGone) {
+		cleanup()
+		http.Error(w, "media was deleted during upload", http.StatusConflict)
+		return
+	}
 	if err != nil {
 		cleanup()
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -660,7 +676,6 @@ func toAPIItem(m *db.MediaItem) APIMediaItem {
 		FileKeySealed:     B64(m.FileKeySealed),
 		ThumbKeySealed:    B64(m.ThumbKeySealed),
 		MetadataKeySealed: B64(m.MetadataKeySealed),
-		HashNonce:         B64(m.HashNonce),
 		MetadataEnc:       B64(m.MetadataEnc),
 		MetadataNonce:     B64(m.MetadataNonce),
 		CreatedAt:         m.CreatedAt,

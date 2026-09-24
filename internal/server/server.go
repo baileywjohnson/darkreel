@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -75,11 +76,7 @@ func (s *Server) routes() chi.Router {
 	// preserves the legacy "trust any upstream" behavior for operators who
 	// already firewall their bind address to the proxy.
 	if s.TrustProxy {
-		if len(s.TrustProxyCIDRs) > 0 {
-			r.Use(trustProxyFromCIDR(s.TrustProxyCIDRs))
-		} else {
-			r.Use(middleware.RealIP)
-		}
+		r.Use(trustProxy(s.TrustProxyCIDRs))
 	}
 	// Compression applied selectively — disabled on /api/auth/* routes to
 	// prevent BREACH-style attacks against responses containing secrets
@@ -98,6 +95,12 @@ func (s *Server) routes() chi.Router {
 
 	// Auth rate limiter: 5 attempts per minute per IP
 	authLimiter := RateLimit(5, time.Minute)
+
+	// Every route below that runs Argon2id (64 MiB per derivation) goes
+	// through one global gate. Per-IP and per-account limits don't bound
+	// concurrency: requests with fresh usernames from a few IPs could run
+	// enough derivations at once to OOM a small server.
+	argonGate := ConcurrencyLimit(argonConcurrency(), 10*time.Second)
 
 	// Registration state — persisted to DB so it survives restarts.
 	// On first start, uses the ALLOW_REGISTRATION env var as the initial value.
@@ -136,7 +139,7 @@ func (s *Server) routes() chi.Router {
 	})
 
 	// Public routes (with strict rate limiting)
-	r.With(authLimiter).Post("/api/auth/register", func(w http.ResponseWriter, r *http.Request) {
+	r.With(authLimiter, argonGate).Post("/api/auth/register", func(w http.ResponseWriter, r *http.Request) {
 		registration.RLock()
 		allowed := registration.allowed
 		registration.RUnlock()
@@ -146,8 +149,8 @@ func (s *Server) routes() chi.Router {
 		}
 		authHandler.Register(w, r)
 	})
-	r.With(authLimiter).Post("/api/auth/login", authHandler.Login)
-	r.With(authLimiter).Post("/api/auth/recover", authHandler.Recover)
+	r.With(authLimiter, argonGate).Post("/api/auth/login", authHandler.Login)
+	r.With(authLimiter, argonGate).Post("/api/auth/recover", authHandler.Recover)
 
 	// Unauthenticated delegation endpoints — the presented code / refresh
 	// token IS the authentication. Rate-limited to deter brute-forcing the
@@ -164,8 +167,8 @@ func (s *Server) routes() chi.Router {
 		r.Use(auth.RequireFullScope)
 
 		r.Post("/api/auth/logout", authHandler.Logout)
-		r.With(authLimiter).Post("/api/auth/change-password", authHandler.ChangePassword)
-		r.With(authLimiter).Delete("/api/auth/account", authHandler.DeleteOwnAccount)
+		r.With(authLimiter, argonGate).Post("/api/auth/change-password", authHandler.ChangePassword)
+		r.With(authLimiter, argonGate).Delete("/api/auth/account", authHandler.DeleteOwnAccount)
 
 		r.Get("/api/media", mediaHandler.List)
 		r.Get("/api/media/quota", mediaHandler.QuotaCheck)
@@ -200,7 +203,7 @@ func (s *Server) routes() chi.Router {
 		r.Use(auth.AdminMiddleware(s.DB))
 
 		r.Get("/api/admin/users", authHandler.ListUsers)
-		r.Post("/api/admin/users", authHandler.CreateUser)
+		r.With(argonGate).Post("/api/admin/users", authHandler.CreateUser)
 		r.Delete("/api/admin/users/{id}", authHandler.DeleteUser)
 		r.Patch("/api/admin/users/{id}/quota", authHandler.SetUserQuota)
 
@@ -273,12 +276,31 @@ func (s *Server) routes() chi.Router {
 	return r
 }
 
-// trustProxyFromCIDR returns a middleware that rewrites r.RemoteAddr from
-// X-Forwarded-For / X-Real-IP only when the connecting peer's address sits
-// inside one of the supplied CIDRs. Other peers keep their real RemoteAddr,
-// so rate limiters see the true source IP even if an attacker forges the
-// proxy headers.
-func trustProxyFromCIDR(cidrs []*net.IPNet) func(http.Handler) http.Handler {
+// trustProxy returns a middleware that replaces r.RemoteAddr with the client
+// address reported by a trusted reverse proxy.
+//
+// The client address is the rightmost X-Forwarded-For entry that isn't itself
+// a trusted proxy: Caddy and nginx ($proxy_add_x_forwarded_for) append the
+// address they saw, so entries to its left are whatever the client chose to
+// send. X-Real-IP and True-Client-IP are ignored — Caddy passes both through
+// from the client unchanged, and chi's RealIP (used here previously) trusted
+// them first, letting any client pick a fresh rate-limit bucket per request.
+//
+// With cidrs set, only peers inside them are treated as proxies. With none,
+// every peer is (the legacy TRUST_PROXY=true behaviour), which is only safe
+// when the listen address is reachable solely by the proxy.
+func trustProxy(cidrs []*net.IPNet) func(http.Handler) http.Handler {
+	isTrusted := func(ip net.IP) bool {
+		if len(cidrs) == 0 {
+			return true
+		}
+		for _, c := range cidrs {
+			if c.Contains(ip) {
+				return true
+			}
+		}
+		return false
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -286,30 +308,57 @@ func trustProxyFromCIDR(cidrs []*net.IPNet) func(http.Handler) http.Handler {
 				host = r.RemoteAddr
 			}
 			peer := net.ParseIP(host)
-			trusted := false
-			if peer != nil {
-				for _, c := range cidrs {
-					if c.Contains(peer) {
-						trusted = true
-						break
-					}
-				}
+			if peer == nil || !isTrusted(peer) {
+				next.ServeHTTP(w, r)
+				return
 			}
-			if trusted {
-				// Honor proxy headers: read X-Real-IP first, then the first
-				// value of X-Forwarded-For. Matches chi's middleware.RealIP
-				// precedence so behavior only differs by the peer check.
-				if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
-					r.RemoteAddr = xri
-				} else if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-					if i := strings.Index(xff, ","); i >= 0 {
-						xff = xff[:i]
-					}
-					if xff = strings.TrimSpace(xff); xff != "" {
-						r.RemoteAddr = xff
-					}
-				}
+			var hops []string
+			for _, v := range r.Header.Values("X-Forwarded-For") {
+				hops = append(hops, strings.Split(v, ",")...)
 			}
+			for i := len(hops) - 1; i >= 0; i-- {
+				ip := net.ParseIP(strings.TrimSpace(hops[i]))
+				if ip == nil {
+					break // malformed: keep the peer address
+				}
+				// With explicit proxy CIDRs, skip our own proxy chain. Without
+				// them we can't tell proxies apart, so take the last hop.
+				if len(cidrs) > 0 && isTrusted(ip) && i > 0 {
+					continue
+				}
+				r.RemoteAddr = ip.String()
+				break
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// argonConcurrency is how many Argon2id derivations (64 MiB each) may run at
+// once: bounded by CPU count, never more than 4 (256 MiB), never fewer than 2.
+func argonConcurrency() int {
+	return min(4, max(2, runtime.NumCPU()))
+}
+
+// ConcurrencyLimit admits at most n requests at a time. A request that can't
+// get a slot within wait gets 503 with Retry-After instead of queueing
+// without bound.
+func ConcurrencyLimit(n int, wait time.Duration) func(http.Handler) http.Handler {
+	slots := make(chan struct{}, n)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			timer := time.NewTimer(wait)
+			defer timer.Stop()
+			select {
+			case slots <- struct{}{}:
+			case <-timer.C:
+				w.Header().Set("Retry-After", "5")
+				http.Error(w, "server busy, try again shortly", http.StatusServiceUnavailable)
+				return
+			case <-r.Context().Done():
+				return
+			}
+			defer func() { <-slots }()
 			next.ServeHTTP(w, r)
 		})
 	}

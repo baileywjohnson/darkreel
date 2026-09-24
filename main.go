@@ -105,14 +105,29 @@ func main() {
 		}
 	}
 
+	var maxBytes int64 = 1 * 1024 * 1024 * 1024 // default: 1 GB per user
+	if v := os.Getenv("MAX_STORAGE_GB"); v != "" {
+		if gb, err := strconv.ParseFloat(v, 64); err == nil && gb > 0 {
+			maxBytes = int64(gb * 1024 * 1024 * 1024)
+		}
+	} else if v := os.Getenv("MAX_STORAGE_CHUNKS"); v != "" {
+		// Legacy: convert chunk count to bytes (1 MB per chunk estimate).
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxBytes = int64(n) * 1048576
+		}
+	}
+
 	// Run startup integrity checks concurrently. Each operates on independent
 	// data sets: orphan cleanup shreds dirs NOT in DB, incomplete upload cleanup
 	// shreds dirs IN DB with missing files, size backfill only reads files.
 	// Query media summaries once and share across goroutines (read-only).
+	// listOK distinguishes "query failed" from "no media rows": an empty
+	// table is exactly when orphaned files from deleted media must still be
+	// cleaned up.
 	summaries, err := db.ListAllMediaSummaries(database)
-	if err != nil {
+	listOK := err == nil
+	if !listOK {
 		log.Printf("Warning: startup integrity checks skipped — failed to list media: %v", err)
-		summaries = nil
 	}
 
 	var startupWg sync.WaitGroup
@@ -121,7 +136,7 @@ func main() {
 	// 1. Clean up orphaned data directories not referenced in DB.
 	go func() {
 		defer startupWg.Done()
-		if summaries == nil {
+		if !listOK {
 			return
 		}
 		validPaths := make(map[string]bool, len(summaries))
@@ -139,7 +154,7 @@ func main() {
 	// Uses a worker pool for parallel stat() checks.
 	go func() {
 		defer startupWg.Done()
-		if summaries == nil {
+		if !listOK {
 			return
 		}
 
@@ -185,8 +200,11 @@ func main() {
 		}
 	}()
 
-	// 3. Backfill size_bytes for uploads where the server crashed after writing
-	// chunks but before updating the DB record with the actual size.
+	// 3. Finish uploads where the server stopped after writing every chunk
+	// but before the final quota-checked size update. Completion is defined
+	// by passing that quota check, so apply it here too; otherwise an
+	// upload that stalled before its closing boundary could land past quota
+	// on the next restart.
 	go func() {
 		defer startupWg.Done()
 		zeroItems, err := db.ListMediaWithZeroSize(database)
@@ -194,40 +212,64 @@ func main() {
 			log.Printf("Warning: size_bytes backfill skipped — failed to list: %v", err)
 			return
 		}
-		backfilled := 0
-		const sizeQuantum = 256 * 1024
+		backfilled, rejected := 0, 0
 		for _, item := range zeroItems {
-			if size := store.MediaChunkBytes(item.UserID, item.ID, item.ChunkCount); size > 0 {
-				quantized := ((size + sizeQuantum - 1) / sizeQuantum) * sizeQuantum
-				if err := db.UpdateMediaSize(database, item.ID, quantized); err == nil {
-					backfilled++
-				}
+			size := store.MediaDiskBytes(item.UserID, item.ID, item.ChunkCount)
+			if size <= 0 {
+				continue // incomplete — handled by check 2
 			}
+			qi, err := db.GetQuotaInfo(database, item.UserID)
+			if err != nil {
+				continue
+			}
+			ok, err := db.UpdateMediaSizeWithQuotaCheck(database, item.ID, item.UserID, size, db.EffectiveQuota(qi, maxBytes))
+			if err != nil {
+				continue
+			}
+			if ok {
+				backfilled++
+				continue
+			}
+			db.DeleteMediaByID(database, item.ID)
+			store.RemoveMedia(item.UserID, item.ID)
+			rejected++
 		}
 		if backfilled > 0 {
 			log.Printf("Backfilled size_bytes for %d media records", backfilled)
+		}
+		if rejected > 0 {
+			log.Printf("Removed %d interrupted uploads that exceeded quota", rejected)
 		}
 	}()
 
 	startupWg.Wait()
 
+	// One-time migration: quota used to be charged on ciphertext bytes, which
+	// ignored the padding every chunk and thumbnail occupies on disk.
+	// Recompute every completed item's charge from its real on-disk size.
+	// Users may end up over quota; they simply can't upload more until they
+	// delete something.
+	if v, _ := db.GetSetting(database, "quota_accounting"); v != "disk-v1" && listOK {
+		updated := 0
+		for _, s := range summaries {
+			if size := store.MediaDiskBytes(s.UserID, s.ID, s.ChunkCount); size > 0 {
+				if err := db.UpdateMediaSizeIfSet(database, s.ID, size); err == nil {
+					updated++
+				}
+			}
+		}
+		if err := db.SetSetting(database, "quota_accounting", "disk-v1"); err != nil {
+			log.Printf("Warning: failed to record quota accounting migration: %v", err)
+		}
+		log.Printf("Recomputed storage usage from on-disk size for %d media records", updated)
+	}
+
 	// Start session cleanup goroutine (removes expired sessions every minute)
 	auth.Sessions.StartCleanup()
+	db.StartWALMaintenance(database, 5*time.Minute)
 	// Delegation authorization codes are short-lived (2 min); prune expired
 	// entries periodically so the codes table stays small under consent churn.
 	auth.StartDelegationCodeCleanup(database)
-
-	var maxBytes int64 = 1 * 1024 * 1024 * 1024 // default: 1 GB per user
-	if v := os.Getenv("MAX_STORAGE_GB"); v != "" {
-		if gb, err := strconv.ParseFloat(v, 64); err == nil && gb > 0 {
-			maxBytes = int64(gb * 1024 * 1024 * 1024)
-		}
-	} else if v := os.Getenv("MAX_STORAGE_CHUNKS"); v != "" {
-		// Legacy: convert chunk count to bytes (1 MB per chunk estimate).
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			maxBytes = int64(n) * 1048576
-		}
-	}
 
 	shredder := storage.NewShredder(store, 0) // workers default to NumCPU (capped at 8)
 

@@ -131,7 +131,14 @@ func DeleteUserAtomic(database *sql.DB, userID string) error {
 		return err
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// The account's wrapped keys and every media key are now overwritten in
+	// the main file (secure_delete); flush the WAL so its pre-delete page
+	// images go too.
+	CheckpointWAL(database)
+	return nil
 }
 
 

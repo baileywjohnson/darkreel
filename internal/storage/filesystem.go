@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -63,6 +64,22 @@ func paddedSize(dataLen int) int {
 // Max thumbnail is ~320px wide JPEG at quality 5, which fits in 256 KB.
 const paddedThumbSize = 256 * 1024
 
+// OnDiskChunkSize is the number of bytes a chunk carrying dataLen bytes of
+// ciphertext occupies on disk: the 4-byte length prefix plus the padded
+// bucket. Quota is charged on this, not on dataLen — the padding is real
+// disk the uploader consumes, and charging only dataLen let a 1-byte chunk
+// occupy ~1 MB for free.
+func OnDiskChunkSize(dataLen int) int64 {
+	return int64(4 + paddedSize(dataLen))
+}
+
+// OnDiskThumbSize is the fixed on-disk size of every thumbnail file.
+const OnDiskThumbSize = int64(4 + paddedThumbSize)
+
+// ErrChunkTooLarge is returned by WriteChunkFromReader when the part is
+// longer than maxBytes.
+var ErrChunkTooLarge = errors.New("chunk exceeds maximum size")
+
 // epoch is a fixed timestamp applied to all written files so that
 // filesystem modification times don't leak when uploads occurred.
 var epoch = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -108,10 +125,15 @@ func (l *Layout) WriteChunkFromReader(userID, mediaID string, index int, r io.Re
 		return 0, err
 	}
 
-	// Stream data from reader to file, counting bytes
-	n, err := io.Copy(f, io.LimitReader(r, maxBytes))
+	// Stream data from reader to file, counting bytes. Read one byte past
+	// the limit so an oversized part is rejected rather than silently
+	// truncated into a corrupt chunk.
+	n, err := io.Copy(f, io.LimitReader(r, maxBytes+1))
 	if err != nil {
 		return 0, err
+	}
+	if n > maxBytes {
+		return 0, ErrChunkTooLarge
 	}
 	dataLen := int(n)
 

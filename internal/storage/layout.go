@@ -1,9 +1,9 @@
 package storage
 
 import (
-	"encoding/binary"
+	"errors"
 	"fmt"
-	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -129,40 +129,45 @@ func (l *Layout) CleanupOrphans(validPaths map[string]bool) (int, error) {
 }
 
 // IsMediaComplete checks that all expected chunk files and the thumbnail exist on disk.
+//
+// Only a file that definitely does not exist counts as missing. Any other
+// stat error (EACCES after a restore that didn't chown, EIO) reports the
+// item as complete: the caller deletes incomplete items' DB rows — the only
+// copy of their sealed keys — so a transient or permission error must never
+// be mistaken for an incomplete upload.
 func (l *Layout) IsMediaComplete(userID, mediaID string, chunkCount int) bool {
-	// Check thumbnail
-	if _, err := os.Stat(l.ThumbnailPath(userID, mediaID)); err != nil {
+	missing := func(path string) bool {
+		_, err := os.Stat(path)
+		return errors.Is(err, fs.ErrNotExist)
+	}
+	if missing(l.ThumbnailPath(userID, mediaID)) {
 		return false
 	}
-	// Check all chunks
 	for i := 0; i < chunkCount; i++ {
-		if _, err := os.Stat(l.ChunkPath(userID, mediaID, i)); err != nil {
+		if missing(l.ChunkPath(userID, mediaID, i)) {
 			return false
 		}
 	}
 	return true
 }
 
-// MediaChunkBytes returns the total raw (pre-padding) byte size of all chunks for a media item.
-// Used to backfill size_bytes for records where the server crashed before updating the DB.
-// Only reads the 4-byte length prefix from each chunk file instead of loading entire chunks.
-func (l *Layout) MediaChunkBytes(userID, mediaID string, chunkCount int) int64 {
+// MediaDiskBytes returns the on-disk size of a media item's chunk files plus
+// its thumbnail — the figure quota is charged on. Returns 0 if any file is
+// missing (incomplete upload; caller should handle).
+func (l *Layout) MediaDiskBytes(userID, mediaID string, chunkCount int) int64 {
 	var total int64
 	for i := 0; i < chunkCount; i++ {
-		path := l.ChunkPath(userID, mediaID, i)
-		f, err := os.Open(path)
-		if err != nil {
-			return 0 // incomplete — caller should handle
-		}
-		var lenBuf [4]byte
-		_, err = io.ReadFull(f, lenBuf[:])
-		f.Close()
-		if err != nil {
+		info, err := os.Lstat(l.ChunkPath(userID, mediaID, i))
+		if err != nil || !info.Mode().IsRegular() {
 			return 0
 		}
-		total += int64(binary.BigEndian.Uint32(lenBuf[:]))
+		total += info.Size()
 	}
-	return total
+	info, err := os.Lstat(l.ThumbnailPath(userID, mediaID))
+	if err != nil || !info.Mode().IsRegular() {
+		return 0
+	}
+	return total + info.Size()
 }
 
 // RemoveMedia securely shreds all files for a media item, then removes the directory.

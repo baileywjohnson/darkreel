@@ -72,10 +72,10 @@ Every file timestamp on disk reads `2024-01-01T00:00:00Z`. Every chunk is padded
 - **End-to-end encrypted** - AES-256-GCM chunk encryption, keys derived from your password via Argon2id. The server stores only opaque blobs.
 - **Zero-knowledge metadata** - File names, types, sizes, dimensions, and durations are encrypted into a single blob. The server cannot read any of it.
 - **Encrypted streaming** - Videos stream via MSE with chunk-level decryption in a Web Worker. No server-side decryption. Playback starts after the first chunk.
-- **Size fingerprinting resistance** - Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data, both on disk and over the network. Original file sizes are unrecoverable. Storage quotas are quantized to 256 KB buckets to prevent exact-size fingerprinting in the database.
+- **Size fingerprinting resistance** - Every encrypted chunk is padded to a bucketed size (1, 2, 4, 8, or 16 MB) with random data, both on disk and over the network. Quota usage is recorded as the padded on-disk size, so the database holds nothing more precise than what the disk already shows.
 - **Secure deletion** - Deleted files are overwritten with random data, fsynced, then unlinked. The data is already AES-256-GCM encrypted and the encryption keys are deleted first, making the ciphertext computationally unrecoverable. The overwrite is defense-in-depth. Best-effort on SSDs due to wear leveling.
 - **Multi-user** - Each user has an isolated, encrypted library with their own master key. Admin panel for user management.
-- **Hash modification** - Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box appended at end, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection.
+- **Hash modification** - Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box appended at end, WebM Void) before encryption. Files with identical content produce different ciphertexts, defeating duplicate detection. The nonce is never sent to or stored by the server — a stored copy would let anyone with database access link a leaked image back to the account that uploaded it.
 - **Chunk integrity verification** - Chunk counts are stored inside the encrypted metadata blob. On download/playback, the client verifies the count matches, detecting truncation attacks where an attacker deletes chunks from the server.
 - **Generic file storage** - Not just media. Upload any file type — PDFs, documents, archives, code. Everything is encrypted with the same zero-knowledge scheme.
 - **Encrypted folders** - Organize your files into folders. The folder structure is encrypted - only you can see it. Drag-and-drop to reorganize (desktop and mobile touch).
@@ -205,7 +205,7 @@ These are deliberate:
 
 - **SSD deletion is best-effort.** The overwrite pass works on HDDs. On SSDs, wear leveling may retain old data. Since the encryption keys are deleted before shredding, the on-disk ciphertext is computationally unrecoverable regardless. See [Disk encryption (LUKS)](#disk-encryption-luks) for additional mitigation.
 
-- **Quotas are quantized and track logical size, not disk size.** Storage quotas are enforced against the encrypted byte count, quantized to 256 KB buckets to prevent exact-size content fingerprinting. Actual disk usage is higher than the quota suggests because every chunk is padded to a bucket boundary (1/2/4/8/16 MB). This is intentional — exposing exact or padded sizes would leak information that weakens size-fingerprinting resistance.
+- **Quotas track disk size, including padding.** Every chunk is padded to a bucket boundary (1/2/4/8/16 MB) and every thumbnail to 256 KB, and quota is charged on that on-disk size, enforced as each chunk is written. Small files therefore use more quota than their content size. Charging only the ciphertext bytes let an uploader write ~1 MB of disk per 1-byte chunk for free.
 
 ## Scalability
 
@@ -295,7 +295,7 @@ DARKREEL_ADMIN_PASSWORD='YourStr0ng!Password' ./darkreel
 | `DARKREEL_ADMIN_PASSWORD` | **(required on first run)** | Admin password (first-run bootstrap only) |
 | `PERSIST_SESSION` | `true` | Cache master key in sessionStorage (survives page refresh). Set to `false` for higher security - see [Session persistence](#session-persistence) |
 | `ALLOW_REGISTRATION` | `false` | Initial registration state on first run. Once an admin toggles registration via the admin panel, that setting is persisted to the database and takes precedence over this variable on subsequent restarts. |
-| `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` / `X-Real-IP` headers for rate limiting. **Only enable when running behind a trusted reverse proxy** (Caddy, nginx). Without a proxy, clients can spoof these headers to bypass rate limits. |
+| `TRUST_PROXY` | `false` | Take the client address for rate limiting from `X-Forwarded-For` — the rightmost entry that isn't itself a trusted proxy, i.e. the address your proxy appended. `X-Real-IP` and `True-Client-IP` are ignored. **Only enable when running behind a trusted reverse proxy** (Caddy, nginx); `setup.sh` enables it for the Caddy it installs. Behind a proxy with this unset, every client shares the proxy's address and one rate-limit bucket. |
 | `TRUST_PROXY_CIDR` | *(unset)* | Comma-separated CIDRs of trusted proxy peers (e.g. `127.0.0.1/32,10.0.0.0/8`). When set along with `TRUST_PROXY=true`, proxy headers are honored *only* from peers inside these networks — necessary if the bind address is reachable beyond the proxy (shared Docker network, cluster mesh). When unset, all upstreams are trusted, which is safe only if you firewall the bind address to the proxy yourself. |
 | `MAX_STORAGE_GB` | **1** | Default per-user storage quota in GB. Set to `50` for 50 GB per user. Supports decimals (e.g. `0.5`). Can also be configured via the admin panel (which takes precedence). The setup script prompts for this automatically. |
 
@@ -351,7 +351,7 @@ media.example.com {
 }
 ```
 
-Caddy handles TLS automatically via Let's Encrypt. The setup script offers to disable Caddy access logs for privacy (recommended — access logs record client IPs and request paths including media UUIDs). When running behind any reverse proxy, set `TRUST_PROXY=true` so rate limiting uses the real client IP from `X-Forwarded-For` instead of the proxy's address. For nginx, see the [nginx example](#reverse-proxy-nginx) below.
+Caddy handles TLS automatically via Let's Encrypt. The setup script offers to disable Caddy access logs for privacy (recommended — access logs record client IPs and request paths including media UUIDs). When running behind any reverse proxy, set `TRUST_PROXY=true` (and `TRUST_PROXY_CIDR`) so rate limiting uses the real client IP from `X-Forwarded-For` instead of the proxy's address — `setup.sh` does this for you. For nginx, see the [nginx example](#reverse-proxy-nginx) below.
 
 ## API
 
@@ -376,7 +376,7 @@ All endpoints except `/health`, `/api/config`, and `/api/delegation/{exchange,re
 | GET | `/api/media` | List media (paginated). Each item includes `file_key_sealed`, `thumb_key_sealed`, `metadata_key_sealed` (each 92 bytes). Accepts full-scope JWT only. |
 | GET | `/api/media/quota` | Check quota (returns effective quota and current usage). Full scope. |
 | GET | `/api/media/:id` | Get media metadata. Full scope. |
-| POST | `/api/media/upload` | Upload (multipart: metadata JSON + thumbnail + chunks). Metadata JSON carries the three sealed keys, `metadata_enc`/`metadata_nonce`, `hash_nonce`, and `chunk_count`. Media ID is client-generated (UUID) and bound into every AAD. Accepts either full-scope JWT (browser) or `upload`-scoped JWT (delegated client). |
+| POST | `/api/media/upload` | Upload (multipart: metadata JSON + thumbnail + chunks). Metadata JSON carries the three sealed keys, `metadata_enc`/`metadata_nonce`, and `chunk_count` (a `hash_nonce` sent by older clients is accepted and discarded). Media ID is client-generated (UUID) and bound into every AAD. Accepts either full-scope JWT (browser) or `upload`-scoped JWT (delegated client). |
 | PATCH | `/api/media/:id` | Update metadata (e.g., folder assignment, rename). Full scope. |
 | DELETE | `/api/media/:id` | Secure delete (1-pass shred). Full scope. |
 | GET | `/api/media/:id/chunk/:index` | Download encrypted chunk. Full scope. |
@@ -463,7 +463,7 @@ sudo systemctl restart darkreel
 
 > **Schema v2 (delegation + sealed-box uploads) is a clean-break migration.** Upgrading from a pre-delegation v1 database is not supported in-place because the server cannot regenerate per-user keypairs without the master key (which is never at rest on the server). If the server refuses to start with `refusing to start: on-disk schema version is ""`, back up or delete `data/darkreel.db` and let the server re-bootstrap the admin user from `DARKREEL_ADMIN_PASSWORD`. Existing users re-register; the old encrypted blobs are orphan-cleaned on first boot.
 
-Or use the auto-updater - checks GitHub for tagged releases, verifies SHA-256 checksum and Ed25519 signature (required — updates are refused if the signing public key is missing), restarts the service:
+Or use the auto-updater - checks GitHub for tagged releases, verifies the SHA-256 checksum and the Ed25519 signature (required — updates are refused if the signing public key is missing), refuses anything that isn't newer than the installed version, and restarts the service. The signature covers the release tag and asset name as well as the hash, so an older signed binary can't be re-published as a new release:
 
 ```bash
 sudo ./update.sh              # check once
@@ -502,17 +502,17 @@ The setup script handles all of this. If deploying manually:
 - Timing side-channel mitigation - login and recovery endpoints perform dummy work for non-existent users
 - BREACH mitigation - HTTP compression disabled on auth endpoints that return secrets
 - Last-admin protection - the system prevents deletion of the last admin account (atomic transaction prevents TOCTOU race)
-- Mandatory storage quotas - all users have a storage quota (defaults to 1 GB), tracked in bytes for accuracy across all file types. Per-user quotas can only be raised, never lowered. Total allocated quotas are validated against available disk capacity (with a 2 GB reserve)
+- Mandatory storage quotas - all users have a storage quota (defaults to 1 GB), tracked in on-disk bytes (padding included) and enforced while chunks are written. Per-user quotas can only be raised, never lowered. Total allocated quotas are validated against available disk capacity (with a 2 GB reserve)
 - Startup integrity checks - orphan cleanup, incomplete upload detection, and size backfill run concurrently with parallelized filesystem checks for fast startup even with large media libraries.
-- Proxy-aware rate limiting - `X-Forwarded-For` trust is off by default; must be explicitly enabled via `TRUST_PROXY=true` to prevent header spoofing
+- Proxy-aware rate limiting - `X-Forwarded-For` trust is off by default and must be enabled via `TRUST_PROXY=true`; only the rightmost untrusted hop is used, so client-supplied entries can't choose the rate-limit bucket. IPv6 clients are bucketed per /64. Argon2id work is additionally capped by a global concurrency limit so parallel logins can't exhaust memory
 - Encrypted backups - database backups encrypted with AES-256-CBC using a dedicated key
 - Per-user upload concurrency limit - max 3 concurrent uploads per user, prevents disk exhaustion via parallel uploads
 - Network-level padding - chunks and thumbnails sent padded over the wire (not just on disk), so Content-Length reveals only bucket tier
 - Master key cleared immediately - server clears the plaintext master key from memory immediately after the login response, not after 24h session expiry
 - Recovery code rotation - recovery code is rotated on every password change; old codes are immediately invalidated
-- Signed auto-updates - auto-updater refuses to install binaries without a valid Ed25519 signature (hard failure on missing signing key)
+- Signed auto-updates - auto-updater refuses to install binaries without a valid Ed25519 signature over the release tag, asset name and hash (hard failure on missing signing key), and never downgrades
 - Caddy access log control - setup script offers to disable Caddy access logs for privacy (client IPs and request paths are not logged)
-- SQLite secure deletion - `PRAGMA secure_delete=FAST` zeroes deleted database pages when it can do so without extra I/O, balancing privacy with write performance. All data in the database is encrypted, so forensic recovery of raw pages yields only ciphertext.
+- SQLite secure deletion - `PRAGMA secure_delete=ON` overwrites deleted content in the database file (the server refuses to start if it isn't in effect), and the WAL is truncated periodically and after account deletion so old page images don't linger there. Deleting a media item or account therefore removes its sealed keys from disk rather than leaving them in free pages.
 - Async secure deletion - file shredding runs in a background worker pool so delete operations return immediately. The file key is already removed from the database, making the encrypted data unrecoverable. Pending shreds drain on graceful shutdown
 - LRU rate-limiter eviction - IP and account rate limiters evict the oldest entry when at capacity, preventing a botnet from filling the map and blocking all legitimate users
 - Batched upload durability - chunk writes are fsynced once after all chunks are written (not per-chunk), maintaining durability guarantees while minimizing I/O overhead
