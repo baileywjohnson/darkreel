@@ -11,6 +11,9 @@ type sessionEntry struct {
 	UserID    string
 	MasterKey []byte
 	CreatedAt time.Time
+	// MustChangePassword restricts the session to changing the password
+	// (see RequirePasswordChange in middleware.go).
+	MustChangePassword bool
 }
 
 // SessionStore holds master keys in memory, indexed by session ID.
@@ -50,6 +53,24 @@ func (s *SessionStore) Set(sessionID, userID string, masterKey []byte) {
 	key := make([]byte, len(masterKey))
 	copy(key, masterKey)
 	s.sessions[sessionID] = &sessionEntry{UserID: userID, MasterKey: key, CreatedAt: time.Now()}
+}
+
+// MarkMustChangePassword restricts a session to the password-change flow.
+func (s *SessionStore) MarkMustChangePassword(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.sessions[sessionID]; ok {
+		e.MustChangePassword = true
+	}
+}
+
+// MustChangePassword reports whether the session is restricted to the
+// password-change flow.
+func (s *SessionStore) MustChangePassword(sessionID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.sessions[sessionID]
+	return ok && e.MustChangePassword
 }
 
 // ClearKey zeroes and removes the master key from a session while keeping

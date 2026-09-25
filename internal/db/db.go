@@ -39,6 +39,18 @@ func Open(dataDir string) (*sql.DB, error) {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
+	// Additive column (no schema_version bump needed): accounts an admin
+	// created must choose their own password before using the account.
+	if ok, err := columnExists(db, "users", "must_change_password"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("probe users.must_change_password: %w", err)
+	} else if !ok {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("add users.must_change_password: %w", err)
+		}
+	}
+
 	// Ensure DB file is owner-readable only (may pre-exist with looser perms).
 	// Done after migrate so the file is guaranteed to exist.
 	if err := os.Chmod(dbPath, 0600); err != nil {

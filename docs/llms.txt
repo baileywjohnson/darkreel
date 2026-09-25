@@ -1,6 +1,6 @@
 # Darkreel
 
-> End-to-end encrypted, self-hosted media storage and streaming. Zero-knowledge architecture: the server stores opaque encrypted blobs while the browser holds the keys. A single Go binary with no external dependencies (no Docker, Postgres, Redis, or S3).
+> End-to-end encrypted, self-hosted media storage and streaming. Zero-knowledge at rest: the server stores opaque, size-padded encrypted blobs while the browser holds the keys. A single Go binary with no external dependencies (no Docker, Postgres, Redis, or S3).
 
 Darkreel is open-source software (MIT) for privately storing and streaming media and files. File encryption and decryption happen in the browser, in memory. The server stores no plaintext, file names, types, sizes, or durations — at rest it holds only ciphertext and Argon2id hashes. Built and maintained by [Bailey Johnson](https://baileyjohnson.io/).
 
@@ -8,13 +8,18 @@ Darkreel is open-source software (MIT) for privately storing and streaming media
 
 - [Website (darkreel.io)](https://darkreel.io/): Full landing page — threat model, features, cryptography, streaming, trade-offs, deployment, and the HTTP API.
 - [Source (GitHub)](https://github.com/baileywjohnson/darkreel): Go source, README, threat model, and SECURITY.md.
-- [Releases](https://github.com/baileywjohnson/darkreel/releases): Tagged builds.
+- [Releases](https://github.com/baileywjohnson/darkreel/releases): Tagged builds, Ed25519-signed.
 
 ## Key facts
 
-- Encryption: AES-256-GCM, per-file keys wrapped by a per-user master key.
-- Scope of "zero-knowledge": at rest. A stolen database or disk yields only ciphertext and hashes. The password is sent to the server at login because Web Crypto has no Argon2id, so the KDF runs server-side; the decrypted master key exists only for that request. An operator running modified server code could capture credentials — run a binary you built yourself.
+- Encryption: AES-256-GCM with fresh per-file keys, sealed to the user's X25519 public key; the private key is wrapped by a per-user master key.
+- Scope of "zero-knowledge": at rest. A stolen database, disk or backup yields only ciphertext, hashes and wrapped keys. The password is sent to the server over TLS at login because Web Crypto has no Argon2id, so the KDF runs server-side; the decrypted master key is in server memory only during login, password change or recovery, then cleared. An operator running modified server code could capture credentials — run a binary you built yourself.
+- Size padding: the browser pads inside the encryption, so every chunk's ciphertext is exactly 1/2/4/8/16 MB and every thumbnail exactly 256 KB, on the wire and on disk. Metadata and the folder tree are padded before encryption. An authenticated last-chunk flag detects truncated files.
 - Zero-knowledge metadata: file names/types/sizes/dimensions/durations encrypted into one blob per file.
+- Key rotation: a password change or recovery generates a new master key, keypair and recovery code, re-seals every item, and revokes all sessions and connected apps.
+- Owner verification: the user's own uploads carry an HMAC tag only their master key can produce; items without one (from connected apps, or planted in the database) get an "APP" badge.
+- Connected apps (delegated uploads, e.g. PPVDA): upload-only, can't read anything; connections expire after 60 days unused or 1 year, and revocation is immediate.
+- Browser keys are non-extractable Web Crypto keys; tabs sign out after 30 minutes idle. Accounts created by an admin must set their own password at first login.
 - Encrypted streaming: video plays via MSE with chunk-level decryption in a Web Worker; no server-side decryption.
 - Footprint: ~14 MB RAM, one binary, zero dependencies; runs on a ~$6/mo VPS.
 - Requirements: a fresh Ubuntu 22.04+ or Debian 12+ VPS.
@@ -23,10 +28,11 @@ Darkreel is open-source software (MIT) for privately storing and streaming media
 
 ```
 git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel
+less setup.sh   # review it first; it runs as root
 sudo ./setup.sh
 ```
 
-`setup.sh` handles firewall, fail2ban, SSH hardening, TLS via Caddy, a systemd service, and daily backups. Safe to re-run.
+`setup.sh` handles firewall, fail2ban, SSH hardening, TLS via Caddy, a systemd service, and daily age-encrypted database backups (key kept off the server). Nothing is piped from the internet into a shell. Safe to re-run. The optional auto-updater installs only Ed25519-signed tagged releases and refuses downgrades.
 
 ## Related projects
 

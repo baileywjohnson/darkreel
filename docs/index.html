@@ -5,25 +5,25 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Darkreel — End-to-End Encrypted, Self-Hosted Media Storage & Streaming</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-<meta name="description" content="End-to-end encrypted media storage, streaming & file vault. Single Go binary. Zero-knowledge architecture. Your server stores opaque blobs. Your browser holds the keys.">
+<meta name="description" content="End-to-end encrypted media storage, streaming & file vault. Single Go binary. Zero-knowledge at rest: your server stores opaque blobs, your browser holds the keys.">
 <link rel="canonical" href="https://darkreel.io/">
 <meta name="robots" content="index,follow,max-image-preview:large">
 
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Darkreel">
 <meta property="og:title" content="Darkreel — End-to-End Encrypted, Self-Hosted Media Storage & Streaming">
-<meta property="og:description" content="End-to-end encrypted media storage, streaming & file vault. Single Go binary. Zero-knowledge architecture. Your server stores opaque blobs. Your browser holds the keys.">
+<meta property="og:description" content="End-to-end encrypted media storage, streaming & file vault. Single Go binary. Zero-knowledge at rest: your server stores opaque blobs, your browser holds the keys.">
 <meta property="og:url" content="https://darkreel.io/">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Darkreel — End-to-End Encrypted, Self-Hosted Media Storage & Streaming">
-<meta name="twitter:description" content="End-to-end encrypted media storage, streaming & file vault. Single Go binary. Zero-knowledge architecture. Your server stores opaque blobs. Your browser holds the keys.">
+<meta name="twitter:description" content="End-to-end encrypted media storage, streaming & file vault. Single Go binary. Zero-knowledge at rest: your server stores opaque blobs, your browser holds the keys.">
 
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "Darkreel",
-  "description": "End-to-end encrypted, self-hosted media storage and streaming. Zero-knowledge architecture: the server stores opaque encrypted blobs while the browser holds the keys. Single Go binary, no external dependencies.",
+  "description": "End-to-end encrypted, self-hosted media storage and streaming. Zero-knowledge at rest: the server stores opaque, size-padded encrypted blobs while the browser holds the keys. Single Go binary, no external dependencies.",
   "url": "https://darkreel.io/",
   "applicationCategory": "SecurityApplication",
   "operatingSystem": "Linux (Ubuntu 22.04+ / Debian 12+)",
@@ -722,7 +722,7 @@ a:hover { text-decoration: underline; }
     <p class="subtitle">
       Your server stores <strong>opaque blobs</strong>. Your browser holds the keys.
       Single Go binary. No Docker, no Postgres, no Redis, no S3.
-      All encryption and decryption happens in the browser, in memory, never on disk.
+      Files are encrypted and decrypted in the browser, in memory &mdash; the server never receives a plaintext file.
     </p>
     <nav class="nav">
       <a href="#threat-model">threat model</a>
@@ -753,15 +753,16 @@ a:hover { text-decoration: underline; }
 <span class="output">  f47ac10b-58cc/</span>
 <span class="output">    a3d9c8e2-7b14/</span>
 <span class="output">      000000.enc</span>   <span class="string">[4.00 MB]</span>       <span class="comment"># could be anything</span>
-<span class="output">      000001.enc</span>   <span class="string">[2.00 MB]</span>       <span class="comment"># padded to bucket size</span>
-<span class="output">      000002.enc</span>   <span class="string">[1.00 MB]</span>       <span class="comment"># random fill hides real size</span>
-<span class="output">      thumb.enc</span>    <span class="string">[256 KB]</span>        <span class="comment"># encrypted thumbnail</span>
+<span class="output">      000001.enc</span>   <span class="string">[2.00 MB]</span>       <span class="comment"># exact bucket size</span>
+<span class="output">      000002.enc</span>   <span class="string">[1.00 MB]</span>       <span class="comment"># padding is inside the ciphertext</span>
+<span class="output">      thumb.enc</span>    <span class="string">[256 KB]</span>        <span class="comment"># every thumbnail, same size</span>
       </code>
     </div>
 
-    <p>Every file timestamp on disk reads <code>2024-01-01T00:00:00Z</code>. Every chunk is padded
-    to 1, 2, 4, 8, or 16 MB with random data. Upload dates are coarsened to year only
-    (delegation records use date granularity).
+    <p>The browser pads each chunk <em>before</em> encrypting it, so every chunk&rsquo;s ciphertext is
+    exactly 1, 2, 4, 8, or 16 MB and every thumbnail exactly 256 KB &mdash; on the wire and on disk.
+    File and directory modification times all read <code>2024-01-01T00:00:00Z</code>. Upload dates are
+    coarsened to year only (delegation records use date granularity).
     An attacker with root on your server sees uniform blobs with no meaningful metadata.</p>
 
     <table class="threat-table">
@@ -769,15 +770,15 @@ a:hover { text-decoration: underline; }
       <tr><td>file content</td><td><span class="no">no</span> <span class="detail">- AES-256-GCM, per-file key</span></td></tr>
       <tr><td>file names</td><td><span class="no">no</span> <span class="detail">- encrypted metadata blob</span></td></tr>
       <tr><td>file types / MIME</td><td><span class="no">no</span> <span class="detail">- encrypted metadata blob</span></td></tr>
-      <tr><td>file sizes</td><td><span class="no">no</span> <span class="detail">- chunk padding + encrypted metadata</span></td></tr>
+      <tr><td>file sizes</td><td><span class="no">no</span> <span class="detail">- padded inside the encryption; only bucket sizes + chunk count</span></td></tr>
       <tr><td>dimensions / duration</td><td><span class="no">no</span> <span class="detail">- encrypted metadata blob</span></td></tr>
       <tr><td>thumbnails</td><td><span class="no">no</span> <span class="detail">- separate encrypted key</span></td></tr>
-      <tr><td>folder structure</td><td><span class="no">no</span> <span class="detail">- encrypted blob</span></td></tr>
-      <tr><td>passwords</td><td><span class="never">not stored</span> <span class="detail">- Argon2id hash only; sent to the server at login, where the KDF runs (see note)</span></td></tr>
-      <tr><td>master key</td><td><span class="never">not stored</span> <span class="detail">- encrypted at rest; held in plaintext only for the login request, then cleared (see note)</span></td></tr>
+      <tr><td>folder structure</td><td><span class="no">no</span> <span class="detail">- padded, encrypted blob</span></td></tr>
+      <tr><td>passwords</td><td><span class="never">not stored</span> <span class="detail">- Argon2id hash only; sent over TLS at login, where the KDF runs (see note)</span></td></tr>
+      <tr><td>master key</td><td><span class="never">not stored</span> <span class="detail">- encrypted at rest; in server memory only during login, password change or recovery, then cleared (see note)</span></td></tr>
       <tr><td>usernames</td><td><span class="yes">yes</span></td></tr>
       <tr><td>file count per user</td><td><span class="yes">yes</span> <span class="detail">- database row count</span></td></tr>
-      <tr><td>total storage</td><td><span class="yes">~approx</span> <span class="detail">- quantized to 256 KB buckets, padding obscures per-file</span></td></tr>
+      <tr><td>total storage</td><td><span class="yes">~approx</span> <span class="detail">- sum of padded bucket sizes (what quota is charged on)</span></td></tr>
       <tr><td>upload time</td><td><span class="yes">year only</span> <span class="detail">- coarsened</span></td></tr>
       <tr><td>delegation authorize / last used</td><td><span class="yes">date only</span> <span class="detail">- coarsened</span></td></tr>
     </table>
@@ -792,7 +793,9 @@ a:hover { text-decoration: underline; }
       derivation (the same work described under <em>concurrent login throughput</em> below). During
       that request the server necessarily holds your password and, briefly, your decrypted master key,
       which is cleared as soon as it has been re-wrapped for the client. Registration generates the
-      master key and X25519 keypair server-side before wrapping them.
+      master key and X25519 keypair server-side before wrapping them, and a password change or
+      recovery runs server-side too: it generates fresh keys and re-seals every item&rsquo;s keys to
+      them, so for that one request the server holds the old and new keys.
       A passive operator, a database thief, or anyone with the disk afterwards learns nothing. An
       operator running <strong>modified server code</strong> can capture the password of anyone who
       logs in &mdash; the mitigation being to run a binary you built yourself, which is the intended
@@ -808,11 +811,11 @@ a:hover { text-decoration: underline; }
     <div class="features">
       <div class="feature">
         <div class="feature-name">end-to-end encryption</div>
-        <div class="feature-desc">AES-256-GCM everything. Per-file keys wrapped with your master key. The server is a dumb blob store.</div>
+        <div class="feature-desc">AES-256-GCM everything. Fresh per-file keys, sealed to your own X25519 public key. The server is a dumb blob store.</div>
       </div>
       <div class="feature">
         <div class="feature-name">zero-knowledge metadata</div>
-        <div class="feature-desc">File names, types, sizes, dimensions, durations - encrypted into a single blob per file. The server can't read any of it.</div>
+        <div class="feature-desc">File names, types, sizes, dimensions, durations - encrypted into a single blob per file, padded first so its length doesn't give away a name's length. The server can't read any of it.</div>
       </div>
       <div class="feature">
         <div class="feature-name">encrypted streaming</div>
@@ -820,7 +823,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">size fingerprinting resistance</div>
-        <div class="feature-desc">Every chunk padded to bucketed sizes with random data, both on disk and over the network. Storage sizes quantized to 256 KB in the database. Original file sizes are unrecoverable.</div>
+        <div class="feature-desc">Padding happens inside the encryption: every chunk's ciphertext is exactly 1, 2, 4, 8, or 16 MB and every thumbnail exactly 256 KB, on the wire and on disk. Exact chunk lengths &mdash; a strong fingerprint for known videos &mdash; never leave the browser.</div>
       </div>
       <div class="feature">
         <div class="feature-name">secure deletion</div>
@@ -828,15 +831,15 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">multi-user</div>
-        <div class="feature-desc">Isolated encrypted libraries. Each user gets their own master key. Admin panel for user management.</div>
+        <div class="feature-desc">Isolated encrypted libraries. Each user gets their own master key. Admin panel for user management; accounts an admin creates must choose their own password at first sign-in, which rotates away the keys the admin could have unlocked.</div>
       </div>
       <div class="feature">
         <div class="feature-name">hash modification</div>
-        <div class="feature-desc">Random nonces injected into file headers (JPEG COM, PNG tEXt, MP4 free box appended at end, WebM Void) before encryption. Identical files produce different ciphertexts, defeating duplicate detection.</div>
+        <div class="feature-desc">A random nonce is written into images before encryption (JPEG COM marker, PNG tEXt chunk; the CLI also appends an MP4 free box to videos it doesn't remux), so a downloaded copy doesn't hash-match the original. The nonce is never sent to the server.</div>
       </div>
       <div class="feature">
-        <div class="feature-name">chunk integrity verification</div>
-        <div class="feature-desc">Chunk counts stored inside encrypted metadata. On download/playback, the client verifies the count matches - detects truncation attacks where chunks are deleted from the server.</div>
+        <div class="feature-name">truncation detection</div>
+        <div class="feature-desc">The chunk count lives in the encrypted metadata and every chunk carries an authenticated last-chunk flag. On download and playback the client checks both &mdash; a server that drops the tail of a file gets an error, not a silently shortened video.</div>
       </div>
       <div class="feature">
         <div class="feature-name">generic file storage</div>
@@ -856,7 +859,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">text editor</div>
-        <div class="feature-desc">Plain-text files (txt, md, log, csv, json, yaml, xml, ini, conf) open in an in-browser editor. Edit and save &mdash; a fresh copy is encrypted and the old one is securely deleted. Create new text documents from the Upload modal.</div>
+        <div class="feature-desc">Plain-text files (txt, md, log, csv, tsv, json, yaml, xml, ini, conf, cfg) open in an in-browser editor. Edit and save &mdash; a fresh copy is encrypted and the old one is securely deleted. Create new text documents from the Upload modal.</div>
       </div>
       <div class="feature">
         <div class="feature-name">6 color themes</div>
@@ -864,11 +867,23 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">recovery codes</div>
-        <div class="feature-desc">256-bit code generated at account creation and rotated on every password change. If you lose your password, this is the only way back in. Lose both and your data is gone.</div>
+        <div class="feature-desc">256-bit code generated at account creation and replaced on every password change or recovery. If you lose your password, this is the only way back in. Lose both and your data is gone.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">key rotation</div>
+        <div class="feature-desc">A password change or recovery doesn't just re-wrap the old keys: it generates a new master key, keypair and recovery code, re-seals every item's keys in one transaction, and signs out every session and connected app. An old database copy plus the old password opens nothing uploaded afterwards (earlier items keep their file keys).</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">owner verification</div>
+        <div class="feature-desc">Your own uploads carry a tag only your master key can produce. Anything without a valid one &mdash; uploads from a connected app, or rows planted directly in the database &mdash; is marked with an <strong>APP</strong> badge. Renaming or moving an item adopts it.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-name">non-extractable keys + idle lock</div>
+        <div class="feature-desc">In the browser, the master key and private key are held as non-extractable Web Crypto keys &mdash; page script can use them but can&rsquo;t read their bytes. After 30 minutes without activity (a playing video counts), the tab signs out and drops them.</div>
       </div>
       <div class="feature">
         <div class="feature-name">delegated uploads</div>
-        <div class="feature-desc">Grant other apps (e.g., PPVDA) upload-only access via a copy-paste consent flow. They hold your X25519 public key and a refresh token &mdash; they can seal uploads to you but can't read, list, or delete anything. Revoke anytime from Settings &rarr; Connected Apps.</div>
+        <div class="feature-desc">Grant other apps (e.g., PPVDA) upload-only access via a copy-paste consent flow. They hold your X25519 public key and a refresh token &mdash; they can seal uploads to you but can't read, list, or delete anything. Connections expire after 60 days unused or a year at most, and revoking one from Settings &rarr; Connected Apps takes effect on the app's next request.</div>
       </div>
       <div class="feature">
         <div class="feature-name">single binary</div>
@@ -876,7 +891,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">storage quotas</div>
-        <div class="feature-desc">Per-user quotas in GB (default: 1 GB), tracked in bytes for accuracy. Per-user quotas can only be raised. Validated against available disk capacity with a 2 GB reserve.</div>
+        <div class="feature-desc">Per-user quotas in GB (default: 1 GB), charged on the padded bytes actually written to disk and enforced while chunks stream in. Per-user quotas can only be raised. Validated against available disk capacity with a 2 GB reserve.</div>
       </div>
       <div class="feature">
         <div class="feature-name">self-hosted</div>
@@ -888,7 +903,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">static asset caching</div>
-        <div class="feature-desc">Content-hash cache busting for static assets. Aggressive caching without serving stale files after upgrades.</div>
+        <div class="feature-desc">Content-hash cache busting for static assets. Only versioned URLs are cached long-term; everything else revalidates, so security fixes reach returning browsers.</div>
       </div>
       <div class="feature">
         <div class="feature-name">upload progress tracking</div>
@@ -900,7 +915,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="feature">
         <div class="feature-name">rate-limited sensitive endpoints</div>
-        <div class="feature-desc">Password change and account deletion endpoints are rate-limited per-IP (5/min) and per-account (10/15min), preventing brute-force of the old password via stolen sessions.</div>
+        <div class="feature-desc">Password change and account deletion are rate-limited per-IP (5/min); password change also counts failed attempts per account (10/15min), preventing brute-force of the old password via a stolen session.</div>
       </div>
     </div>
   </section>
@@ -911,12 +926,14 @@ a:hover { text-decoration: underline; }
     <h2>key hierarchy</h2>
 
     <div class="key-tree">
-<span class="node">Password</span>
+<span class="node">Password</span>          <span class="leaf">sent over TLS; the KDF runs on the server</span>
 <span class="branch"> ├─ </span><span class="algo">Argon2id</span><span class="arrow">(password, authSalt)</span>  <span class="branch">→</span>  <span class="result">password hash</span>  <span class="leaf">login verification</span>
 <span class="branch"> └─ </span><span class="algo">Argon2id</span><span class="arrow">(password, kdfSalt)</span>   <span class="branch">→</span>  <span class="result">KDF key</span>
-<span class="branch">     └─ </span><span class="algo">AES-256-GCM</span> <span class="arrow">decrypt</span> <span class="leaf">(AAD: userID)</span>  <span class="branch">→</span>  <span class="result">master key</span>  <span class="leaf">browser memory only</span>
-<span class="branch">         ├─ </span><span class="algo">AES-256-GCM</span> <span class="arrow">unwrap</span> <span class="leaf">(AAD: userID)</span>  <span class="branch">→</span>  <span class="result">X25519 private key</span>  <span class="leaf">browser memory only</span>
-<span class="branch">         └─ </span><span class="leaf">encrypts folder structure</span>         <span class="leaf">(AAD: userID)</span>
+<span class="branch">     └─ </span><span class="algo">AES-256-GCM</span> <span class="arrow">decrypt</span> <span class="leaf">(AAD: userID)</span>  <span class="branch">→</span>  <span class="result">master key</span>  <span class="leaf">server memory for this request only</span>
+<span class="branch">         └─ </span><span class="leaf">re-wrapped under</span> <span class="algo">PBKDF2</span><span class="arrow">(password, kdfSalt)</span>  <span class="branch">→</span>  <span class="result">browser</span>  <span class="leaf">non-extractable CryptoKey</span>
+<span class="branch">             ├─ </span><span class="algo">AES-256-GCM</span> <span class="arrow">unwrap</span> <span class="leaf">(AAD: userID)</span>  <span class="branch">→</span>  <span class="result">X25519 private key</span>  <span class="leaf">non-extractable</span>
+<span class="branch">             ├─ </span><span class="algo">HKDF-SHA256</span> <span class="leaf">("darkreel-owner-v1")</span>  <span class="branch">→</span>  <span class="result">owner-tag key</span>  <span class="leaf">HMAC-SHA256</span>
+<span class="branch">             └─ </span><span class="leaf">encrypts folder structure</span>         <span class="leaf">(AAD: userID)</span>
 
 <span class="node">X25519 keypair</span>    <span class="leaf">per user, generated at registration</span>
 <span class="branch"> ├─ </span><span class="result">public key</span>    <span class="leaf">stored plaintext, served to browsers and delegated clients</span>
@@ -930,10 +947,12 @@ a:hover { text-decoration: underline; }
     <span class="algo">X25519 + HKDF-SHA256 + AES-256-GCM</span> <span class="leaf">(info: "darkreel-seal-v1")</span>
     </div>
 
-    <p>Once login completes, the master key and private key live only in the browser. The browser imports the
-    private key as a non-extractable <code>CryptoKey</code> &mdash; even XSS cannot exfiltrate its
-    bytes, only use it to derive shared secrets. Both master key and private key are also wrapped
-    by a 256-bit recovery code generated at account creation and rotated on every password change.</p>
+    <p>Once login completes, the server has cleared its copy and the keys live in the browser. It
+    unwraps the master key straight into non-extractable <code>CryptoKey</code>s and imports the
+    private key the same way &mdash; once imported, even XSS can&rsquo;t read their bytes, only use them
+    while the tab is signed in. Both master key and private key are also wrapped by a 256-bit recovery code.
+    A password change or recovery replaces the master key, keypair and recovery code together and
+    re-seals every item to the new public key.</p>
 
     <p>Uploads (browser, CLI, or delegated third-party) share one wire format. Delegated clients
     hold only the public key &mdash; they can seal uploads to the user but cannot open anything.
@@ -950,13 +969,15 @@ a:hover { text-decoration: underline; }
       <tr><td>master key derivation</td><td>Argon2id - separate salt from auth hash</td></tr>
       <tr><td>file / thumb / metadata encryption</td><td>AES-256-GCM - media ID + chunk index as AAD (prevents reordering and cross-file substitution)</td></tr>
       <tr><td>per-file key wrapping</td><td>X25519 + HKDF-SHA256 + AES-256-GCM - sealed-box to user's public key, 92-byte output per 32-byte key</td></tr>
+      <tr><td>owner tag</td><td>HMAC-SHA256 under HKDF-SHA256(master key, "darkreel-owner-v1") over media ID + the three sealed keys, stored in the encrypted metadata</td></tr>
       <tr><td>user keypair</td><td>X25519 - private key dual-wrapped (master key + recovery code)</td></tr>
       <tr><td>session key</td><td>PBKDF2-SHA256 - 600,000 iterations</td></tr>
-      <tr><td>chunk padding</td><td>random fill to 1 / 2 / 4 / 8 / 16 MB buckets (on disk and over the network)</td></tr>
-      <tr><td>metadata padding</td><td>ASCII-space fill to power-of-2 from 512 B (JSON-parseable without an unpad step)</td></tr>
-      <tr><td>delegation tokens</td><td>HS256 JWT, <code>scope=upload</code>, 1 h TTL &mdash; rejected on every non-upload endpoint</td></tr>
-      <tr><td>refresh tokens</td><td>32-byte URL-safe random, stored as sha256("darkreel:delegation-refresh-v1"&#8214;token)</td></tr>
-      <tr><td>hash modification</td><td>nonce injection - JPEG COM, PNG tEXt, MP4 free box (appended at end), WebM Void element</td></tr>
+      <tr><td>chunk padding</td><td>inside the AEAD: plaintext framed and zero-padded so the ciphertext is exactly 1 / 2 / 4 / 8 / 16 MB (then whole MB, max 20 MB); thumbnails exactly 256 KB</td></tr>
+      <tr><td>truncation detection</td><td>authenticated last-chunk flag in every chunk frame + chunk count in encrypted metadata</td></tr>
+      <tr><td>metadata padding</td><td>metadata and folder tree ASCII-space-filled to power-of-2 from 512 B before encryption (JSON-parseable without an unpad step)</td></tr>
+      <tr><td>delegation tokens</td><td>HS256 JWT, <code>scope=upload</code>, 1 h TTL, bound to its delegation and checked on every request &mdash; rejected on every non-upload endpoint</td></tr>
+      <tr><td>refresh tokens</td><td>32-byte URL-safe random, stored as sha256("darkreel:delegation-refresh-v1|"&#8214;token); expire after 60 days unused or 1 year</td></tr>
+      <tr><td>hash modification</td><td>nonce injection - JPEG COM, PNG tEXt; CLI also MP4 free box (appended at end) for videos it doesn't remux</td></tr>
       <tr><td>deletion</td><td>1-pass random overwrite &rarr; fsync &rarr; unlink (keys deleted first)</td></tr>
     </table>
 
@@ -964,12 +985,16 @@ a:hover { text-decoration: underline; }
 
     <div class="terminal">
       <code>
-<span class="comment">// encrypted chunk</span>
+<span class="comment">// chunk plaintext (format 2) - framed and padded before encryption</span>
+<span class="output">[version: 1B] [flags: 1B, last chunk] [length: 4B] [data] [zero padding]</span>
+
+<span class="comment">// encrypted chunk - exactly one bucket size</span>
 <span class="output">[nonce: 12 bytes] [ciphertext] [GCM tag: 16 bytes]</span>
 <span class="comment">// chunk index bound as AAD - reorder and decryption fails</span>
 
-<span class="comment">// padded chunk on disk</span>
-<span class="output">[real length: 4B big-endian] [encrypted data] [random padding → bucket]</span>
+<span class="comment">// on disk</span>
+<span class="output">[length: 4B big-endian] [encrypted chunk] [random fill]</span>
+<span class="comment">// the length prefix only ever reveals the bucket</span>
       </code>
     </div>
   </section>
@@ -986,9 +1011,9 @@ a:hover { text-decoration: underline; }
     <div class="terminal">
       <code>
 <span class="comment">upload:</span>
-<span class="output">  container → extract samples → fMP4 segments (~2s)</span>
-<span class="output">    → merge into ~1 MB chunks → AES-256-GCM encrypt</span>
-<span class="output">    → pad to bucket size → upload</span>
+<span class="output">  container → extract samples → fMP4 fragments (1-2 s)</span>
+<span class="output">    → merge into ≤1 MB chunks → frame + pad to bucket</span>
+<span class="output">    → AES-256-GCM encrypt → upload</span>
 
 <span class="comment">playback:</span>
 <span class="output">  fetch chunk (prefetch-ahead) → Web Worker decrypt</span>
@@ -996,7 +1021,8 @@ a:hover { text-decoration: underline; }
 <span class="output">    → playback starts after first chunk</span>
 
 <span class="comment">download:</span>
-<span class="output">  fetch all chunks → decrypt → fMP4 → standard MP4</span>
+<span class="output">  fetch all chunks → decrypt → check last-chunk flag</span>
+<span class="output">    → fMP4 → standard MP4</span>
       </code>
     </div>
 
@@ -1026,8 +1052,9 @@ a:hover { text-decoration: underline; }
 
     <div class="tradeoff">
       <div class="tradeoff-title">chunk padding wastes disk space and bandwidth</div>
-      <p>A 3 MB file becomes 4 MB on disk and over the wire. A 5 MB file becomes 8 MB.
-      Thumbnails are always 256 KB regardless of actual size. This is the cost of
+      <p>Every chunk is rounded up to its bucket, so a 3.2 MB photo is stored and sent as
+      four 1 MB chunks, and a video&rsquo;s chunks (which follow fragment boundaries) each carry
+      some slack. Thumbnails are always 256 KB regardless of actual size. This is the cost of
       preventing size fingerprinting on both storage and network layers.</p>
     </div>
 
@@ -1059,19 +1086,20 @@ a:hover { text-decoration: underline; }
     </div>
 
     <div class="tradeoff">
-      <div class="tradeoff-title">quotas are quantized, not exact</div>
-      <p>Storage quotas are enforced against encrypted byte counts, quantized to 256 KB buckets
-      to prevent exact-size content fingerprinting. Actual disk usage is higher than the quota
-      suggests because every chunk is padded to a bucket boundary (1/2/4/8/16 MB). This is
-      intentional &mdash; exposing exact or padded sizes would weaken size-fingerprinting resistance.</p>
+      <div class="tradeoff-title">quotas count the padding</div>
+      <p>Quotas are charged on what actually lands on disk: every padded chunk bucket
+      (1/2/4/8/16 MB) plus a 256 KB thumbnail per item, enforced while the chunks stream in.
+      A 1 GB quota therefore holds somewhat less than 1 GB of files. The server never learns
+      exact sizes, so it can&rsquo;t charge for them.</p>
     </div>
 
     <div class="tradeoff">
       <div class="tradeoff-title">session persistence is a trade-off</div>
-      <p>With <code>PERSIST_SESSION=true</code> (the default), the master key is cached in
-      sessionStorage so page refreshes don't require re-login. A tight CSP and SRI on all
-      scripts make XSS difficult, but a malicious browser extension could read it. Set
-      <code>PERSIST_SESSION=false</code> to keep the key in memory only.</p>
+      <p>With <code>PERSIST_SESSION=true</code> (the default), the keys are kept in IndexedDB so
+      page refreshes don't require re-login &mdash; as non-extractable <code>CryptoKey</code>s, never
+      raw bytes. Script running in the page (XSS, a malicious extension) still can&rsquo;t read them, but
+      could use them while the session lasts; logout or 30 minutes idle clears them. Set
+      <code>PERSIST_SESSION=false</code> to keep the keys in memory only.</p>
     </div>
   </section>
 
@@ -1082,9 +1110,10 @@ a:hover { text-decoration: underline; }
 
     <div class="tradeoff">
       <div class="tradeoff-title">concurrent login throughput</div>
-      <p>Each login performs two Argon2id derivations (~600 ms total, 128 MB RAM, 8 threads).
-      On an 8-core machine, only ~2 logins can run at full speed concurrently. This is a
-      deliberate security trade-off.</p>
+      <p>Each login performs two Argon2id derivations (~600 ms total, 64 MB each).
+      A global gate lets only 2&ndash;4 such requests (login, register, recovery, password change)
+      run at once; beyond that, requests wait briefly and then get a 503 &ldquo;try again&rdquo;.
+      This is a deliberate trade-off that keeps a login burst from exhausting RAM on a small VPS.</p>
     </div>
 
     <div class="tradeoff">
@@ -1102,8 +1131,9 @@ a:hover { text-decoration: underline; }
     <div class="tradeoff">
       <div class="tradeoff-title">chunk count sent in plaintext</div>
       <p>The number of chunks per file is sent unencrypted during upload so the server can validate
-      upload completeness. Since chunks are ~1 MB each, this reveals approximate file size. Exact
-      sizes remain hidden by chunk padding and encrypted metadata.</p>
+      upload completeness. Together with the bucket sizes, this reveals approximate file size
+      (to within about 1 MB per chunk). Exact sizes remain hidden by the in-ciphertext padding and
+      encrypted metadata.</p>
     </div>
   </section>
 
@@ -1116,14 +1146,17 @@ a:hover { text-decoration: underline; }
       <div class="label">full setup</div>
       <code>
         git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel<br>
+        less setup.sh &nbsp;<span class="comment"># read it first - it runs as root</span><br>
         sudo ./setup.sh<br>
         <span class="comment"># firewall, fail2ban, SSH hardening, TLS via Caddy,</span><br>
-        <span class="comment"># systemd service, daily backups - all handled</span>
+        <span class="comment"># systemd service, encrypted daily backups - all handled</span>
       </code>
     </div>
 
     <p>Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS. The script asks for your domain
-    (verified against server IP), an admin password, and optionally a personal SSH user.
+    (verified against server IP), an admin password, a per-user quota, a backup encryption key,
+    and optionally a personal SSH user and auto-updates. It installs a checksum-verified Go
+    toolchain and builds from source &mdash; nothing is piped from the internet into a shell.
     Safe to re-run.</p>
 
     <h3>manual</h3>
@@ -1133,7 +1166,7 @@ a:hover { text-decoration: underline; }
 <span class="prompt">$ </span>git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel
 <span class="prompt">$ </span>bash build.sh
 <span class="prompt">$ </span><span class="flag">DARKREEL_ADMIN_PASSWORD</span>=<span class="string">'YourStr0ng!Password'</span> ./darkreel
-<span class="output">listening on :8080</span>
+<span class="output">Darkreel listening on 127.0.0.1:8080</span>
 <span class="comment"># put Caddy or nginx in front for TLS</span>
       </code>
     </div>
@@ -1156,15 +1189,15 @@ a:hover { text-decoration: underline; }
 
     <div class="terminal">
       <code>
-<span class="prompt">$ </span>./darkreel <span class="flag">-addr</span> :8080 <span class="flag">-data</span> ./data
+<span class="prompt">$ </span>./darkreel <span class="flag">-addr</span> 127.0.0.1:8080 <span class="flag">-data</span> ./data   <span class="comment"># defaults</span>
 
 <span class="comment"># Environment variables</span>
 <span class="flag">DARKREEL_ADMIN_USERNAME</span>=admin         <span class="comment"># first-run only</span>
 <span class="flag">DARKREEL_ADMIN_PASSWORD</span>=...           <span class="comment"># required on first run</span>
-<span class="flag">PERSIST_SESSION</span>=true                  <span class="comment"># master key in sessionStorage (default: on)</span>
+<span class="flag">PERSIST_SESSION</span>=true                  <span class="comment"># keep non-extractable keys across refresh (default: on)</span>
 <span class="flag">ALLOW_REGISTRATION</span>=false              <span class="comment"># initial state; admin panel toggle persists to DB</span>
 <span class="flag">TRUST_PROXY</span>=false                     <span class="comment"># enable behind Caddy/nginx for correct rate limiting</span>
-<span class="flag">TRUST_PROXY_CIDR</span>=127.0.0.1/32          <span class="comment"># optional: only honor proxy headers from these CIDRs</span>
+<span class="flag">TRUST_PROXY_CIDR</span>=127.0.0.1/32,::1/128  <span class="comment"># only honor X-Forwarded-For from these proxies</span>
 <span class="flag">MAX_STORAGE_GB</span>=50                     <span class="comment"># per-user storage quota in GB (default: 1 GB if not set)</span>
       </code>
     </div>
@@ -1174,16 +1207,19 @@ a:hover { text-decoration: underline; }
   <section id="api">
     <div class="section-label">08 - api</div>
     <h2>endpoints</h2>
-    <p>All endpoints except <code>/health</code> and <code>/api/config</code> require a JWT.
-    JWTs contain user ID, session ID, and admin flag.</p>
+    <p>Everything except <code>/health</code>, <code>/api/config</code>, register/login/recover and the
+    delegation exchange/refresh endpoints requires a JWT. JWTs contain user ID, session ID, and admin
+    flag; delegation tokens carry <code>scope=upload</code> and their delegation ID instead. An
+    account created by an admin gets <code>403 password change required</code> everywhere except
+    change-password and logout until it picks its own password.</p>
 
     <div class="api-group">
       <div class="api-group-title">auth</div>
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/register</span><span class="api-desc">register, returns recovery code</span></div>
-      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/login</span><span class="api-desc">returns JWT + encrypted master key</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/login</span><span class="api-desc">returns JWT + wrapped master key (+ must_change_password)</span></div>
       <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/logout</span><span class="api-desc">immediate session invalidation</span></div>
-      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/recover</span><span class="api-desc">reset password with recovery code</span></div>
-      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/change-password</span><span class="api-desc">re-encrypts master key, rotates recovery code, invalidates all sessions</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/recover</span><span class="api-desc">reset password with recovery code, rotates all keys</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/auth/change-password</span><span class="api-desc">new master key, keypair + recovery code; re-seals every item; revokes sessions + apps</span></div>
       <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/auth/account</span><span class="api-desc">delete account and all media</span></div>
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/config</span><span class="api-desc">server config (no auth)</span></div>
     </div>
@@ -1207,9 +1243,18 @@ a:hover { text-decoration: underline; }
     </div>
 
     <div class="api-group">
+      <div class="api-group-title">delegation (connected apps)</div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/delegation/authorize</span><span class="api-desc">issue a one-use code (2 min)</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/delegation/exchange</span><span class="api-desc">code &rarr; refresh token + public key (no JWT)</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/delegation/refresh</span><span class="api-desc">refresh token &rarr; 1 h upload-only token (no JWT)</span></div>
+      <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/account/delegations</span><span class="api-desc">list connected apps, with expiry dates</span></div>
+      <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/account/delegations/:id</span><span class="api-desc">revoke - effective on the app's next request</span></div>
+    </div>
+
+    <div class="api-group">
       <div class="api-group-title">admin</div>
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/admin/users</span><span class="api-desc">list users with storage usage</span></div>
-      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/admin/users</span><span class="api-desc">create user, returns recovery code</span></div>
+      <div class="api-route"><span class="api-method post">POST</span><span class="api-path">/api/admin/users</span><span class="api-desc">create user (must change password at first login)</span></div>
       <div class="api-route"><span class="api-method delete">DELETE</span><span class="api-path">/api/admin/users/:id</span><span class="api-desc">delete user + all media</span></div>
       <div class="api-route"><span class="api-method patch">PATCH</span><span class="api-path">/api/admin/users/:id/quota</span><span class="api-desc">raise per-user storage quota (can only increase)</span></div>
       <div class="api-route"><span class="api-method get">GET</span><span class="api-path">/api/admin/storage</span><span class="api-desc">storage stats (used bytes, allocated quota, disk usage)</span></div>
@@ -1244,9 +1289,12 @@ a:hover { text-decoration: underline; }
       </code>
     </div>
 
-    <p>The setup script configures daily encrypted backups (AES-256-CBC with a dedicated key, 30-day retention).
-    Backups are safe to store off-site - media is encrypted on disk, and database backups are
-    additionally encrypted at rest. An attacker with a backup can't decrypt anything without a user's password.</p>
+    <p>The setup script configures a nightly database backup: a SQL dump streamed straight into
+    <code>age</code>, encrypted to a public key whose private half is shown once and never kept on the
+    server, stored root-only in <code>/var/backups/darkreel</code> with 30-day retention. Backups are
+    safe to store off-site - media is encrypted on disk, and database backups are additionally
+    encrypted to a key the server doesn&rsquo;t have. Even decrypted, a backup holds only hashes and
+    wrapped keys: nothing opens without a user&rsquo;s password or recovery code.</p>
 
     <h2>upgrading</h2>
 
@@ -1254,11 +1302,13 @@ a:hover { text-decoration: underline; }
 
     <div class="terminal">
       <code>
-<span class="prompt">$ </span>cd /opt/darkreel && git pull && bash build.sh
+<span class="prompt">$ </span>cd darkreel && git pull && bash build.sh    <span class="comment"># your clone</span>
 <span class="prompt">$ </span>sudo cp darkreel /usr/local/bin/darkreel
 <span class="prompt">$ </span>sudo systemctl restart darkreel
 
-<span class="comment"># or use the auto-updater (checks GitHub releases, verifies SHA-256 + Ed25519 signature, refuses unsigned binaries)</span>
+<span class="comment"># or use the auto-updater: installs tagged releases only if the Ed25519 signature</span>
+<span class="comment"># over (tag, asset, SHA-256) verifies against /etc/darkreel/signing.pub; refuses</span>
+<span class="comment"># unsigned binaries and downgrades</span>
 <span class="prompt">$ </span>sudo ./update.sh <span class="flag">--install</span>    <span class="comment"># daily cron at 4 AM</span>
       </code>
     </div>
@@ -1281,36 +1331,39 @@ a:hover { text-decoration: underline; }
 <span class="output">TLS termination</span>       <span class="comment">Caddy or nginx - darkreel doesn't handle TLS</span>
 <span class="output">UFW firewall</span>          <span class="comment">SSH, HTTP, HTTPS only</span>
 <span class="output">fail2ban</span>              <span class="comment">auto-ban after failed SSH attempts</span>
-<span class="output">SSH hardening</span>         <span class="comment">root login disabled, key-only auth</span>
+<span class="output">SSH hardening</span>         <span class="comment">root login disabled (once a personal SSH user exists)</span>
 <span class="output">systemd sandbox</span>       <span class="comment">15+ directives: capabilities, syscall filter, namespaces, and more</span>
 <span class="output">dedicated user</span>        <span class="comment">darkreel user with minimal permissions</span>
-<span class="output">SRI hashes</span>            <span class="comment">all JS/CSS integrity-verified, including dynamic loads</span>
-<span class="output">rate limiting</span>         <span class="comment">5 auth/min/IP + 10/15min/username (distributed brute-force protection)</span>
+<span class="output">SRI hashes</span>            <span class="comment">page JS/CSS integrity-verified, incl. mp4box and the crypto.js module app.js imports</span>
+<span class="output">rate limiting</span>         <span class="comment">5 auth/min/IP (IPv6 per /64) + 10 failures/15min/account, login and recovery counted separately</span>
+<span class="output">Argon2 gate</span>           <span class="comment">2-4 concurrent KDF requests server-wide, 503 when saturated - no memory exhaustion</span>
 <span class="output">security headers</span>      <span class="comment">CSP, HSTS, Permissions-Policy, Cache-Control: no-store</span>
 <span class="output">COOP/COEP</span>             <span class="comment">defense-in-depth for SharedArrayBuffer</span>
-<span class="output">graceful shutdown</span>     <span class="comment">drains in-flight requests before closing database</span>
-<span class="output">session expiry</span>        <span class="comment">24h max, periodic cleanup of stale sessions</span>
-<span class="output">password change</span>       <span class="comment">all other sessions invalidated immediately</span>
+<span class="output">graceful shutdown</span>     <span class="comment">drains in-flight requests and pending shreds before closing database</span>
+<span class="output">session expiry</span>        <span class="comment">24h max, periodic cleanup of stale sessions; 30 min idle lock in the browser</span>
+<span class="output">password change</span>       <span class="comment">keys rotated; all sessions and connected apps revoked immediately</span>
+<span class="output">forced password change</span> <span class="comment">admin-created accounts can do nothing else until they set their own password</span>
+<span class="output">delegation expiry</span>    <span class="comment">connected apps expire after 60 days unused / 1 year; tokens checked against the delegation on every request</span>
 <span class="output">admin re-check</span>        <span class="comment">admin status verified from DB on every admin request</span>
-<span class="output">timing mitigation</span>    <span class="comment">login and recovery endpoints do dummy work for unknown users</span>
+<span class="output">timing mitigation</span>    <span class="comment">unknown usernames take the same time as wrong credentials on login and recovery</span>
 <span class="output">BREACH mitigation</span>    <span class="comment">compression disabled on auth endpoints that return secrets</span>
 <span class="output">last-admin guard</span>     <span class="comment">atomic transaction prevents TOCTOU race on admin deletion</span>
 <span class="output">storage quotas</span>       <span class="comment">mandatory per-user limits in GB (byte-accurate), raise-only, validated against disk (2 GB reserve)</span>
-<span class="output">secure delete (DB)</span>   <span class="comment">PRAGMA secure_delete zeroes deleted pages - prevents forensic recovery from SQLite/WAL</span>
+<span class="output">secure delete (DB)</span>   <span class="comment">PRAGMA secure_delete verified at boot; WAL truncated periodically and after key changes or account deletion</span>
 <span class="output">hashed identifiers</span>   <span class="comment">IPs and usernames keyed-hashed (SipHash, per-process random seed) - no plaintext in dumps, no collision attacks</span>
 <span class="output">privacy-safe logs</span>    <span class="comment">no usernames, user IDs, media IDs, or IP addresses in server logs</span>
 <span class="output">path validation</span>      <span class="comment">UUID validation at storage layer - defense-in-depth against path traversal</span>
-<span class="output">proxy-aware IPs</span>      <span class="comment">X-Forwarded-For trust off by default - opt-in via TRUST_PROXY, optionally scoped to TRUST_PROXY_CIDR allowlist</span>
+<span class="output">proxy-aware IPs</span>      <span class="comment">X-Forwarded-For off by default; with TRUST_PROXY, rightmost untrusted hop only, X-Real-IP ignored</span>
 <span class="output">startup integrity</span>    <span class="comment">incomplete uploads cleaned up on restart, crashed size records backfilled</span>
-<span class="output">encrypted backups</span>    <span class="comment">AES-256-CBC with dedicated key, 30-day retention</span>
+<span class="output">encrypted backups</span>    <span class="comment">age-encrypted to an offline key, root-only, 30-day retention</span>
 <span class="output">upload concurrency</span>   <span class="comment">max 3 concurrent uploads per user - prevents disk exhaustion</span>
-<span class="output">network padding</span>      <span class="comment">chunks/thumbnails sent padded over the wire, not just on disk</span>
-<span class="output">master key clearing</span>  <span class="comment">cleared from server memory immediately after login response</span>
-<span class="output">recovery rotation</span>   <span class="comment">recovery code rotated on every password change</span>
-<span class="output">signed updates</span>       <span class="comment">auto-updater requires valid Ed25519 signature, hard failure on missing key</span>
+<span class="output">network padding</span>      <span class="comment">padding is inside the ciphertext - same bucket sizes on the wire as on disk</span>
+<span class="output">master key clearing</span>  <span class="comment">cleared from server memory as soon as it is re-wrapped for the client</span>
+<span class="output">recovery rotation</span>   <span class="comment">recovery code replaced on every password change and recovery</span>
+<span class="output">signed updates</span>       <span class="comment">Ed25519 signature bound to tag + asset + SHA-256; no downgrades; hard failure on missing key</span>
 <span class="output">access log control</span>  <span class="comment">setup offers to disable Caddy access logs for privacy</span>
 <span class="output">thumbnail validation</span> <span class="comment">oversized thumbnails rejected with clear error, not silently truncated</span>
-<span class="output">folder tree padding</span> <span class="comment">encrypted folder blobs padded with random bytes, not zeros - prevents DB-level size inference</span>
+<span class="output">folder tree padding</span> <span class="comment">padded before encryption, then again with random bytes on the server - prevents DB-level size inference</span>
 <span class="output">thread-safe PRNG</span>    <span class="comment">per-goroutine ChaCha8 instances for padding and shredding - no shared mutable state</span>
 <span class="output">shredder shutdown</span>   <span class="comment">rejects new work after shutdown begins - prevents panics during graceful shutdown</span>
 <span class="output">metadata update limits</span> <span class="comment">PATCH endpoint enforces same size limits as upload (64 KB metadata, 64B nonces)</span>
@@ -1347,16 +1400,17 @@ a:hover { text-decoration: underline; }
 
     <h2>session persistence</h2>
 
-    <p><code>PERSIST_SESSION</code> (default: <code>true</code>) controls whether the master
-    encryption key is cached in <code>sessionStorage</code> between page refreshes.</p>
+    <p><code>PERSIST_SESSION</code> (default: <code>true</code>) controls whether the browser keeps
+    its keys in IndexedDB &mdash; as non-extractable <code>CryptoKey</code> objects, never raw bytes
+    &mdash; so they survive a page refresh.</p>
 
     <div class="terminal">
       <code>
-<span class="output">PERSIST_SESSION=true</span>    <span class="comment">master key survives refresh (default)</span>
-<span class="output">                       </span>    <span class="comment">XSS or malicious extension could read it</span>
-<span class="output">                       </span>    <span class="comment">CSP + SRI make XSS difficult, not impossible</span>
+<span class="output">PERSIST_SESSION=true</span>    <span class="comment">keys survive refresh (default)</span>
+<span class="output">                       </span>    <span class="comment">page script can't read them, but XSS or a malicious</span>
+<span class="output">                       </span>    <span class="comment">extension could use them until logout / 30 min idle</span>
 
-<span class="output">PERSIST_SESSION=false</span>   <span class="comment">key only in JS memory, cleared on refresh</span>
+<span class="output">PERSIST_SESSION=false</span>   <span class="comment">keys only in JS memory, cleared on refresh</span>
 <span class="output">                       </span>    <span class="comment">users re-enter password on every page load</span>
 <span class="output">                       </span>    <span class="comment">more secure, less convenient</span>
       </code>
@@ -1448,7 +1502,7 @@ a:hover { text-decoration: underline; }
   const navLinks = [...document.querySelectorAll('.nav a[href^="#"]')];
 
   const installCommand =
-    'git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel\nsudo ./setup.sh';
+    'git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel\nless setup.sh   # review it first; it runs as root\nsudo ./setup.sh';
 
   const links = {
     website: 'https://darkreel.io/',

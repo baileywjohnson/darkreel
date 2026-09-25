@@ -214,6 +214,14 @@ func (h *Handler) RefreshDelegationToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Past its idle or maximum lifetime: remove it (the periodic sweep would
+	// anyway) and refuse. The app has to be authorized again.
+	if d.Expired(time.Now()) {
+		_ = db.DeleteDelegation(h.DB, d.UserID, d.ID)
+		http.Error(w, "refresh token expired", http.StatusUnauthorized)
+		return
+	}
+
 	access, err := GenerateDelegationToken(d.UserID, d.ID, delegationAccessTTL)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -251,6 +259,7 @@ func (h *Handler) ListDelegations(w http.ResponseWriter, r *http.Request) {
 			"client_url":  d.ClientURL,
 			"scope":       d.Scope,
 			"created_at":  d.CreatedAt,
+			"expires_on":  d.ExpiresOn(),
 		}
 		if d.LastUsedAt.Valid {
 			entry["last_used_at"] = d.LastUsedAt.String
@@ -294,6 +303,7 @@ func StartDelegationCodeCleanup(database *sql.DB) {
 		for {
 			time.Sleep(time.Minute)
 			_ = db.PruneExpiredDelegationCodes(database, time.Now())
+			_ = db.PruneExpiredDelegations(database, time.Now())
 		}
 	}()
 }

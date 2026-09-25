@@ -5,9 +5,9 @@ import {
     generateFileKey, generateHashNonce,
     encryptChunk, decryptChunk, encryptBlock, decryptBlock,
     CHUNK_FORMAT, CHUNK_DATA_SIZE, encryptFramedChunk, encryptFramedThumbnail, unframeChunk,
-    generateThumbnail, modifyHash,
+    generateThumbnail, modifyHash, canHashModify,
     bufferToBase64, base64ToBuffer, formatSize
-} from './crypto.js?v=09d991cbdfdcc215';
+} from './crypto.js?v=3327feb4d1a6d6c2';
 
 // Shape 2: after a master key lands, unwrap the user's X25519 private key
 // (the server returns encrypted_priv_key wrapped with AES-GCM under the master
@@ -1044,7 +1044,11 @@ async function handleLogin(overrideUsername, overridePassword) {
 
         await persistKeysForRefresh();
 
-        showGallery();
+        if (res.must_change_password) {
+            enterForcedPasswordChange();
+        } else {
+            showGallery();
+        }
     } catch (e) {
         loginBtn.textContent = loginBtn.dataset.origText || 'Login';
         loginBtn.disabled = false;
@@ -1732,7 +1736,7 @@ adminCreateForm.addEventListener('submit', async (e) => {
     btnLoading(adminCreateBtn);
     try {
         const res = await api('/api/admin/users', { json: { username, password, is_admin: isAdmin } });
-        adminCreateSuccess.innerHTML = 'User "' + escapeHtml(res.username) + '" created.<br>Recovery code:<br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:8px;margin-top:4px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + escapeHtml(res.recovery_code) + '</code>';
+        adminCreateSuccess.innerHTML = 'User "' + escapeHtml(res.username) + '" created. They must choose their own password at first login, which replaces their keys and this recovery code.<br>Recovery code (valid until then):<br><code style="user-select:all;font-size:11px;word-break:break-all;display:block;padding:8px;margin-top:4px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)">' + escapeHtml(res.recovery_code) + '</code>';
         adminCreateSuccess.classList.remove('hidden');
         adminCreateForm.reset();
         btnReset(adminCreateBtn);
@@ -2066,7 +2070,8 @@ async function loadDelegations() {
             urlEl.target = '_blank';
             const created = document.createElement('span');
             created.className = 'hint';
-            created.textContent = 'Authorized ' + (d.created_at || '') + (d.last_used_at ? ` · last used ${d.last_used_at}` : '');
+            created.textContent = 'Authorized ' + (d.created_at || '') + (d.last_used_at ? ` · last used ${d.last_used_at}` : '')
+                + (d.expires_on ? ` · expires ${d.expires_on}` : '');
             meta.appendChild(nameEl);
             meta.appendChild(document.createElement('br'));
             meta.appendChild(urlEl);
@@ -2311,6 +2316,9 @@ document.getElementById('settings-change-pw-form').addEventListener('submit', as
         if (res.recovery_code) {
             showRecoveryModal(res.recovery_code);
         }
+        if (document.body.classList.contains('forced-pw-change')) {
+            exitForcedPasswordChange();
+        }
     } catch (err) {
         btnReset(settingsChangePwBtn);
         errEl.textContent = err.message || 'Failed to change password';
@@ -2409,7 +2417,30 @@ async function doLogout() {
     mediaItems.length = 0;
     folders.length = 0;
     sessionStorage.clear();
+    document.body.classList.remove('forced-pw-change');
+    document.getElementById('forced-pw-notice').classList.add('hidden');
     showAuth();
+}
+
+// An account an admin created must choose its own password before anything
+// else; the server refuses every other request until then. Show only the
+// password form (and logout).
+function enterForcedPasswordChange() {
+    sessionStorage.setItem('mustChangePassword', '1');
+    document.body.classList.add('forced-pw-change');
+    document.getElementById('forced-pw-notice').classList.remove('hidden');
+    showSettingsPanel();
+    resetIdleTimer();
+}
+
+function exitForcedPasswordChange() {
+    sessionStorage.removeItem('mustChangePassword');
+    document.body.classList.remove('forced-pw-change');
+    document.getElementById('forced-pw-notice').classList.add('hidden');
+    // showGallery reopens the last active view; that was the forced
+    // settings screen, so point it at the gallery.
+    sessionStorage.setItem('activeView', 'gallery');
+    showGallery();
 }
 
 // Idle lock: after IDLE_LOCK_MS without interaction, log out and drop the
@@ -5083,7 +5114,8 @@ async function rotateCurrentItem() {
         const newHashNonce = generateHashNonce();
 
         // Hash modification on rotated data
-        const modifiedData = modifyHash(rotatedData, item.mime_type || 'image/jpeg', newHashNonce);
+        const rotatedType = item.mime_type || 'image/jpeg';
+        const modifiedData = canHashModify(rotatedType) ? modifyHash(rotatedData, rotatedType, newHashNonce) : rotatedData;
 
         // Generate media ID first — needed as AAD for chunk and metadata encryption
         const newMediaId = crypto.randomUUID();
@@ -6090,7 +6122,9 @@ async function uploadFile(file, itemEl, targetFolderId) {
     const hashNonce = generateHashNonce();
 
     // Hash modification (skip for videos and non-media files)
-    const modifiedData = (mediaType === 'image') ? modifyHash(fileData, file.type, hashNonce) : fileData;
+    // Images in formats modifyHash can't safely alter (GIF, WebP, ...) are
+    // uploaded unmodified rather than failing the upload.
+    const modifiedData = (mediaType === 'image' && canHashModify(file.type)) ? modifyHash(fileData, file.type, hashNonce) : fileData;
 
     // Generate media ID first — needed as AAD for chunk and metadata encryption
     const mediaId = crypto.randomUUID();
@@ -6275,7 +6309,11 @@ initWorkers();
             const checkRes = await fetch('/api/media?limit=0', {
                 headers: { 'Authorization': `Bearer ${savedToken}` },
             });
-            if (!checkRes.ok) throw new Error('invalid token');
+            // A session restricted to a forced password change gets 403 here
+            // but is valid; it resumes at the password form.
+            const forced = checkRes.status === 403 && (await checkRes.text()).includes('password change required');
+            if (!checkRes.ok && !forced) throw new Error('invalid token');
+            if (forced) sessionStorage.setItem('mustChangePassword', '1');
         } catch {
             // Token rejected (server restarted, expired, etc.)
             token = null;
@@ -6296,7 +6334,11 @@ initWorkers();
                 if (await restoreSessionKeys(keySession)) {
                     // Drop keys other tabs left behind; they can log in again.
                     forgetSessionKeys(keySession);
-                    showGallery();
+                    if (sessionStorage.getItem('mustChangePassword') === '1') {
+                        enterForcedPasswordChange();
+                    } else {
+                        showGallery();
+                    }
                     return;
                 }
             } catch {

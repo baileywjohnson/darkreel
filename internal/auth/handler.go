@@ -174,6 +174,9 @@ type loginResponse struct {
 	PublicKey        string `json:"public_key"`
 	EncryptedPrivKey string `json:"encrypted_priv_key"`
 	IsAdmin          bool   `json:"is_admin"`
+	// MustChangePassword: the account was created by an admin and must
+	// choose its own password before anything else is allowed.
+	MustChangePassword bool `json:"must_change_password,omitempty"`
 }
 
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
@@ -365,6 +368,16 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	// (Sessions.Has), but the plaintext key is no longer in memory.
 	Sessions.ClearKey(sessionID)
 
+	mustChange, err := db.MustChangePassword(h.DB, user.ID)
+	if err != nil {
+		Sessions.Delete(sessionID)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if mustChange {
+		Sessions.MarkMustChangePassword(sessionID)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(loginResponse{
 		Token:              token,
@@ -374,6 +387,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		PublicKey:          base64.StdEncoding.EncodeToString(user.PublicKey),
 		EncryptedPrivKey:   base64.StdEncoding.EncodeToString(user.EncryptedPrivKey),
 		IsAdmin:            user.IsAdmin,
+		MustChangePassword: mustChange,
 	})
 }
 

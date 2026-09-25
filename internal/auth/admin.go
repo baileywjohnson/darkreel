@@ -377,6 +377,10 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		IsAdmin:          req.IsAdmin,
 	}
 
+	// The admin chose this password and is about to see the recovery code.
+	// The user must replace the password at first login, which rotates the
+	// master key and keypair so neither lets the admin into the account.
+	user.MustChangePassword = true
 	if err := db.CreateUser(h.DB, user); err != nil {
 		http.Error(w, "Username is unavailable.", http.StatusConflict)
 		return

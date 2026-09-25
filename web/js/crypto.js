@@ -535,6 +535,11 @@ function generateVideoThumbnail(file) {
 }
 
 // Modify hash by injecting metadata nonce
+// Whether modifyHash can embed a nonce in this type without breaking it.
+export function canHashModify(mimeType) {
+    return /jpe?g|png|mp4|m4v|quicktime|mov/i.test(mimeType || '');
+}
+
 export function modifyHash(data, mimeType, nonce) {
     const lower = mimeType.toLowerCase();
     if (lower.includes('jpeg') || lower.includes('jpg')) {

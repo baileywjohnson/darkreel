@@ -169,6 +169,8 @@ func (s *Server) routes() chi.Router {
 		r.Use(auth.Middleware(s.DB))
 		r.Use(auth.RequireFullScope)
 
+		// These two paths are the only ones a session restricted to a forced
+		// password change may use (auth.allowedBeforePasswordChange).
 		r.Post("/api/auth/logout", authHandler.Logout)
 		r.With(authLimiter, argonGate).Post("/api/auth/change-password", authHandler.ChangePassword)
 		r.With(authLimiter, argonGate).Delete("/api/auth/account", authHandler.DeleteOwnAccount)

@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <title>Darkreel</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍿</text></svg>">
-    <link rel="stylesheet" href="/css/app.css?v=3c97a77ecd2ab6a0" integrity="sha384-MhlK2gztnpOMogTqrImvIxGdN/NLWHkCgxP2PlAe7L94OSY0e8EqsF1Pm1ReyYLf" crossorigin="anonymous">
+    <link rel="stylesheet" href="/css/app.css?v=f9f7893ef096b8dc" integrity="sha384-XrsViE0hymmSSRKAzu0e5VDBHyscor4VdWEEaymhBSnf/TJ9VKDS0THflIFoubRF" crossorigin="anonymous">
 </head>
 <body>
     <div id="app">
@@ -217,6 +217,7 @@
                     <div id="settings-content" class="panel-content hidden">
                         <div class="admin-create">
                             <h3>Change Password</h3>
+                            <p id="forced-pw-notice" class="hint hidden">An administrator created this account and knows its current password. Choose your own password to continue — this also replaces your encryption keys and recovery code, so that password and the recovery code you were given stop working.</p>
                             <form id="settings-change-pw-form">
                                 <input type="password" id="settings-old-pw" placeholder="Current Password" required autocomplete="current-password">
                                 <input type="password" id="settings-new-pw" placeholder="New Password" required autocomplete="new-password">
@@ -259,7 +260,7 @@
                         </div>
                         <div class="admin-create">
                             <h3>Connected Apps</h3>
-                            <p class="delete-warning">Apps authorized to upload to your account. Revoking an app, changing your password or recovering your account stops its uploads immediately.</p>
+                            <p class="delete-warning">Apps authorized to upload to your account. Revoking an app, changing your password or recovering your account stops its uploads immediately. Access also lapses after 60 days without use, and a year after authorization regardless; authorize the app again to continue.</p>
                             <p class="hint">Your upload key fingerprint — when connecting an app, check it shows the same value: <code id="delegation-key-fp"></code></p>
                             <div id="delegations-list" class="delegations-list"></div>
                             <p id="delegations-empty" class="hint hidden">No apps authorized yet.</p>
@@ -473,7 +474,7 @@
 
     </div>
 
-    <script src="/js/crypto.js?v=09d991cbdfdcc215" type="module" integrity="sha384-L89RLjnvrRjCRcd0iWIDNSqFI0I+95nWeK1rr2rxixDliifGRcmHNylRfMuKNpcq" crossorigin="anonymous"></script>
-    <script src="/js/app.js?v=0697cf6cee626461" type="module" integrity="sha384-m08IkQoHMBbJh9ZShPZnR+wNA5qIzdjvHnWA1i7BAB2bBnHNgPqx14hiq4vhUPjJ" crossorigin="anonymous"></script>
+    <script src="/js/crypto.js?v=3327feb4d1a6d6c2" type="module" integrity="sha384-lLx697GTSpZkeQvKzK077t5svsVWIHNz0nqnPcKYmy2jcLhXAl1gFeiL1nDywieT" crossorigin="anonymous"></script>
+    <script src="/js/app.js?v=ac2e7b99b69e9bcf" type="module" integrity="sha384-24++4R+ZVrcuWyApfkbFR9G7XWQFdD8R+p3owTSxv86pNbexiP4TFMW+jypiGdMt" crossorigin="anonymous"></script>
 </body>
 </html>

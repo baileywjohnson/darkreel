@@ -11,10 +11,10 @@ type MediaItem struct {
 	ID                string
 	UserID            string
 	ChunkCount        int
-	SizeBytes         int64  // total raw upload size in bytes (for quota tracking)
-	FileKeySealed     []byte // file key sealed with user's public key (80-byte sealed box)
-	ThumbKeySealed    []byte // thumbnail key sealed with user's public key (80-byte sealed box)
-	MetadataKeySealed []byte // metadata key sealed with user's public key (80-byte sealed box)
+	SizeBytes         int64  // on-disk size in bytes, padding included (what quota is charged on)
+	FileKeySealed     []byte // file key sealed with user's public key (92-byte sealed box)
+	ThumbKeySealed    []byte // thumbnail key sealed with user's public key (92-byte sealed box)
+	MetadataKeySealed []byte // metadata key sealed with user's public key (92-byte sealed box)
 	HashNonce         []byte
 	MetadataEnc       []byte // metadata (name, type, mime, dims, duration) encrypted with metadata key
 	MetadataNonce     []byte

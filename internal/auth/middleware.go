@@ -47,6 +47,17 @@ func Middleware(database *sql.DB) func(http.Handler) http.Handler {
 				return
 			}
 
+			// An account that still has the password an admin chose may only
+			// change it (or log out). Everything else — media, uploads,
+			// delegations, admin routes — waits until the keys the admin
+			// could unlock have been rotated away.
+			if claims.Scope == "" && Sessions.MustChangePassword(claims.SessionID) && !allowedBeforePasswordChange(r.URL.Path) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"error":"password change required"}`))
+				return
+			}
+
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -60,6 +71,10 @@ func Middleware(database *sql.DB) func(http.Handler) http.Handler {
 // exists for the same user — revoking the delegation, changing the password,
 // recovering the account or deleting it all remove that row, and the token
 // stops working on its next request. One primary-key lookup per request.
+func allowedBeforePasswordChange(path string) bool {
+	return path == "/api/auth/change-password" || path == "/api/auth/logout"
+}
+
 func CredentialLive(database *sql.DB, claims *Claims) (bool, error) {
 	if claims.Scope == "" {
 		return Sessions.Has(claims.SessionID), nil

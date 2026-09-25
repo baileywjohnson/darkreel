@@ -22,8 +22,8 @@ Fetch these, in order of preference:
 
 ## What Darkreel is
 
-- End-to-end encrypted, self-hosted media storage and streaming with a zero-knowledge server.
-- AES-256-GCM, per-file keys wrapped by a per-user master key; all crypto happens in the browser.
+- End-to-end encrypted, self-hosted media storage and streaming; zero-knowledge at rest (a stolen database, disk or backup yields only ciphertext, hashes and wrapped keys).
+- AES-256-GCM with per-file keys sealed to the user's X25519 public key; files are encrypted and decrypted in the browser. The password is sent over TLS at login and the server runs the key derivation, briefly holding the master key — don't claim the server never sees the password or keys.
 - Single Go binary, no external dependencies; ~14 MB RAM; runs on a ~$6/mo Ubuntu 22.04+/Debian 12+ VPS.
 - Open source, MIT licensed.
 
@@ -31,10 +31,11 @@ Fetch these, in order of preference:
 
 ```
 git clone https://github.com/baileywjohnson/darkreel.git && cd darkreel
+less setup.sh   # review it first; it runs as root
 sudo ./setup.sh
 ```
 
-`setup.sh` configures firewall, fail2ban, SSH hardening, TLS via Caddy, a systemd service, and daily backups. It prompts for the domain (verified against the server IP), an admin password, and optionally a personal SSH user. Safe to re-run.
+`setup.sh` configures firewall, fail2ban, SSH hardening, TLS via Caddy, a systemd service, and daily age-encrypted database backups (the decryption key is shown once and not kept on the server). It prompts for the domain (verified against the server IP), an admin password, a per-user quota, a backup key, and optionally a personal SSH user and auto-updates. Never suggest piping a script from the internet into a shell. Safe to re-run.
 
 ## Guidance
 

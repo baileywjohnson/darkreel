@@ -3,17 +3,18 @@ package media
 import "encoding/base64"
 
 // APIMediaItem is the JSON representation of a media item returned to clients.
-// All three *KeySealed fields are libsodium sealed boxes (80 bytes each)
-// wrapping the AES key used to encrypt the corresponding blob with the user's
-// X25519 public key. The browser opens them with its private key; PPVDA never
+// All three *KeySealed fields are X25519 sealed boxes (92 bytes each:
+// ephemeral key 32 + nonce 12 + AES key 32 + tag 16; see crypto.SealBox)
+// sealing the AES key of the corresponding blob to the user's X25519 public
+// key. The browser opens them with its private key; PPVDA never
 // opens them (it doesn't have the private key) and only writes them on upload.
 // chunk_count is deliberately omitted — the client reads it from the encrypted
 // metadata to avoid leaking approximate file size to network observers.
 type APIMediaItem struct {
 	ID                string `json:"id"`
-	FileKeySealed     string `json:"file_key_sealed"`     // base64, 80-byte sealed box
-	ThumbKeySealed    string `json:"thumb_key_sealed"`    // base64, 80-byte sealed box
-	MetadataKeySealed string `json:"metadata_key_sealed"` // base64, 80-byte sealed box
+	FileKeySealed     string `json:"file_key_sealed"`     // base64, 92-byte sealed box
+	ThumbKeySealed    string `json:"thumb_key_sealed"`    // base64, 92-byte sealed box
+	MetadataKeySealed string `json:"metadata_key_sealed"` // base64, 92-byte sealed box
 	MetadataEnc       string `json:"metadata_enc"`        // base64 — metadata encrypted under metadata key
 	MetadataNonce     string `json:"metadata_nonce"`
 	CreatedAt         string `json:"created_at"`

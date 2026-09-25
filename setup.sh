@@ -356,10 +356,9 @@ cat > /etc/darkreel/env <<EOF
 DARKREEL_ADMIN_USERNAME=${ADMIN_USER}
 MAX_STORAGE_GB=${STORAGE_GB}
 ALLOW_REGISTRATION=false
-# PERSIST_SESSION controls whether the client stores the master key in
-# sessionStorage so it survives page refreshes without re-login.
-# Enabled by default. Set to "false" to disable (more secure, but users
-# must re-enter their password on every page refresh).
+# PERSIST_SESSION keeps the browser's keys (as non-extractable CryptoKeys in
+# IndexedDB) so a page refresh doesn't require logging in again. Set to
+# "false" to require the password after every refresh.
 PERSIST_SESSION=true
 # Darkreel sits behind the local Caddy configured above, so every request
 # arrives from loopback. Without these, all clients share one rate-limit

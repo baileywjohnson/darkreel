@@ -1023,3 +1023,14 @@ main { padding-top: 0; position: relative; z-index: 1; }
     font-size: 13px; user-select: all;
 }
 .hint { color: var(--text-muted, #888); font-size: 12px; margin-top: 4px; }
+
+/* Account created by an admin: nothing but the password change until done. */
+body.forced-pw-change #settings-content > .admin-create:not(:first-child),
+body.forced-pw-change #settings-back-btn,
+body.forced-pw-change #upload-btn,
+body.forced-pw-change #settings-btn,
+body.forced-pw-change #admin-btn,
+body.forced-pw-change #settings-btn-mobile,
+body.forced-pw-change #admin-btn-mobile {
+    display: none !important;
+}

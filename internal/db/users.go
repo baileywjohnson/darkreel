@@ -20,24 +20,30 @@ type User struct {
 	IsAdmin          bool
 	StorageQuota     int64 // per-user storage quota in bytes (0 = use server default)
 	CreatedAt        string
+	// MustChangePassword is only written by CreateUser; read it with
+	// db.MustChangePassword.
+	MustChangePassword bool
 }
 
 func CreateUser(db *sql.DB, u *User) error {
-	isAdmin := 0
+	isAdmin, mustChange := 0, 0
 	if u.IsAdmin {
 		isAdmin = 1
+	}
+	if u.MustChangePassword {
+		mustChange = 1
 	}
 	_, err := db.Exec(
 		`INSERT INTO users (
 			id, username, password_hash, auth_salt, kdf_salt,
 			encrypted_mk, recovery_mk,
 			public_key, encrypted_priv_key, recovery_priv_key,
-			is_admin, storage_quota, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y', 'now'))`,
+			is_admin, storage_quota, must_change_password, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y', 'now'))`,
 		u.ID, u.Username, u.PasswordHash, u.AuthSalt, u.KDFSalt,
 		u.EncryptedMK, u.RecoveryMK,
 		u.PublicKey, u.EncryptedPrivKey, u.RecoveryPrivKey,
-		isAdmin, u.StorageQuota,
+		isAdmin, u.StorageQuota, mustChange,
 	)
 	return err
 }
@@ -162,6 +168,16 @@ type UserKeys struct {
 	RecoveryPrivKey  []byte
 }
 
+// MustChangePassword reports whether the account still has to choose its
+// own password — set (via User.MustChangePassword) for accounts an admin
+// creates, since the admin chose the initial password and saw the recovery
+// code; cleared by the key rotation in ReplaceUserKeysTx.
+func MustChangePassword(db *sql.DB, userID string) (bool, error) {
+	var v int
+	err := db.QueryRow(`SELECT must_change_password FROM users WHERE id = ?`, userID).Scan(&v)
+	return v != 0, err
+}
+
 // ReplaceUserKeysTx swaps in a new password hash, master key wraps and
 // keypair, provided the stored public key is still oldPublicKey. The
 // compare-and-swap stops two concurrent rotations from both committing: the
@@ -173,7 +189,8 @@ func ReplaceUserKeysTx(tx *sql.Tx, userID string, oldPublicKey []byte, k *UserKe
 	res, err := tx.Exec(
 		`UPDATE users SET password_hash = ?, auth_salt = ?, kdf_salt = ?,
 		        encrypted_mk = ?, recovery_mk = ?,
-		        public_key = ?, encrypted_priv_key = ?, recovery_priv_key = ?
+		        public_key = ?, encrypted_priv_key = ?, recovery_priv_key = ?,
+		        must_change_password = 0
 		 WHERE id = ? AND public_key = ?`,
 		k.PasswordHash, k.AuthSalt, k.KDFSalt,
 		k.EncryptedMK, k.RecoveryMK,

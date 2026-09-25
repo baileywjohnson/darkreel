@@ -29,6 +29,55 @@ type Delegation struct {
 	LastUsedAt  sql.NullString
 }
 
+// Refresh tokens don't live forever: a delegation expires once it has gone
+// unused for DelegationIdleLifetime, and in any case DelegationMaxLifetime
+// after it was created. A token copied out of a connected app (or its
+// backups) is then only good for a bounded time, and an app the user
+// forgot about stops being able to upload on its own.
+const (
+	DelegationIdleLifetime = 60 * 24 * time.Hour
+	DelegationMaxLifetime  = 365 * 24 * time.Hour
+)
+
+// ExpiresOn returns the last date (DelegationTimeFormat, UTC) on which the
+// delegation's refresh token is accepted.
+func (d *Delegation) ExpiresOn() string {
+	created, err := time.Parse(DelegationTimeFormat, d.CreatedAt)
+	if err != nil {
+		return d.CreatedAt // malformed: treat as expiring immediately
+	}
+	lastUsed := created
+	if d.LastUsedAt.Valid {
+		if t, err := time.Parse(DelegationTimeFormat, d.LastUsedAt.String); err == nil && t.After(lastUsed) {
+			lastUsed = t
+		}
+	}
+	idle := lastUsed.Add(DelegationIdleLifetime)
+	hard := created.Add(DelegationMaxLifetime)
+	if hard.Before(idle) {
+		return hard.Format(DelegationTimeFormat)
+	}
+	return idle.Format(DelegationTimeFormat)
+}
+
+// Expired reports whether the delegation's refresh token is past its
+// expiry date as of now.
+func (d *Delegation) Expired(now time.Time) bool {
+	return now.UTC().Format(DelegationTimeFormat) > d.ExpiresOn()
+}
+
+// PruneExpiredDelegations deletes delegations past their idle or maximum
+// lifetime. Deleting the row also ends any access token minted from it
+// (the auth middleware checks the row on every delegated request).
+func PruneExpiredDelegations(db *sql.DB, now time.Time) error {
+	day := func(d time.Duration) string { return now.UTC().Add(-d).Format(DelegationTimeFormat) }
+	_, err := db.Exec(
+		`DELETE FROM delegations WHERE created_at < ? OR COALESCE(last_used_at, created_at) < ?`,
+		day(DelegationMaxLifetime), day(DelegationIdleLifetime),
+	)
+	return err
+}
+
 // DelegationCode is a short-lived one-use authorization code. Bound to a
 // specific user + intended client; consumed atomically on exchange.
 type DelegationCode struct {
