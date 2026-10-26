@@ -247,7 +247,7 @@ fi
 # other architectures. Update both when bumping go.mod.
 if ! command -v go &>/dev/null; then
   info "Installing Go..."
-  GO_VERSION="1.26.9"
+  GO_VERSION="1.26.10"
   ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
   case "$ARCH" in
     armhf) ARCH="armv6l" ;;
@@ -255,8 +255,8 @@ if ! command -v go &>/dev/null; then
   esac
   GO_TARBALL="go${GO_VERSION}.linux-${ARCH}.tar.gz"
   case "$GO_TARBALL" in
-    go1.26.9.linux-amd64.tar.gz) GO_SHA256="42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d" ;;
-    go1.26.9.linux-arm64.tar.gz) GO_SHA256="4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052" ;;
+    go1.26.10.linux-amd64.tar.gz) GO_SHA256="ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5" ;;
+    go1.26.10.linux-arm64.tar.gz) GO_SHA256="3f4227ce7b206a513e794f1393adb473a07b46e94d18bd15d1c684bbb7319797" ;;
     *)
       GO_SHA256=$(curl -fsSL "https://go.dev/dl/?mode=json&include=all" \
         | jq -r --arg f "$GO_TARBALL" '[.[].files[] | select(.filename == $f) | .sha256][0] // empty')

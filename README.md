@@ -271,7 +271,7 @@ Designed for a fresh Ubuntu 22.04+ or Debian 12+ VPS (e.g., a $6/month DigitalOc
 | fail2ban | Installed and enabled | Auto-bans IPs after failed SSH attempts |
 | SSH hardening | Optionally creates a personal sudo user (copying root's `authorized_keys`); if it does, disables root SSH login | Limits attack surface if an SSH key is compromised. Password authentication is left as it was |
 | Deploy user | `deploy` user with limited sudo | For CI/CD - can only copy the binary into place and stop/start/restart the service |
-| Go | Installs Go 1.26.9 (the `go.mod` version) if not present, verifying the tarball's SHA-256 before extracting | Required to build from source |
+| Go | Installs Go 1.26.10 (the `go.mod` version) if not present, verifying the tarball's SHA-256 before extracting | Required to build from source |
 | Caddy | Installed from Caddy's signed apt repository and configured | Automatic HTTPS via Let's Encrypt, reverse proxies to Darkreel |
 | Darkreel | Built with `build.sh`, installed to `/usr/local/bin/`; settings in `/etc/darkreel/env` (mode 0600), including `TRUST_PROXY=true` and `TRUST_PROXY_CIDR=127.0.0.1/32,::1/128` for the local Caddy | The application itself |
 | systemd service | Hardened service with 15+ security directives | Runs as dedicated `darkreel` user with capability bounding, syscall filtering, namespace restrictions, and more |
